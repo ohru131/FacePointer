@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>コミュニケーションボード</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
+
+</head>
+<body>
+    <div id="app">
+        <!-- Face Tracking Background -->
+        <div id="mirror-container">
+            <video id="webcam" autoplay playsinline></video>
+            <canvas id="canvas-overlay"></canvas>
+        </div>
+        <!-- Pointer lives above ALL layers -->
+        <div id="pointer"></div>
+
+        <!-- UI Layer -->
+        <div id="ui-layer">
+            <header>
+                <div id="header-top">
+                    <h1 id="app-title">コミュニケーションボード</h1>
+                    <div id="controls">
+                        <button id="calibrate-btn" class="ctrl-btn">校正リセット</button>
+                        <div class="control-item">
+                            <span>感度</span>
+                            <input type="range" id="sensitivity-slider" min="1" max="10" step="0.5" value="4">
+                        </div>
+                    </div>
+                </div>
+                <p id="instruction">顔を動かしてポインターを合わせ、口を開けるか、うなずいて決定</p>
+            </header>
+
+            <!-- 3 rows of 4 buttons each -->
+            <div id="hierarchy-panel">
+                <div class="row-label">① 大分類</div>
+                <div id="row1" class="btn-row"></div>
+
+                <div class="row-label">② 中分類</div>
+                <div id="row2" class="btn-row"></div>
+
+                <div class="row-label">③ 決定</div>
+                <div id="row3" class="btn-row btn-row--confirm"></div>
+            </div>
+        </div>
+
+        <!-- Confirm Overlay -->
+        <div id="confirm-overlay">
+            <div id="confirm-box">
+                <div id="confirm-icon">✓</div>
+                <div id="confirm-text"></div>
+            </div>
+        </div>
+
+        <!-- Confirm Zone (bottom dwell area) -->
+        <div id="confirm-zone">
+            <div id="confirm-zone-inner">
+                <span id="confirm-zone-icon">▼</span>
+                <span id="confirm-zone-label">ここで確定</span>
+                <span id="confirm-zone-preview"></span>
+            </div>
+            <div id="confirm-zone-progress"><div id="confirm-zone-bar"></div></div>
+        </div>
+
+        <!-- Gesture Indicator -->
+        <div id="gesture-indicator"></div>
+
+        <!-- Loading Overlay -->
+        <div id="loading">
+            <div class="loader"></div>
+            <p>モデルを読み込み中...</p>
+        </div>
+    </div>
+    <script src="app.js" type="module"></script>
+</body>
+</html>
