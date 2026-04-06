@@ -22,21 +22,7 @@
 
         <!-- UI Layer -->
         <div id="ui-layer">
-            <header>
-                <div id="header-top">
-                    <h1 id="app-title">コミュニケーションボード</h1>
-                    <div id="controls">
-                        <button id="calibrate-btn" class="ctrl-btn">校正リセット</button>
-                        <button id="audio-cache-btn" class="ctrl-btn secondary">音声データを更新</button>
-                        <div id="audio-status" class="status-info" style="display:none;"></div>
-                        <div class="control-item">
-                            <span>感度</span>
-                            <input type="range" id="sensitivity-slider" min="1" max="10" step="0.5" value="4">
-                        </div>
-                    </div>
-                </div>
-                <p id="instruction">顔を動かしてポインターを合わせ、口を開けるか、うなずいて決定</p>
-            </header>
+
 
             <!-- 3 rows of 4 buttons each -->
             <div id="hierarchy-panel">
@@ -72,7 +58,17 @@
         <!-- Gesture Indicator -->
         <div id="gesture-indicator"></div>
 
-        <!-- Loading Overlay -->
+        <!-- Controls (moved to bottom right in CSS) -->
+        <div id="controls">
+            <button id="audio-cache-btn" class="ctrl-btn secondary">音声データを更新</button>
+            <button id="calibrate-btn" class="ctrl-btn">校正リセット</button>
+            <div id="audio-status" class="status-info" style="display:none;"></div>
+            <div class="control-item">
+                <span>感度</span>
+                <input type="range" id="sensitivity-slider" min="1" max="10" step="0.5" value="4">
+            </div>
+        </div>
+
         <div id="loading">
             <div class="loader"></div>
             <p>モデルを読み込み中...</p>

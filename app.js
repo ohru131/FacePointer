@@ -136,10 +136,11 @@ async function loadHierarchy() {
 
 function renderRow(container, items, rowNum, activeItemName) {
     container.innerHTML = "";
-    // Ensure exactly 4 slots
+    // 1階層目は3つ、それ以外は4つ
+    const maxSlots = (rowNum === 1) ? 3 : 4;
     const slots = [...items];
-    while (slots.length < 4) slots.push(null);
-    slots.slice(0, 4).forEach((item, idx) => {
+    while (slots.length < maxSlots) slots.push(null);
+    slots.slice(0, maxSlots).forEach((item, idx) => {
         const btn = document.createElement("div");
         btn.className = "h-btn";
         btn.dataset.row = rowNum;
