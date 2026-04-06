@@ -276,7 +276,8 @@ header {
     background: rgba(230, 57, 70, 0.04);
     border-color: rgba(230, 57, 70, 0.1);
     color: rgba(255, 255, 255, 0.25);
-    transform: scale(0.97);
+    transform: scale(0.8);
+    opacity: 0.4;
 }
 
 #row1 .h-btn.visited {
@@ -304,8 +305,9 @@ header {
 #row1 .h-btn.hover {
     background: rgba(230, 57, 70, 0.45);
     border-color: #ff9090;
-    transform: scale(1.04) !important;
-    box-shadow: 0 6px 30px rgba(230, 57, 70, 0.6) !important;
+    transform: scale(1.5) !important;
+    z-index: 100;
+    box-shadow: 0 10px 40px rgba(230, 57, 70, 0.8) !important;
     color: #fff !important;
     opacity: 1 !important;
 }
@@ -320,7 +322,8 @@ header {
     background: rgba(69, 123, 157, 0.04);
     border-color: rgba(69, 123, 157, 0.1);
     color: rgba(255, 255, 255, 0.25);
-    transform: scale(0.97);
+    transform: scale(0.8);
+    opacity: 0.4;
 }
 
 #row2 .h-btn.visited {
@@ -347,8 +350,9 @@ header {
 #row2 .h-btn.hover {
     background: rgba(69, 123, 157, 0.45);
     border-color: #90cde8;
-    transform: scale(1.04) !important;
-    box-shadow: 0 6px 30px rgba(69, 123, 157, 0.6) !important;
+    transform: scale(1.5) !important;
+    z-index: 100;
+    box-shadow: 0 10px 40px rgba(69, 123, 157, 0.8) !important;
     color: #fff !important;
     opacity: 1 !important;
 }
@@ -360,11 +364,20 @@ header {
     font-size: clamp(4rem, 7vw, 6rem);
 }
 
+#row3 .h-btn.dimmed {
+    background: rgba(45, 106, 79, 0.04);
+    border-color: rgba(45, 106, 79, 0.1);
+    color: rgba(255, 255, 255, 0.25);
+    transform: scale(0.8);
+    opacity: 0.4;
+}
+
 #row3 .h-btn.hover {
     background: rgba(82, 183, 136, 0.45);
     border-color: #88e0b8;
-    transform: scale(1.05);
-    box-shadow: 0 6px 30px rgba(82, 183, 136, 0.6);
+    transform: scale(1.5);
+    z-index: 100;
+    box-shadow: 0 10px 40px rgba(82, 183, 136, 0.8);
 }
 
 #row3 .h-btn.clicked-anim {
