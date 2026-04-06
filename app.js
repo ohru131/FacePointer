@@ -23,6 +23,8 @@ let faceLandmarker;
 let lastVideoTime = -1;
 let results = undefined;
 
+
+
 // Hierarchy data
 let menuTree = [];      // 4 top items
 let selectedL1 = null; // selected layer 1 item (node)
@@ -117,14 +119,13 @@ async function loadHierarchy() {
     lines.forEach(line => {
         const indent = line.search(/\S/);
         const content = line.trim();
-        // Support Name:Sentence format
-        const parts = content.split(":");
-        const name = parts[0];
-        const sentence = parts.length > 1 ? parts[1] : null;
+        // Support Name|Icon:Sentence format
+        const [mainPart, sentence] = content.includes(":") ? content.split(":") : [content, null];
+        const [name, icon] = mainPart.includes("|") ? mainPart.split("|") : [mainPart, null];
 
         const level = indent / 2;
         while (stack[stack.length - 1].level >= level) stack.pop();
-        const newNode = { name, sentence, children: [] };
+        const newNode = { name, icon, sentence, children: [] };
         stack[stack.length - 1].children.push(newNode);
         stack.push({ level, children: newNode.children, node: newNode });
     });
@@ -150,7 +151,20 @@ function renderRow(container, items, rowNum, activeItemName) {
             btn.classList.add("h-btn--empty");
             btn.innerText = "－";
         } else {
-            btn.innerText = item.name;
+            // Icon
+            if (item.icon) {
+                const img = document.createElement("img");
+                img.src = item.icon;
+                img.className = "h-btn-icon";
+                btn.appendChild(img);
+            }
+
+            // Name
+            const label = document.createElement("div");
+            label.className = "h-btn-text";
+            label.innerText = item.name;
+            btn.appendChild(label);
+
             btn.dataset.name = item.name;
 
             // Visited color

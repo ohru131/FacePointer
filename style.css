@@ -240,10 +240,12 @@ header {
     line-height: 1.1;
     cursor: pointer;
     display: flex;
+    flex-direction: column; /* Stack icon and text */
     align-items: center;
     justify-content: center;
+    gap: 0.4rem;
     text-align: center;
-    padding: 0.5rem;
+    padding: 0.8rem;
     position: relative;
     overflow: hidden;
     backdrop-filter: blur(12px);
@@ -261,6 +263,21 @@ header {
     border-radius: inherit;
     background: rgba(255, 255, 255, 0.04);
     pointer-events: none;
+}
+
+/* button content */
+.h-btn-icon {
+    width: 38%; /* Proportional width */
+    max-height: 50%;
+    object-fit: contain;
+    margin-bottom: 0.2rem;
+    filter: drop-shadow(0 4px 10px rgba(0,0,0,0.5));
+}
+
+.h-btn-text {
+    /* Font size already handled by clamp on .h-btn, but can refine here */
+    font-size: inherit;
+    line-height: 1.1;
 }
 
 /* empty slot */
