@@ -1,19 +1,19 @@
 :root {
     --primary: #e63946;
-    --primary-glow: rgba(230, 57, 70, 0.6);
+    --primary-glow: rgba(230, 57, 70, 0.4);
     --l1-color: #e63946;
-    --l1-visited: #6b1421;
+    --l1-visited: #f8d7da;
     --l1-selected: #ff6b6b;
     --l2-color: #457b9d;
-    --l2-visited: #1a3a4f;
+    --l2-visited: #d1ecf1;
     --l2-selected: #74b3d0;
     --l3-color: #2d6a4f;
     --l3-hover: #52b788;
-    --bg: #080c10;
-    --surface: rgba(255, 255, 255, 0.07);
-    --glass-border: rgba(255, 255, 255, 0.15);
-    --text: #f0f0f0;
-    --text-dim: #888;
+    --bg: #f8f9fa;
+    --surface: rgba(0, 0, 0, 0.05);
+    --glass-border: rgba(0, 0, 0, 0.1);
+    --text: #212529;
+    --text-dim: #6c757d;
 }
 
 * {
@@ -49,7 +49,7 @@ body {
     width: 100%;
     height: 100%;
     object-fit: cover;
-    opacity: 0.08;
+    opacity: 0.04;
     transform: scaleX(-1);
 }
 
@@ -113,9 +113,8 @@ header {
 #app-title {
     font-size: 1.6rem;
     font-weight: 900;
-    color: #fff;
+    color: var(--text);
     letter-spacing: 0.05em;
-    text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
 }
 
 #controls {
@@ -123,15 +122,16 @@ header {
     bottom: 10px;
     right: 15px;
     display: flex;
-    gap: 1.5rem; /* Wider gap for clarity */
+    gap: 1.5rem;
     align-items: center;
     pointer-events: auto;
     z-index: 1000;
-    background: rgba(0, 0, 0, 0.4);
+    background: rgba(255, 255, 255, 0.8);
     padding: 0.8rem 1.2rem;
     border-radius: 1.2rem;
     backdrop-filter: blur(10px);
     border: 1px solid var(--glass-border);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .control-item {
@@ -233,14 +233,14 @@ header {
 .h-btn {
     border-radius: 1.2rem;
     border: 2px solid var(--glass-border);
-    color: #fff;
+    color: var(--text);
     font-family: inherit;
-    font-size: clamp(4.4rem, 8vw, 6rem); /* Restored to original to prevent overflow */
+    font-size: clamp(4.4rem, 8vw, 6rem);
     font-weight: 900;
     line-height: 1.1;
     cursor: pointer;
     display: flex;
-    flex-direction: column; /* Stack icon and text */
+    flex-direction: column;
     align-items: center;
     justify-content: center;
     gap: 0.4rem;
@@ -248,10 +248,9 @@ header {
     padding: 0.8rem;
     position: relative;
     overflow: hidden;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    background: #fff;
     transition: background 0.25s, border-color 0.25s, transform 0.15s, box-shadow 0.2s;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
     pointer-events: auto;
     user-select: none;
 }
@@ -267,11 +266,10 @@ header {
 
 /* button content */
 .h-btn-icon {
-    width: 38%; /* Proportional width */
+    width: 38%;
     max-height: 50%;
     object-fit: contain;
     margin-bottom: 0.2rem;
-    filter: drop-shadow(0 4px 10px rgba(0,0,0,0.5));
 }
 
 .h-btn-text {
@@ -292,8 +290,8 @@ header {
 
 /* ── row 1 (L1) colors ───────────────────────────── */
 #row1 .h-btn:not(.h-btn--empty) {
-    background: rgba(230, 57, 70, 0.18);
-    border-color: rgba(230, 57, 70, 0.4);
+    background: #fff;
+    border-color: rgba(230, 57, 70, 0.3);
 }
 
 #row1 .h-btn.dimmed {
@@ -311,9 +309,9 @@ header {
 }
 
 #row1 .h-btn.selected {
-    background: rgba(230, 57, 70, 0.55);
-    border-color: rgba(255, 110, 110, 0.95);
-    box-shadow: 0 0 22px rgba(230, 57, 70, 0.55);
+    background: #e63946;
+    border-color: #e63946;
+    box-shadow: 0 0 22px rgba(230, 57, 70, 0.4);
     color: #fff;
 }
 
@@ -338,8 +336,8 @@ header {
 
 /* ── row 2 (L2) colors ───────────────────────────── */
 #row2 .h-btn:not(.h-btn--empty) {
-    background: rgba(69, 123, 157, 0.18);
-    border-color: rgba(69, 123, 157, 0.4);
+    background: #fff;
+    border-color: rgba(69, 123, 157, 0.3);
 }
 
 #row2 .h-btn.dimmed {
@@ -357,9 +355,9 @@ header {
 }
 
 #row2 .h-btn.selected {
-    background: rgba(69, 123, 157, 0.55);
-    border-color: rgba(116, 179, 208, 0.95);
-    box-shadow: 0 0 22px rgba(69, 123, 157, 0.55);
+    background: #457b9d;
+    border-color: #457b9d;
+    box-shadow: 0 0 22px rgba(69, 123, 157, 0.4);
     color: #fff;
 }
 
@@ -383,9 +381,9 @@ header {
 
 /* ── row 3 (L3 / confirm) colors ────────────────── */
 #row3 .h-btn:not(.h-btn--empty) {
-    background: rgba(45, 106, 79, 0.2);
-    border-color: rgba(45, 106, 79, 0.45);
-    font-size: clamp(4rem, 7vw, 6rem); /* Restored to original */
+    background: #fff;
+    border-color: rgba(45, 106, 79, 0.3);
+    font-size: clamp(4rem, 7vw, 6rem);
 }
 
 #row3 .h-btn.dimmed {
@@ -461,8 +459,8 @@ header {
 }
 
 #confirm-zone-preview {
-    color: rgba(255, 255, 255, 1); /* Brighter */
-    font-size: 1.8rem; /* Larger */
+    color: var(--text);
+    font-size: 1.8rem;
     font-weight: 900;
 }
 
