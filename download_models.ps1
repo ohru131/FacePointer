@@ -1,4 +1,4 @@
-$BaseDir = "mediapipe"
+$BaseDir = "dist\mediapipe"
 $WasmDir = "$BaseDir\wasm"
 $ModelDir = "$BaseDir\model"
 

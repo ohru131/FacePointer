@@ -111,8 +111,26 @@ async function startCamera() {
 // Hierarchy loading
 // =========================================================
 async function loadHierarchy() {
-    const response = await fetch("hierarchy.txt");
-    const text = await response.text();
+    let text;
+    try {
+        // Tauri環境（デスクトップアプリ）の場合は外部ファイルを優先して読み込む
+        if (window.__TAURI__ && window.__TAURI__.path && window.__TAURI__.fs) {
+            const tauriPath = window.__TAURI__.path;
+            const tauriFs = window.__TAURI__.fs;
+            const resourcePath = await tauriPath.resolveResource('hierarchy.txt');
+            text = await tauriFs.readTextFile(resourcePath);
+            console.log("Loaded hierarchy from external resource:", resourcePath);
+        } else {
+            // 開発中やブラウザ実行時はウェブアセットから読み込む
+            const response = await fetch("hierarchy.txt");
+            text = await response.text();
+        }
+    } catch (error) {
+        console.warn("External hierarchy.txt not found or access denied, falling back to embedded one.", error);
+        const response = await fetch("hierarchy.txt");
+        text = await response.text();
+    }
+    
     const lines = text.split("\n").filter(l => l.trim() !== "");
     const tree = [];
     const stack = [{ level: -1, children: tree }];

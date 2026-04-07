@@ -4,13 +4,15 @@
   "description": "MediaPipe-based communication app for aphasia",
   "main": "index.html",
   "scripts": {
-    "start": "npx serve .",
-    "dev": "npx serve ."
+    "start": "npx serve dist -p 3000",
+    "dev": "npx serve dist -p 3000",
+    "tauri": "tauri"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@tauri-apps/cli": "^2.10.1",
     "serve": "^14.2.1"
   }
 }

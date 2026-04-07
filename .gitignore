@@ -1,3 +1,9 @@
 node_modules/
 .DS_Store
 *.log
+src-tauri/target/
+dist/mediapipe/wasm/
+dist/mediapipe/model/
+dist/mediapipe/*.mjs
+*.msi
+*.exe
