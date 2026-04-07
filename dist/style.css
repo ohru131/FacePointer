@@ -329,7 +329,7 @@ header {
 #row1 .h-btn.hover {
     background: rgba(230, 57, 70, 0.45);
     border-color: #ff9090;
-    transform: scale(1.5) !important;
+    transform: scale(1.2) !important;
     z-index: 100;
     box-shadow: 0 10px 40px rgba(230, 57, 70, 0.8) !important;
     color: #fff !important;
@@ -374,7 +374,7 @@ header {
 #row2 .h-btn.hover {
     background: rgba(69, 123, 157, 0.45);
     border-color: #90cde8;
-    transform: scale(1.5) !important;
+    transform: scale(1.2) !important;
     z-index: 100;
     box-shadow: 0 10px 40px rgba(69, 123, 157, 0.8) !important;
     color: #fff !important;
@@ -399,7 +399,7 @@ header {
 #row3 .h-btn.hover {
     background: rgba(82, 183, 136, 0.45);
     border-color: #88e0b8;
-    transform: scale(1.5);
+    transform: scale(1.2);
     z-index: 100;
     box-shadow: 0 10px 40px rgba(82, 183, 136, 0.8);
 }
@@ -594,4 +594,112 @@ header {
     to {
         transform: rotate(360deg);
     }
+}
+
+/* ── settings modal ──────────────────────────────── */
+.modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(12px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+}
+
+.modal.active {
+    display: flex;
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.modal-content {
+    background: rgba(30, 40, 50, 0.95);
+    border: 1px solid var(--glass-border);
+    border-radius: 1.5rem;
+    padding: 2.5rem;
+    width: 90%;
+    max-width: 500px;
+    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+    transform: scale(0.9);
+    transition: transform 0.3s cubic-bezier(0.19, 1, 0.22, 1);
+}
+
+.modal.active .modal-content {
+    transform: scale(1);
+}
+
+.modal-content h3 {
+    font-size: 1.8rem;
+    margin-bottom: 1.5rem;
+    color: #fff;
+    text-align: center;
+}
+
+.setting-item {
+    margin-bottom: 2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+}
+
+.setting-item label {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text-dim);
+}
+
+.setting-item input {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--glass-border);
+    border-radius: 0.6rem;
+    padding: 0.8rem 1rem;
+    color: #fff;
+    font-size: 1.1rem;
+    font-family: monospace;
+    width: 100%;
+    outline: none;
+    transition: border-color 0.2s;
+}
+
+.setting-item input:focus {
+    border-color: var(--primary);
+}
+
+.setting-item small {
+    color: #888;
+    font-size: 0.85rem;
+}
+
+.modal-actions {
+    display: flex;
+    gap: 1.2rem;
+    justify-content: stretch;
+}
+
+.modal-actions button {
+    flex: 1;
+    height: 3.5rem;
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.ctrl-btn.primary {
+    background: var(--primary);
+    border-color: var(--primary);
+}
+
+.ctrl-btn.primary:hover {
+    background: #ff4d5a;
+    box-shadow: 0 0 15px var(--primary-glow);
+}
+
+.icon-btn {
+    font-size: 1.4rem;
+    padding: 0.4rem 0.6rem;
+    line-height: 1;
 }

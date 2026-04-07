@@ -9,8 +9,13 @@
     "core:default",
     "fs:default",
     "fs:allow-read-text-file",
+    "fs:allow-write-text-file",
     {
       "identifier": "fs:allow-read-text-file",
+      "allow": [{ "path": "$RESOURCE/*" }]
+    },
+    {
+      "identifier": "fs:allow-write-text-file",
       "allow": [{ "path": "$RESOURCE/*" }]
     }
   ]

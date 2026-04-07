@@ -3,7 +3,7 @@
 FacePointerは、顔の動きだけで操作できるコミュニケーションボード（意思伝達装置）です。
 発話や肢体に不自由がある方、失語症などの症状がある方が、視線やまばたき（または特定の顔のジェスチャー）で自分の意思を周囲に伝えることを目的としています。
 
-![App Preview](media/FacePointer.png) <!-- アイコンなどがあればここに配置 -->
+![App Preview](dist/media/FacePointer.png) <!-- アイコンなどがあればここに配置 -->
 
 ## 🌟 主な機能
 
@@ -11,7 +11,7 @@ FacePointerは、顔の動きだけで操作できるコミュニケーション
 - **ポインタ操作:** 鼻の向きでマウスカーソル（赤いポインタ）を操作し、ボタンを選択。
 - **3段階の階層メニュー:** 「したい事」→「具体的な動作」→「最終決定」の流れで、直感的に文章を構築。
 - **確定ゾーン方式:** 画面下部の特定のエリアにポインタを置く（滞留させる）ことで決定。誤操作を防止。
-- **高品質な音声合成:** VOICEVOXとの連携に対応。高品質な日本語音声で発話が可能（Fallbackとして標準OS音声もサポート）。
+- **最高品質の音声合成:** Google Gemini 2.5 Flash TTS (`Achernar`) に対応。非常に自然で落ち着いた日本語音声で発話をサポート。
 - **音声キャッシュ (IndexedDB):** 生成した音声は保存され、2回目以降は瞬時に再生されます。
 - **デスクトップアプリ化:** Tauri (Rust) を使用した軽量なWindowsデスクトップアプリとして動作。
 
@@ -41,11 +41,16 @@ npm run tauri dev
 npm run tauri build
 ```
 
-## 🎙 音声合成 (VOICEVOX) について
-本アプリは [VOICEVOX](https://voicevox.hiroshiba.jp/) との連携を推奨しています。
-VOICEVOXデスクトップ版を起動した状態で本アプリを使用すると、自動的に高品質な合成音声（デフォルトでは四国めたん）で発話が行われます。
+## 🎙 音声合成 (Google Gemini TTS) について
+本アプリは **Google Gemini 2.5 Flash TTS** を使用して発話を行います。
+初期設定として、アプリ右下の **設定ボタン (⚙️)** から「Google AI (Gemini) API Key」を入力し、保存してください。
 
-※ VOICEVOXが起動していない場合は、OS標準の日本語音声（Microsoft Nanami等）が自動的に選択されます。
+### オフラインでの利用（重要）
+1. インターネットに接続された環境で、右下の **「音声データを更新」** をクリックします。
+2. アプリが全文章の音声を生成し、ブラウザのキャッシュ (IndexedDB) に保存します。
+3. 一度保存が完了すれば、**オフライン（病院内などネットがない場所）でも** 生成済みの高品質な音声でそのまま使い続けることができます。
+
+※ APIキーが設定されていない、または通信エラーが発生した場合は、OS標準の日本語音声（Microsoft Nanami等）が自動的に選択されます。
 
 ## 📁 階層データのカスタマイズ
 `hierarchy.txt` を編集することで、表示されるボタンの名前や階層構造を自由に変更できます。
@@ -62,7 +67,7 @@ VOICEVOXデスクトップ版を起動した状態で本アプリを使用する
 - **Frontend:** HTML, JavaScript, CSS (Vanilla)
 - **AI/ML:** [MediaPipe Vision](https://developers.google.com/mediapipe/solutions/vision/face_landmarker)
 - **Backend/Desktop:** [Tauri](https://tauri.app/) (Rust)
-- **Audio:** Web Audio API & VOICEVOX Engine
+- **Audio:** Web Audio API & Google Gemini TTS (Generative AI)
 
 ## 📄 ライセンス
 MIT License

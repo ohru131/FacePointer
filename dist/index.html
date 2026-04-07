@@ -60,12 +60,34 @@
 
         <!-- Controls (moved to bottom right in CSS) -->
         <div id="controls">
+            <button id="settings-btn" class="ctrl-btn icon-btn" title="設定">⚙️</button>
             <button id="audio-cache-btn" class="ctrl-btn secondary">音声データを更新</button>
             <button id="calibrate-btn" class="ctrl-btn">校正リセット</button>
             <div id="audio-status" class="status-info" style="display:none;"></div>
             <div class="control-item">
                 <span>感度</span>
                 <input type="range" id="sensitivity-slider" min="1" max="10" step="0.5" value="4">
+            </div>
+        </div>
+
+        <!-- Settings Modal -->
+        <div id="settings-modal" class="modal">
+            <div class="modal-content" style="max-width: 600px;">
+                <h3>設定</h3>
+                <div class="setting-item">
+                    <label for="api-key-input">Gemini API Key (Google Cloud TTS用):</label>
+                    <input type="text" id="api-key-input" placeholder="AIZA...">
+                    <small>※ブラウザに保存されます</small>
+                </div>
+                <div class="setting-item" style="margin-top: 15px;">
+                    <label for="hierarchy-input">階層メニューの編集 (hierarchy.txt):</label>
+                    <textarea id="hierarchy-input" rows="8" style="width:100%; font-family:monospace; margin-top:5px; resize:vertical;"></textarea>
+                    <small>※「保存して閉じる」を押すと更新され、アプリに即座に反映されます</small>
+                </div>
+                <div class="modal-actions" style="margin-top: 15px;">
+                    <button id="save-settings" class="ctrl-btn primary">保存して閉じる</button>
+                    <button id="close-settings" class="ctrl-btn secondary">キャンセル</button>
+                </div>
             </div>
         </div>
 
