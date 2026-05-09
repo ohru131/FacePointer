@@ -69,12 +69,27 @@ const GESTURE_COOLDOWN_MS = 800;
 // =========================================================
 // Sentence builder – convert 3-level selection to natural Japanese
 // =========================================================
+
+const RUNTIME_HIERARCHY_KEY = "hierarchy_runtime_text";
+const modifiedPhraseSet = new Set();
+const phraseEditorUiState = {
+    query: "",
+    openL1: new Set(),
+    openL2: new Set(),
+    toolbarSetup: false
+};
+
+function escapeHtml(value) {
+    return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+}
+
 function buildSentence(l1, l2, l3) {
-    // If the 3rd layer item (l3) has a custom sentence defined in hierarchy.txt, use it.
-    if (l3 && l3.sentence) {
-        return l3.sentence;
-    }
-    // Fallback for cases without explicit sentences
+    if (l3 && l3.sentence && l3.sentence.trim()) return l3.sentence.trim();
     return l3 ? l3.name : "";
 }
 
@@ -113,15 +128,23 @@ async function startCamera() {
 let rawHierarchyText = "";
 
 async function loadHierarchy() {
+    const runtimeText = localStorage.getItem(RUNTIME_HIERARCHY_KEY);
+    if (runtimeText && runtimeText.trim()) {
+        rawHierarchyText = runtimeText;
+        parseHierarchyAndRender(runtimeText);
+        console.log("Loaded hierarchy from browser storage");
+        return;
+    }
+
     let text;
     try {
-        // Tauri環境（デスクトップアプリ）の場合は外部ファイルを優先して読み込む
+        // Tauri環境（デスクトップアプリ）の場合は同梱リソースを初期値として読み込む
         if (window.__TAURI__ && window.__TAURI__.path && window.__TAURI__.fs) {
             const tauriPath = window.__TAURI__.path;
             const tauriFs = window.__TAURI__.fs;
-            const resourcePath = await tauriPath.resolveResource('hierarchy.txt');
+            const resourcePath = await tauriPath.resolveResource("hierarchy.txt");
             text = await tauriFs.readTextFile(resourcePath);
-            console.log("Loaded hierarchy from external resource:", resourcePath);
+            console.log("Loaded hierarchy from bundled resource:", resourcePath);
         } else {
             // 開発中やブラウザ実行時はウェブアセットから読み込む
             const response = await fetch("hierarchy.txt");
@@ -155,7 +178,41 @@ function parseHierarchyAndRender(text) {
         stack.push({ level, children: newNode.children, node: newNode });
     });
     menuTree = tree;
+    applyDefaultSelections();
     renderAll();
+}
+
+function applyDefaultSelections() {
+    selectedL1 = menuTree[0] || null;
+    selectedL2 = selectedL1?.children?.[0] || null;
+    pendingL3 = null;
+
+    if (selectedL1?.name) visitedL1.add(selectedL1.name);
+    if (selectedL2?.name) visitedL2.add(selectedL2.name);
+}
+
+function serializeHierarchy(tree) {
+    const lines = [];
+    const walk = (nodes, indent) => {
+        nodes.forEach(node => {
+            const space = " ".repeat(indent);
+            const main = node.icon ? `${node.name}|${node.icon}` : node.name;
+            const line = node.sentence && node.sentence.trim()
+                ? `${space}${main}:${node.sentence.trim()}`
+                : `${space}${main}`;
+            lines.push(line);
+            if (node.children && node.children.length) {
+                walk(node.children, indent + 2);
+            }
+        });
+    };
+    walk(tree, 0);
+    return lines.join("\n");
+}
+
+function persistHierarchyToBrowser() {
+    rawHierarchyText = serializeHierarchy(menuTree);
+    localStorage.setItem(RUNTIME_HIERARCHY_KEY, rawHierarchyText);
 }
 
 
@@ -194,6 +251,10 @@ function renderRow(container, items, rowNum, activeItemName) {
 
             btn.dataset.name = item.name;
 
+            if (rowNum === 2 && selectedL1) btn.classList.add("h-btn--parent-l1");
+            if (rowNum === 3 && selectedL1) btn.classList.add("h-btn--parent-l1");
+            if (rowNum === 3 && selectedL2) btn.classList.add("h-btn--parent-l2");
+
             // Visited color
             if (rowNum === 1 && visitedL1.has(item.name)) btn.classList.add("visited");
             if (rowNum === 2 && visitedL2.has(item.name)) btn.classList.add("visited");
@@ -220,13 +281,18 @@ function renderRow(container, items, rowNum, activeItemName) {
 function handleClick(rowNum, item) {
     if (rowNum === 1) {
         selectedL1 = item;
-        selectedL2 = null;
+        selectedL2 = item?.children?.[0] || null;
+        pendingL3 = null;
         visitedL1.add(item.name);
+        if (selectedL2?.name) visitedL2.add(selectedL2.name);
         renderAll();
+        updateConfirmZone();
     } else if (rowNum === 2) {
         selectedL2 = item;
+        pendingL3 = null;
         visitedL2.add(item.name);
         renderAll();
+        updateConfirmZone();
     } else if (rowNum === 3) {
         // Confirm selection
         if (!selectedL1 || !selectedL2) return;
@@ -351,10 +417,17 @@ function checkPointerCollision() {
 
 function renderAll() {
     renderRow(row1Container, menuTree, 1, selectedL1 ? selectedL1.name : null);
-    const l2Items = selectedL1 ? selectedL1.children : Array(4).fill(null);
+    const l2Items = selectedL1?.children || [];
     renderRow(row2Container, l2Items, 2, selectedL2 ? selectedL2.name : null);
-    const l3Items = selectedL2 ? selectedL2.children : Array(4).fill(null);
+    const l3Items = selectedL2?.children || [];
     renderRow(row3Container, l3Items, 3, pendingL3 ? pendingL3.name : null);
+    updateHierarchyVisualState();
+}
+
+function updateHierarchyVisualState() {
+    row2Container.classList.toggle("btn-row--parent-l1", !!selectedL1);
+    row3Container.classList.toggle("btn-row--parent-l1", !!selectedL1);
+    row3Container.classList.toggle("btn-row--parent-l2", !!selectedL2);
 }
 
 function updateConfirmZone() {
@@ -374,6 +447,29 @@ let preferredVoice = null;
 
 // --- API KEY (Browser storage) ---
 let GEMINI_API_KEY = localStorage.getItem("gemini_api_key") || "";
+
+const DEFAULT_MOUSE_CLICK_SPEECH = {
+    left: "ありがとう。",
+    middle: "こんにちは。",
+    right: "お願いします。"
+};
+
+let mouseClickSpeech = { ...DEFAULT_MOUSE_CLICK_SPEECH };
+
+function normalizedPhrase(value, fallback) {
+    const trimmed = (value || "").trim();
+    return trimmed || fallback;
+}
+
+function loadMouseClickSpeech() {
+    mouseClickSpeech = {
+        left: normalizedPhrase(localStorage.getItem("mouse_click_phrase_left"), DEFAULT_MOUSE_CLICK_SPEECH.left),
+        middle: normalizedPhrase(localStorage.getItem("mouse_click_phrase_middle"), DEFAULT_MOUSE_CLICK_SPEECH.middle),
+        right: normalizedPhrase(localStorage.getItem("mouse_click_phrase_right"), DEFAULT_MOUSE_CLICK_SPEECH.right)
+    };
+}
+
+loadMouseClickSpeech();
 
 function getGeminiUrl() {
     return `https://texttospeech.googleapis.com/v1beta1/text:synthesize?key=${GEMINI_API_KEY}`;
@@ -571,10 +667,17 @@ async function prefetchAllAudio() {
         });
     });
 
+    // マウスクリックのセリフも含める
+    Object.values(mouseClickSpeech).forEach(p => {
+        if (p) phrases.push(p.trim());
+    });
+
     // 重複カット
     const uniquePhrases = Array.from(new Set(phrases));
 
     audioStatus.style.display = "block";
+    const statusLabel = audioStatus.querySelector(".status-label");
+    const statusFill = audioStatus.querySelector(".status-progress-fill");
     let successCount = 0;
     for (let i = 0; i < uniquePhrases.length; i++) {
         const text = uniquePhrases[i];
@@ -583,17 +686,26 @@ async function prefetchAllAudio() {
         const cached = await getCachedAudio(text);
         if (cached) {
             successCount++;
+            const percentage = (successCount / uniquePhrases.length) * 100;
+            if (statusLabel) statusLabel.textContent = `音声生成中: ${successCount}/${uniquePhrases.length}`;
+            if (statusFill) statusFill.style.width = percentage + "%";
             continue;
         }
-        audioStatus.textContent = `音声生成中: ${successCount}/${uniquePhrases.length}...`;
+        const percentage = (i / uniquePhrases.length) * 100;
+        if (statusLabel) statusLabel.textContent = `音声生成中: ${successCount}/${uniquePhrases.length}`;
+        if (statusFill) statusFill.style.width = percentage + "%";
         // silent = true で呼び出し、音声を鳴らさない
         const success = await speakGemini(text, true); 
         
         if (success) {
             successCount++;
+            const percentage = (successCount / uniquePhrases.length) * 100;
+            if (statusLabel) statusLabel.textContent = `音声生成中: ${successCount}/${uniquePhrases.length}`;
+            if (statusFill) statusFill.style.width = percentage + "%";
         } else {
             console.error("Fatal error during prefetch. Stopping batch process.");
-            audioStatus.textContent = "⚠ 通信エラーのため中断しました。設定を確認してください。";
+            if (statusLabel) statusLabel.textContent = "⚠ 通信エラーのため中断しました。設定を確認してください。";
+            if (statusFill) statusFill.style.width = "0%";
             setTimeout(() => { audioStatus.style.display = "none"; }, 5000);
             return; // ループを抜けて中断
         }
@@ -603,9 +715,10 @@ async function prefetchAllAudio() {
     }
     
     if (successCount === uniquePhrases.length) {
-        audioStatus.textContent = "✓ 全ての音声が準備できました";
+        if (statusLabel) statusLabel.textContent = "✓ 全ての音声が準備できました";
+        if (statusFill) statusFill.style.width = "100%";
     } else {
-        audioStatus.textContent = `⚠ 一部の生成に失敗しました (${successCount}/${uniquePhrases.length})`;
+        if (statusLabel) statusLabel.textContent = `⚠ 一部の生成に失敗しました (${successCount}/${uniquePhrases.length})`;
     }
     setTimeout(() => { audioStatus.style.display = "none"; }, 4000);
 }
@@ -652,7 +765,7 @@ async function predictWebcam() {
     const drawingUtils = new DrawingUtils(canvasCtx);
     if (results.faceLandmarks) {
         for (const landmarks of results.faceLandmarks) {
-            drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_TESSELATION, { color: "#C0C0C070", lineWidth: 1 });
+            drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_TESSELATION, { color: "#808080CC", lineWidth: 1.5 });
             const nose = landmarks[4];
             if (isCalibrating) {
                 calibratedNoseX = nose.x;
@@ -757,19 +870,551 @@ audioCacheBtn.addEventListener("click", () => {
 const settingsBtn = document.getElementById("settings-btn");
 const settingsModal = document.getElementById("settings-modal");
 const apiKeyInput = document.getElementById("api-key-input");
-const hierarchyInput = document.getElementById("hierarchy-input");
+const mouseLeftInput = document.getElementById("mouse-left-input");
+const mouseMiddleInput = document.getElementById("mouse-middle-input");
+const mouseRightInput = document.getElementById("mouse-right-input");
+const mouseClickFeedback = document.getElementById("mouse-click-feedback");
 const saveSettingsBtn = document.getElementById("save-settings");
 const closeSettingsBtn = document.getElementById("close-settings");
 
+function showMouseClickFeedback(button, text) {
+    if (!mouseClickFeedback) return;
+
+    const buttonLabel = button === "left" ? "左クリック" : (button === "middle" ? "真ん中クリック" : "右クリック");
+    mouseClickFeedback.textContent = `${buttonLabel}: ${text}`;
+    mouseClickFeedback.classList.remove("left", "middle", "right", "active");
+    mouseClickFeedback.classList.add(button);
+
+    // Reflow to restart transition when same class repeats
+    void mouseClickFeedback.offsetWidth;
+    mouseClickFeedback.classList.add("active");
+
+    if (window.mouseClickFeedbackTimer) clearTimeout(window.mouseClickFeedbackTimer);
+    window.mouseClickFeedbackTimer = setTimeout(() => {
+        mouseClickFeedback.classList.remove("active");
+    }, 1200);
+}
+
+function shouldIgnoreMouseSpeech(event) {
+    const target = event.target;
+    if (!target) return false;
+
+    if (settingsModal && settingsModal.classList.contains("active")) return true;
+
+    if (target.closest("input, textarea, [contenteditable='true']")) return true;
+
+    const activeTag = document.activeElement ? document.activeElement.tagName : "";
+    if (activeTag === "INPUT" || activeTag === "TEXTAREA") return true;
+
+    if (document.activeElement && document.activeElement.isContentEditable) return true;
+
+    return false;
+}
+
+function speakByMouseButton(button) {
+    const key = button === 0 ? "left" : (button === 1 ? "middle" : "right");
+    const phrase = mouseClickSpeech[key];
+    showMouseClickFeedback(key, phrase);
+    speak(phrase);
+}
+
+document.addEventListener("contextmenu", (event) => {
+    if (!shouldIgnoreMouseSpeech(event)) {
+        event.preventDefault();
+    }
+});
+
+document.addEventListener("auxclick", (event) => {
+    if ((event.button === 1 || event.button === 2) && !shouldIgnoreMouseSpeech(event)) {
+        event.preventDefault();
+    }
+});
+
+document.addEventListener("mousedown", (event) => {
+    if (![0, 1, 2].includes(event.button)) return;
+    if (shouldIgnoreMouseSpeech(event)) return;
+
+    if (event.button === 1 || event.button === 2) {
+        event.preventDefault();
+    }
+    speakByMouseButton(event.button);
+});
+
+// =========================================================
+// Settings UI - Tabs and Phrase Editor
+// =========================================================
+function renderPhraseEditor() {
+    const container = document.getElementById("phrase-editor-container");
+    const summary = document.getElementById("phrase-editor-summary");
+    if (!container) return;
+    container.innerHTML = "";
+
+    if (!menuTree || menuTree.length === 0) return;
+
+    setupPhraseEditorToolbar();
+    const query = phraseEditorUiState.query.trim().toLowerCase();
+
+    if (!query && phraseEditorUiState.openL1.size === 0 && menuTree.length > 0) {
+        phraseEditorUiState.openL1.add("l1-0");
+        if (menuTree[0].children.length > 0) {
+            phraseEditorUiState.openL2.add("l1-0-l2-0");
+        }
+    }
+
+    let visibleL1Count = 0;
+    let visibleL3Count = 0;
+
+    menuTree.forEach((l1, l1Index) => {
+        const l1Key = `l1-${l1Index}`;
+        const l2Entries = l1.children
+            .map((l2, l2Index) => ({ l2, l2Index }))
+            .map(({ l2, l2Index }) => {
+                const l3Entries = l2.children
+                    .map((l3, l3Index) => ({ l3, l3Index }))
+                    .filter(({ l3 }) => {
+                        if (!query) return true;
+                        const target = `${l1.name} ${l2.name} ${l3.name} ${l3.sentence || ""}`.toLowerCase();
+                        return target.includes(query);
+                    });
+                return { l2, l2Index, l3Entries };
+            })
+            .filter(entry => entry.l3Entries.length > 0 || !query);
+
+        if (query && l2Entries.length === 0) return;
+
+        visibleL1Count += 1;
+        visibleL3Count += l2Entries.reduce((acc, entry) => acc + entry.l3Entries.length, 0);
+
+        const l1Card = document.createElement("section");
+        l1Card.className = "phrase-l1-card";
+
+        const l1Header = document.createElement("button");
+        const l1Open = query ? true : phraseEditorUiState.openL1.has(l1Key);
+        l1Header.type = "button";
+        l1Header.className = `phrase-collapsible-header${l1Open ? " open" : ""}`;
+        l1Header.innerHTML = `
+            <span class="phrase-collapsible-main">
+                <span class="phrase-collapsible-arrow">▶</span>
+                <span class="phrase-collapsible-title">${escapeHtml(l1.name)}</span>
+            </span>
+            <span class="phrase-collapsible-meta">中分類 ${l1.children.length} / セリフ ${l2Entries.reduce((acc, e) => acc + e.l3Entries.length, 0)}</span>
+        `;
+        l1Card.appendChild(l1Header);
+
+        const l1Body = document.createElement("div");
+        l1Body.className = `phrase-collapsible-body${l1Open ? " open" : ""}`;
+
+        const l1Edit = document.createElement("div");
+        l1Edit.className = "phrase-editor-input";
+        const l1Label = document.createElement("label");
+        l1Label.textContent = "大分類名";
+        const l1Input = document.createElement("input");
+        l1Input.type = "text";
+        l1Input.value = l1.name;
+        l1Input.addEventListener("change", (e) => {
+            l1.name = e.target.value.trim() || l1.name;
+            persistHierarchyToBrowser();
+            renderAll();
+            renderPhraseEditor();
+        });
+        l1Edit.appendChild(l1Label);
+        l1Edit.appendChild(l1Input);
+        l1Body.appendChild(l1Edit);
+
+        l2Entries.forEach(({ l2, l2Index, l3Entries }) => {
+            const l2Key = `${l1Key}-l2-${l2Index}`;
+            const l2Card = document.createElement("section");
+            l2Card.className = "phrase-l2-card";
+
+            const l2Open = query ? true : phraseEditorUiState.openL2.has(l2Key);
+            const l2Header = document.createElement("button");
+            l2Header.type = "button";
+            l2Header.className = `phrase-collapsible-header${l2Open ? " open" : ""}`;
+            l2Header.innerHTML = `
+                <span class="phrase-collapsible-main">
+                    <span class="phrase-collapsible-arrow">▶</span>
+                    <span class="phrase-collapsible-title">${escapeHtml(l2.name)}</span>
+                </span>
+                <span class="phrase-collapsible-meta">セリフ ${l3Entries.length}</span>
+            `;
+            l2Card.appendChild(l2Header);
+
+            const l2Body = document.createElement("div");
+            l2Body.className = `phrase-collapsible-body${l2Open ? " open" : ""}`;
+
+            const l2Edit = document.createElement("div");
+            l2Edit.className = "phrase-editor-input";
+            const l2Label = document.createElement("label");
+            l2Label.textContent = "中分類名";
+            const l2Input = document.createElement("input");
+            l2Input.type = "text";
+            l2Input.value = l2.name;
+            l2Input.addEventListener("change", (e) => {
+                l2.name = e.target.value.trim() || l2.name;
+                persistHierarchyToBrowser();
+                renderAll();
+                renderPhraseEditor();
+            });
+            l2Edit.appendChild(l2Label);
+            l2Edit.appendChild(l2Input);
+            l2Body.appendChild(l2Edit);
+
+            const leafGrid = document.createElement("div");
+            leafGrid.className = "phrase-leaf-grid";
+
+            l3Entries.forEach(({ l3 }) => {
+                const leafCard = document.createElement("div");
+                leafCard.className = "phrase-leaf-card";
+
+                const labelWrap = document.createElement("div");
+                labelWrap.className = "phrase-editor-input";
+                const label = document.createElement("label");
+                label.textContent = "決定ボタン名";
+                const labelInput = document.createElement("input");
+                labelInput.type = "text";
+                labelInput.value = l3.name;
+                labelInput.addEventListener("change", (e) => {
+                    const oldPhrase = buildSentence(l1, l2, l3);
+                    l3.name = e.target.value.trim() || l3.name;
+                    const newPhrase = buildSentence(l1, l2, l3);
+                    if (oldPhrase) modifiedPhraseSet.add(oldPhrase);
+                    if (newPhrase) modifiedPhraseSet.add(newPhrase);
+                    persistHierarchyToBrowser();
+                    renderAll();
+                });
+                labelWrap.appendChild(label);
+                labelWrap.appendChild(labelInput);
+                leafCard.appendChild(labelWrap);
+
+                const sentenceWrap = document.createElement("div");
+                sentenceWrap.className = "phrase-editor-input phrase-editor-sentence";
+                const sentenceLabel = document.createElement("label");
+                sentenceLabel.textContent = "発話文";
+                const sentenceInput = document.createElement("input");
+                sentenceInput.type = "text";
+                sentenceInput.value = l3.sentence || "";
+                sentenceInput.placeholder = "空欄なら決定ボタン名を読み上げ";
+                sentenceInput.addEventListener("change", (e) => {
+                    const oldPhrase = buildSentence(l1, l2, l3);
+                    l3.sentence = e.target.value.trim();
+                    const newPhrase = buildSentence(l1, l2, l3);
+                    if (oldPhrase) modifiedPhraseSet.add(oldPhrase);
+                    if (newPhrase) modifiedPhraseSet.add(newPhrase);
+                    persistHierarchyToBrowser();
+                });
+                sentenceWrap.appendChild(sentenceLabel);
+                sentenceWrap.appendChild(sentenceInput);
+                leafCard.appendChild(sentenceWrap);
+
+                leafGrid.appendChild(leafCard);
+            });
+
+            l2Body.appendChild(leafGrid);
+            l2Card.appendChild(l2Body);
+            l1Body.appendChild(l2Card);
+
+            l2Header.addEventListener("click", () => {
+                if (phraseEditorUiState.openL2.has(l2Key)) {
+                    phraseEditorUiState.openL2.delete(l2Key);
+                } else {
+                    phraseEditorUiState.openL2.add(l2Key);
+                }
+                renderPhraseEditor();
+            });
+        });
+
+        l1Card.appendChild(l1Body);
+        container.appendChild(l1Card);
+
+        l1Header.addEventListener("click", () => {
+            if (phraseEditorUiState.openL1.has(l1Key)) {
+                phraseEditorUiState.openL1.delete(l1Key);
+            } else {
+                phraseEditorUiState.openL1.add(l1Key);
+            }
+            renderPhraseEditor();
+        });
+    });
+
+    if (summary) {
+        if (!query) {
+            summary.textContent = `大分類 ${visibleL1Count} 件 / セリフ ${visibleL3Count} 件`; 
+        } else {
+            summary.textContent = `検索「${phraseEditorUiState.query}」: 大分類 ${visibleL1Count} 件 / セリフ ${visibleL3Count} 件`; 
+        }
+    }
+
+    if (visibleL1Count === 0) {
+        container.innerHTML = '<div class="phrase-empty-note">一致するセリフが見つかりませんでした。</div>';
+    }
+}
+
+function setupPhraseEditorToolbar() {
+    if (phraseEditorUiState.toolbarSetup) return;
+
+    const searchInput = document.getElementById("phrase-search-input");
+    const expandBtn = document.getElementById("phrase-expand-all");
+    const collapseBtn = document.getElementById("phrase-collapse-all");
+    const clearSearchBtn = document.getElementById("phrase-clear-search");
+
+    if (!searchInput || !expandBtn || !collapseBtn || !clearSearchBtn) return;
+
+    searchInput.addEventListener("input", (e) => {
+        phraseEditorUiState.query = (e.target.value || "").trim();
+        renderPhraseEditor();
+    });
+
+    expandBtn.addEventListener("click", () => {
+        phraseEditorUiState.openL1.clear();
+        phraseEditorUiState.openL2.clear();
+        menuTree.forEach((l1, l1Index) => {
+            const l1Key = `l1-${l1Index}`;
+            phraseEditorUiState.openL1.add(l1Key);
+            l1.children.forEach((_, l2Index) => {
+                phraseEditorUiState.openL2.add(`${l1Key}-l2-${l2Index}`);
+            });
+        });
+        renderPhraseEditor();
+    });
+
+    collapseBtn.addEventListener("click", () => {
+        phraseEditorUiState.openL1.clear();
+        phraseEditorUiState.openL2.clear();
+        renderPhraseEditor();
+    });
+
+    clearSearchBtn.addEventListener("click", () => {
+        phraseEditorUiState.query = "";
+        searchInput.value = "";
+        renderPhraseEditor();
+    });
+
+    phraseEditorUiState.toolbarSetup = true;
+
+    menuTree.forEach(l1 => {
+        const l1Group = document.createElement("div");
+        l1Group.className = "phrase-editor-group";
+
+        const head = document.createElement("div");
+        head.className = "phrase-editor-group-head";
+        const l1InputWrap = document.createElement("div");
+        l1InputWrap.className = "phrase-editor-input";
+        const l1Label = document.createElement("label");
+        l1Label.textContent = "大分類";
+        const l1Input = document.createElement("input");
+        l1Input.type = "text";
+        l1Input.value = l1.name;
+        l1Input.addEventListener("change", (e) => {
+            l1.name = e.target.value.trim() || l1.name;
+            persistHierarchyToBrowser();
+            renderAll();
+        });
+        l1InputWrap.appendChild(l1Label);
+        l1InputWrap.appendChild(l1Input);
+        head.appendChild(l1InputWrap);
+        l1Group.appendChild(head);
+
+        l1.children.forEach(l2 => {
+            const l2Wrap = document.createElement("div");
+            l2Wrap.className = "phrase-editor-input";
+            l2Wrap.style.marginTop = "0.8rem";
+            const l2Label = document.createElement("label");
+            l2Label.textContent = "中分類";
+            const l2Input = document.createElement("input");
+            l2Input.type = "text";
+            l2Input.value = l2.name;
+            l2Input.addEventListener("change", (e) => {
+                l2.name = e.target.value.trim() || l2.name;
+                persistHierarchyToBrowser();
+                renderAll();
+            });
+            l2Wrap.appendChild(l2Label);
+            l2Wrap.appendChild(l2Input);
+            l1Group.appendChild(l2Wrap);
+
+            l2.children.forEach((l3, idx) => {
+                if (idx % 2 === 0) {
+                    const row = document.createElement("div");
+                    row.className = "phrase-editor-row";
+                    l1Group.appendChild(row);
+                }
+                const row = l1Group.lastElementChild;
+
+                const inputDiv = document.createElement("div");
+                inputDiv.className = "phrase-editor-input";
+
+                const label = document.createElement("label");
+                label.textContent = "決定ボタン名";
+                inputDiv.appendChild(label);
+
+                const labelInput = document.createElement("input");
+                labelInput.type = "text";
+                labelInput.value = l3.name;
+                labelInput.addEventListener("change", (e) => {
+                    const oldPhrase = buildSentence(l1, l2, l3);
+                    l3.name = e.target.value.trim() || l3.name;
+                    const newPhrase = buildSentence(l1, l2, l3);
+                    if (newPhrase !== oldPhrase) modifiedPhraseSet.add(newPhrase);
+                    persistHierarchyToBrowser();
+                    renderAll();
+                });
+                inputDiv.appendChild(labelInput);
+
+                const sentenceDiv = document.createElement("div");
+                sentenceDiv.className = "phrase-editor-input phrase-editor-sentence";
+                const sentenceLabel = document.createElement("label");
+                sentenceLabel.textContent = "発話文";
+                const sentenceInput = document.createElement("input");
+                sentenceInput.type = "text";
+                sentenceInput.value = l3.sentence || "";
+                sentenceInput.placeholder = "空欄なら決定ボタン名を読み上げ";
+                sentenceInput.addEventListener("change", (e) => {
+                    const oldPhrase = buildSentence(l1, l2, l3);
+                    l3.sentence = e.target.value.trim();
+                    const newPhrase = buildSentence(l1, l2, l3);
+                    if (newPhrase && newPhrase !== oldPhrase) modifiedPhraseSet.add(newPhrase);
+                    persistHierarchyToBrowser();
+                });
+                sentenceDiv.appendChild(sentenceLabel);
+                sentenceDiv.appendChild(sentenceInput);
+
+                row.appendChild(inputDiv);
+                row.appendChild(sentenceDiv);
+            });
+        });
+
+        container.appendChild(l1Group);
+    });
+}
+
+function setupTabSystem() {
+    const tabBtns = document.querySelectorAll(".settings-tab-btn");
+    const tabContents = document.querySelectorAll(".settings-tab-content");
+
+    tabBtns.forEach(btn => {
+        btn.addEventListener("click", () => {
+            const tabName = btn.dataset.tab;
+            
+            // Update buttons
+            tabBtns.forEach(b => b.classList.remove("active"));
+            btn.classList.add("active");
+
+            // Update content
+            tabContents.forEach(content => content.classList.remove("active"));
+            document.getElementById(tabName)?.classList.add("active");
+
+            // Generate phrase editor if switching to phrase tab
+            if (tabName === "phrase-tab") {
+                renderPhraseEditor();
+            }
+        });
+    });
+}
+
+async function prefetchModifiedAudio() {
+    if (!GEMINI_API_KEY) {
+        alert("Gemini API Key が設定されていません");
+        return;
+    }
+
+    const modifiedPhrases = Array.from(modifiedPhraseSet).filter(Boolean);
+    if (modifiedPhrases.length === 0) {
+        alert("修正されたセリフがありません");
+        return;
+    }
+
+    if (!confirm(`${modifiedPhrases.length} 個の修正済みセリフの音声を再合成しますか？`)) {
+        return;
+    }
+
+    const modalStatus = document.getElementById("phrase-synthesis-status");
+    const statusRoot = modalStatus || audioStatus;
+    statusRoot.style.display = "block";
+    const statusLabel = statusRoot.querySelector(".status-label");
+    const statusFill = statusRoot.querySelector(".status-progress-fill");
+
+    let successCount = 0;
+    for (let i = 0; i < modifiedPhrases.length; i++) {
+        const text = modifiedPhrases[i];
+
+        const percentage = (i / modifiedPhrases.length) * 100;
+        if (statusLabel) statusLabel.textContent = `修正セリフ生成中: ${successCount}/${modifiedPhrases.length}`;
+        if (statusFill) statusFill.style.width = percentage + "%";
+
+        // キャッシュをクリア（修正済みは再生成）
+        if (db && text) {
+            await new Promise((resolve) => {
+                const tx = db.transaction(STORE_NAME, "readwrite");
+                const store = tx.objectStore(STORE_NAME);
+                store.delete(text);
+                tx.oncomplete = () => resolve();
+            });
+        }
+
+        const success = await speakGemini(text, true);
+        if (success) {
+            successCount++;
+            const newPercentage = (successCount / modifiedPhrases.length) * 100;
+            if (statusLabel) statusLabel.textContent = `修正セリフ生成中: ${successCount}/${modifiedPhrases.length}`;
+            if (statusFill) statusFill.style.width = newPercentage + "%";
+        } else {
+            if (statusLabel) statusLabel.textContent = "⚠ 通信エラーで中断しました";
+            if (statusFill) statusFill.style.width = "0%";
+            setTimeout(() => { statusRoot.style.display = "none"; }, 5000);
+            return;
+        }
+
+        await new Promise(r => setTimeout(r, 600));
+    }
+
+    if (statusLabel) statusLabel.textContent = "✓ 修正セリフの音声生成完了";
+    if (statusFill) statusFill.style.width = "100%";
+    modifiedPhraseSet.clear();
+    setTimeout(() => { statusRoot.style.display = "none"; }, 3000);
+}
+
 settingsBtn.addEventListener("click", () => {
     apiKeyInput.value = GEMINI_API_KEY;
-    if (hierarchyInput) hierarchyInput.value = rawHierarchyText;
+    if (mouseLeftInput) mouseLeftInput.value = mouseClickSpeech.left;
+    if (mouseMiddleInput) mouseMiddleInput.value = mouseClickSpeech.middle;
+    if (mouseRightInput) mouseRightInput.value = mouseClickSpeech.right;
+    
     settingsModal.classList.add("active");
+    
+    // Setup tabs if not already done
+    if (!settingsModal.dataset.tabsSetup) {
+        setupTabSystem();
+        settingsModal.dataset.tabsSetup = "true";
+    }
 });
 
 closeSettingsBtn.addEventListener("click", () => {
     settingsModal.classList.remove("active");
 });
+
+const prefetchModifiedBtn = document.getElementById("prefetch-modified-btn");
+const resetPhrasesBtn = document.getElementById("reset-phrases-btn");
+
+if (prefetchModifiedBtn) {
+    prefetchModifiedBtn.addEventListener("click", prefetchModifiedAudio);
+}
+
+if (resetPhrasesBtn) {
+    resetPhrasesBtn.addEventListener("click", async () => {
+        if (!confirm("セリフ編集の内容を初期状態に戻しますか？")) return;
+
+        localStorage.removeItem(RUNTIME_HIERARCHY_KEY);
+        modifiedPhraseSet.clear();
+        phraseEditorUiState.query = "";
+        phraseEditorUiState.openL1.clear();
+        phraseEditorUiState.openL2.clear();
+        const searchInput = document.getElementById("phrase-search-input");
+        if (searchInput) searchInput.value = "";
+        await loadHierarchy();
+        renderPhraseEditor();
+        alert("初期状態に戻しました");
+    });
+}
 
 saveSettingsBtn.addEventListener("click", async () => {
     const newKey = apiKeyInput.value.trim();
@@ -778,25 +1423,15 @@ saveSettingsBtn.addEventListener("click", async () => {
         localStorage.setItem("gemini_api_key", newKey);
     }
 
-    if (hierarchyInput) {
-        const newHierarchy = hierarchyInput.value;
-        if (newHierarchy !== rawHierarchyText) {
-            // Tauri環境の場合はファイルに書き込む
-            if (window.__TAURI__ && window.__TAURI__.path && window.__TAURI__.fs) {
-                try {
-                    const resourcePath = await window.__TAURI__.path.resolveResource('hierarchy.txt');
-                    await window.__TAURI__.fs.writeTextFile(resourcePath, newHierarchy);
-                    console.log("Saved new hierarchy to", resourcePath);
-                } catch (e) {
-                    console.error("Failed to save hierarchy.txt", e);
-                    alert("階層ファイルの保存に失敗しました: " + e.message);
-                }
-            }
-            // メモリ上のツリーを更新して再描画
-            rawHierarchyText = newHierarchy;
-            parseHierarchyAndRender(newHierarchy);
-        }
-    }
+    const newLeft = normalizedPhrase(mouseLeftInput ? mouseLeftInput.value : "", DEFAULT_MOUSE_CLICK_SPEECH.left);
+    const newMiddle = normalizedPhrase(mouseMiddleInput ? mouseMiddleInput.value : "", DEFAULT_MOUSE_CLICK_SPEECH.middle);
+    const newRight = normalizedPhrase(mouseRightInput ? mouseRightInput.value : "", DEFAULT_MOUSE_CLICK_SPEECH.right);
+    mouseClickSpeech = { left: newLeft, middle: newMiddle, right: newRight };
+    localStorage.setItem("mouse_click_phrase_left", newLeft);
+    localStorage.setItem("mouse_click_phrase_middle", newMiddle);
+    localStorage.setItem("mouse_click_phrase_right", newRight);
+
+    persistHierarchyToBrowser();
 
     alert("設定を保存しました。");
     settingsModal.classList.remove("active");
@@ -818,4 +1453,3 @@ settingsModal.addEventListener("click", (e) => {
     await loadHierarchy();
     // 安全のため、起動時の自動プリフェッチは無効化（ボタン押下時のみ実行）
 })();
-

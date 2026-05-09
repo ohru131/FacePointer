@@ -55,6 +55,10 @@ npm run tauri build
 ## 📁 階層データのカスタマイズ
 `hierarchy.txt` を編集することで、表示されるボタンの名前や階層構造を自由に変更できます。
 
+- 開発モード (`npm run tauri dev`) では、`dist/hierarchy.txt` が初期データとして使われます。
+- インストーラー版では、設定画面から保存した内容はユーザーごとの AppData 配下にある `hierarchy.txt` に保存され、次回起動時からそちらが優先されます。
+- `dist/hierarchy.txt` を変更した場合は、反映のため再ビルド・再インストールが必要です。
+
 ```text
 食事|media/food.png
   ごはん

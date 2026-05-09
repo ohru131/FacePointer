@@ -1,0 +1,662 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rust LT | FacePointer</title>
+    <style>
+      @import url("https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap");
+
+      :root {
+        --bg-1: #f7fafc;
+        --bg-2: #eef5ff;
+        --bg-3: #f9f6f1;
+        --accent-1: #0d6efd;
+        --accent-2: #00a386;
+        --accent-3: #ff6b6b;
+        --text-main: #0f172a;
+        --text-sub: #334155;
+        --card-bg: rgba(255, 255, 255, 0.9);
+        --card-border: rgba(15, 23, 42, 0.12);
+        --shadow: 0 22px 60px rgba(15, 23, 42, 0.12);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        height: 100%;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Zen Kaku Gothic New", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
+        color: var(--text-main);
+        overflow: hidden;
+        background:
+          radial-gradient(1200px 600px at 92% -5%, rgba(13, 110, 253, 0.12), transparent 60%),
+          radial-gradient(900px 500px at 2% 96%, rgba(0, 163, 134, 0.11), transparent 55%),
+          linear-gradient(135deg, var(--bg-1), var(--bg-2) 45%, var(--bg-3));
+      }
+
+      .grain::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image: radial-gradient(rgba(15, 23, 42, 0.05) 1px, transparent 1px);
+        background-size: 3px 3px;
+        mix-blend-mode: multiply;
+        opacity: 0.28;
+      }
+
+      .stage {
+        position: relative;
+        height: 100vh;
+        width: 100vw;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 3.2vw;
+      }
+
+      .slide {
+        width: min(1240px, 96vw);
+        height: min(710px, 88vh);
+        padding: clamp(28px, 3.2vw, 48px);
+        border-radius: 28px;
+        border: 1px solid var(--card-border);
+        background: var(--card-bg);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(6px);
+        display: none;
+        position: relative;
+        overflow: hidden;
+      }
+
+      .slide.active {
+        display: block;
+        animation: reveal 420ms ease;
+      }
+
+      @keyframes reveal {
+        from {
+          transform: translateY(16px) scale(0.985);
+          opacity: 0;
+        }
+        to {
+          transform: translateY(0) scale(1);
+          opacity: 1;
+        }
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 16px;
+        border: 1px solid rgba(15, 23, 42, 0.2);
+        border-radius: 999px;
+        font-size: 1rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--text-sub);
+        background: rgba(13, 110, 253, 0.06);
+        font-weight: 700;
+      }
+
+      h1,
+      h2 {
+        margin: 18px 0 14px;
+        line-height: 1.14;
+      }
+
+      h1 {
+        font-size: clamp(2.6rem, 5.4vw, 4.6rem);
+        font-weight: 900;
+      }
+
+      h2 {
+        font-size: clamp(2rem, 3.8vw, 3.2rem);
+        font-weight: 800;
+      }
+
+      p {
+        margin: 10px 0;
+        color: var(--text-sub);
+        font-size: clamp(1.3rem, 1.95vw, 1.8rem);
+        line-height: 1.55;
+      }
+
+      .title-strong {
+        color: var(--accent-1);
+        text-shadow: 0 6px 20px rgba(13, 110, 253, 0.25);
+      }
+
+      .columns {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 20px;
+        margin-top: 18px;
+      }
+
+      .box {
+        border: 1px solid rgba(15, 23, 42, 0.14);
+        background: rgba(255, 255, 255, 0.75);
+        border-radius: 18px;
+        padding: 18px;
+      }
+
+      ul {
+        margin: 10px 0 0;
+        padding-left: 18px;
+      }
+
+      li {
+        margin: 9px 0;
+        color: var(--text-main);
+        font-size: clamp(1.2rem, 1.8vw, 1.65rem);
+        line-height: 1.45;
+      }
+
+      ol {
+        margin: 10px 0 0;
+        padding-left: 24px;
+      }
+
+      .mono {
+        font-family: "JetBrains Mono", Consolas, monospace;
+        font-size: 0.95em;
+      }
+
+      .diagram {
+        margin-top: 16px;
+        padding: 20px;
+        border-radius: 16px;
+        background: #f8fbff;
+        border: 1px dashed rgba(15, 23, 42, 0.28);
+        font-family: "JetBrains Mono", Consolas, monospace;
+        color: #0f172a;
+        font-size: clamp(1rem, 1.25vw, 1.2rem);
+        line-height: 1.6;
+      }
+
+      .diagram .mermaid {
+        background: transparent;
+      }
+
+      .diagram svg {
+        max-width: 100%;
+        height: auto;
+      }
+
+      .arch-grid {
+        margin-top: 18px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 14px;
+      }
+
+      .arch-node {
+        border: 1px solid rgba(15, 23, 42, 0.18);
+        border-radius: 14px;
+        background: #ffffff;
+        padding: 12px;
+      }
+
+      .arch-node strong {
+        display: block;
+        font-size: clamp(1rem, 1.35vw, 1.28rem);
+        margin-bottom: 4px;
+      }
+
+      .arch-node span {
+        font-size: clamp(0.9rem, 1vw, 1rem);
+        color: var(--text-sub);
+      }
+
+      .big-number {
+        font-size: clamp(3rem, 8vw, 7rem);
+        font-weight: 900;
+        color: var(--accent-2);
+        line-height: 1;
+        margin-top: 6px;
+      }
+
+      .footer {
+        position: absolute;
+        bottom: 18px;
+        left: clamp(24px, 3vw, 42px);
+        right: clamp(24px, 3vw, 42px);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        color: rgba(15, 23, 42, 0.72);
+        font-size: 1rem;
+        font-weight: 700;
+      }
+
+      .progress-wrap {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 6px;
+        background: rgba(15, 23, 42, 0.1);
+      }
+
+      .progress {
+        height: 100%;
+        width: 0%;
+        background: linear-gradient(90deg, var(--accent-3), var(--accent-1), var(--accent-2));
+        transition: width 240ms ease;
+      }
+
+      .controls {
+        position: fixed;
+        top: 16px;
+        right: 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        z-index: 20;
+      }
+
+      button {
+        appearance: none;
+        border: 1px solid rgba(15, 23, 42, 0.28);
+        background: rgba(255, 255, 255, 0.9);
+        color: var(--text-main);
+        border-radius: 10px;
+        padding: 9px 14px;
+        font-family: inherit;
+        font-size: 1.02rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      button:hover {
+        background: #ffffff;
+      }
+
+      .timer {
+        min-width: 86px;
+        text-align: center;
+        font-family: "JetBrains Mono", Consolas, monospace;
+        font-weight: 700;
+        font-size: 1.1rem;
+        color: var(--text-main);
+      }
+
+      .accent {
+        color: var(--accent-1);
+      }
+
+      .small {
+        font-size: 1.08rem;
+      }
+
+      @media (max-width: 900px) {
+        .slide {
+          height: min(780px, 90vh);
+        }
+
+        .columns {
+          grid-template-columns: 1fr;
+          gap: 14px;
+        }
+
+        p,
+        li {
+          line-height: 1.45;
+        }
+
+        .arch-grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body class="grain">
+    <div class="controls">
+      <button id="prevBtn" aria-label="前のスライド">← Prev</button>
+      <button id="nextBtn" aria-label="次のスライド">Next →</button>
+      <button id="timerBtn" aria-label="タイマー開始">Start 5:00</button>
+      <div id="timer" class="timer">05:00</div>
+    </div>
+
+    <main class="stage" aria-live="polite">
+      <section class="slide active">
+        <div class="badge">Rust Community LT / 5 min</div>
+        <h1>
+          顔だけで意思を伝える
+          <span class="title-strong">FacePointer</span>
+        </h1>
+        <p>
+          Tauri + Rustで作った、視線・まばたきベースのコミュニケーションボードです。
+        </p>
+        <div class="columns">
+          <div class="box">
+            <p class="small">今日のゴール</p>
+            <ul>
+              <li>なぜ作ったか</li>
+              <li>Rustをどこに使ったか</li>
+              <li>5分で設計の勘所を共有</li>
+            </ul>
+          </div>
+          <div class="box">
+            <p class="small">一言で</p>
+            <p>
+              「話せない・動かせない」状況でも、<span class="accent">鼻の向き</span>と
+              <span class="accent">滞留操作</span>だけで意思伝達できるUI。
+            </p>
+          </div>
+        </div>
+        <div class="footer">
+          <span>FacePointer</span>
+          <span>1 / 8</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="badge">Problem</div>
+        <h2>背景: 伝えたいのに、伝えられない</h2>
+        <ul>
+          <li>ALS・失語症・術後などで発話/肢体操作が難しい場面がある</li>
+          <li>既存デバイスは高価、または環境構築が重いことがある</li>
+          <li>目標は「まず伝わる」を、PC 1台で実現すること</li>
+        </ul>
+        <div class="big-number">No Touch, No Voice</div>
+        <p>必要なのはカメラと数分の学習コストだけ。</p>
+        <div class="footer">
+          <span>課題定義</span>
+          <span>2 / 8</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="badge">UX Flow</div>
+        <h2>操作体験: 3階層 + 確定ゾーン</h2>
+        <div class="columns">
+          <div class="box">
+            <ul>
+              <li>鼻の向きで赤いポインタを移動</li>
+              <li>「したい事 → 具体動作 → 最終文」を選択</li>
+              <li>画面下の確定ゾーンに滞留すると決定</li>
+            </ul>
+          </div>
+          <div class="box">
+            <p class="small">なぜ滞留方式?</p>
+            <ul>
+              <li>誤クリックが大幅に減る</li>
+              <li>瞬間的な顔ブレに強い</li>
+              <li>身体負荷を抑えられる</li>
+            </ul>
+          </div>
+        </div>
+        <div class="footer">
+          <span>使い心地</span>
+          <span>3 / 8</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="badge">Architecture</div>
+        <h2>全体アーキテクチャ図</h2>
+        <div class="diagram">
+          <pre class="mermaid">
+flowchart LR
+  CAM["Camera Input"] --> FL["FaceLandmarker<br/>MediaPipe Browser"]
+  FL --> UI["Pointer and Dwell Engine"]
+  UI --> SM["Phrase State Machine<br/>3-level hierarchy"]
+  SM --> BR["Tauri Invoke Bridge"]
+  BR --> RS["Rust Backend<br/>File I/O + AppData + Packaging"]
+  SM --> AU["Audio Pipeline<br/>Gemini TTS / IndexedDB / OS fallback"]
+
+  classDef front fill:#eef4ff,stroke:#0d6efd,stroke-width:1.5px,color:#0f172a;
+  classDef rust fill:#ecfdf5,stroke:#00a386,stroke-width:1.5px,color:#0f172a;
+  classDef audio fill:#fff7ed,stroke:#fb923c,stroke-width:1.5px,color:#0f172a;
+  class CAM,FL,UI,SM,BR front;
+  class RS rust;
+  class AU audio;
+          </pre>
+        </div>
+        <div class="arch-grid">
+          <div class="arch-node"><strong>Input Layer</strong><span>Camera, Face landmarks, Nose direction</span></div>
+          <div class="arch-node"><strong>Interaction Layer</strong><span>Pointer control, Dwell confirmation, Menu transition</span></div>
+          <div class="arch-node"><strong>Speech Layer</strong><span>TTS generation, Cache reuse, Offline fallback</span></div>
+          <div class="arch-node"><strong>Bridge Layer</strong><span>Tauri command boundary between JS and Rust</span></div>
+          <div class="arch-node"><strong>Rust Core</strong><span>hierarchy.txt load/save, path resolution, MSI packaging</span></div>
+          <div class="arch-node"><strong>Distribution</strong><span>Windows desktop app with stable deployment</span></div>
+        </div>
+        <div class="footer">
+          <span>全体設計</span>
+          <span>4 / 8</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="badge">Architecture</div>
+        <h2>Rustは「土台の安定性」を担当</h2>
+        <div class="diagram">
+          <pre class="mermaid">
+flowchart TB
+  JS1["MediaPipe FaceLandmarker<br/>JavaScript"] -->|landmarks| JS2["UI State Machine<br/>JavaScript"]
+  JS2 -->|selected phrase| BR["Tauri Command Bridge"]
+  BR --> RC["Rust Core"]
+  RC --> IO["hierarchy.txt load/save"]
+  RC --> APPPATH["AppData path resolution"]
+  RC --> PKG["MSI packaging and distribution"]
+
+  classDef js fill:#eef4ff,stroke:#0d6efd,stroke-width:1.5px,color:#0f172a;
+  classDef rust fill:#ecfdf5,stroke:#00a386,stroke-width:1.5px,color:#0f172a;
+  classDef detail fill:#f8fafc,stroke:#64748b,stroke-width:1px,color:#0f172a;
+  class JS1,JS2,BR js;
+  class RC rust;
+  class IO,APPPATH,PKG detail;
+          </pre>
+        </div>
+        <ul>
+          <li>フロントは高速な反応重視、OS境界と永続化はRustで厳密に</li>
+          <li>Windows配布で「動く確率」を上げるため、Tauriを採用</li>
+        </ul>
+        <div class="footer">
+          <span>責務分離</span>
+          <span>4 / 8</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="badge">Rust Point</div>
+        <h2>Rustで効いた3つのポイント</h2>
+        <div class="columns">
+          <div class="box">
+            <p class="small mono">1) 安全な設定I/O</p>
+            <p>ユーザーごとの階層データをAppDataに保存。パス解決とファイル操作を型で管理。</p>
+          </div>
+          <div class="box">
+            <p class="small mono">2) 配布体験</p>
+            <p>MSI化まで一気通貫。現場PCへの導入が早い。</p>
+          </div>
+          <div class="box">
+            <p class="small mono">3) 境界の明確化</p>
+            <p>JSの柔軟さとRustの堅牢性を分離し、障害時の切り分けがしやすい。</p>
+          </div>
+          <div class="box">
+            <p class="small mono">一言</p>
+            <p>「全部Rust」ではなく「壊れやすい境界こそRust」が効く。</p>
+          </div>
+        </div>
+        <div class="footer">
+          <span>実装の勘所</span>
+          <span>5 / 8</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="badge">Audio</div>
+        <h2>音声合成: オンライン品質 × オフライン運用</h2>
+        <ul>
+          <li>Google Gemini 2.5 Flash TTSで自然な音声を生成</li>
+          <li>生成結果はIndexedDBキャッシュで再利用</li>
+          <li>通信不能時はOS標準音声へ自動フォールバック</li>
+        </ul>
+        <p>
+          医療現場のようなネットワーク制約でも、継続利用できる設計にしています。
+        </p>
+        <div class="footer">
+          <span>運用現実性</span>
+          <span>6 / 8</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="badge">Demo</div>
+        <h2>ライブデモで見せる流れ（90秒）</h2>
+        <ol>
+          <li>顔トラッキング開始、赤ポインタの追従を確認</li>
+          <li>「食事 → ごはん → ごはんを食べたい」を滞留で選択</li>
+          <li>音声再生（2回目はキャッシュで即時）</li>
+        </ol>
+        <p>失敗しても伝わるように、バックアップ動画も1本だけ用意。</p>
+        <div class="footer">
+          <span>見せ方</span>
+          <span>7 / 8</span>
+        </div>
+      </section>
+
+      <section class="slide">
+        <div class="badge">Closing</div>
+        <h2>まとめ</h2>
+        <ul>
+          <li>FacePointerは、アクセシビリティを「今すぐ使える形」にする試み</li>
+          <li>Rustは、配布・設定・OS境界の信頼性を上げる役割で強い</li>
+          <li>次はキャリブレーション自動化と多言語音声を進めます</li>
+        </ul>
+        <p class="mono">GitHub: github.com/ohru131/FacePointer</p>
+        <h2 class="accent" style="margin-top: 22px">ご清聴ありがとうございました</h2>
+        <div class="footer">
+          <span>Q&A</span>
+          <span>8 / 8</span>
+        </div>
+      </section>
+    </main>
+
+    <div class="progress-wrap" aria-hidden="true">
+      <div id="progress" class="progress"></div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+    <script>
+      const slides = Array.from(document.querySelectorAll(".slide"));
+      const progress = document.getElementById("progress");
+      const prevBtn = document.getElementById("prevBtn");
+      const nextBtn = document.getElementById("nextBtn");
+      const timerBtn = document.getElementById("timerBtn");
+      const timerEl = document.getElementById("timer");
+
+      if (window.mermaid) {
+        window.mermaid.initialize({
+          startOnLoad: true,
+          securityLevel: "loose",
+          theme: "base",
+          themeVariables: {
+            primaryColor: "#eef4ff",
+            primaryTextColor: "#0f172a",
+            primaryBorderColor: "#0d6efd",
+            lineColor: "#334155",
+            secondaryColor: "#ecfdf5",
+            tertiaryColor: "#fff7ed",
+            fontFamily: "Zen Kaku Gothic New, Meiryo, sans-serif",
+            fontSize: "18px"
+          }
+        });
+      }
+
+      let index = 0;
+      let remaining = 300;
+      let timerId = null;
+
+      function update() {
+        slides.forEach((slide, i) => slide.classList.toggle("active", i === index));
+        const ratio = ((index + 1) / slides.length) * 100;
+        progress.style.width = `${ratio}%`;
+      }
+
+      function updateFooterPageCount() {
+        slides.forEach((slide, i) => {
+          const parts = slide.querySelectorAll(".footer span");
+          if (parts.length >= 2) {
+            parts[1].textContent = `${i + 1} / ${slides.length}`;
+          }
+        });
+      }
+
+      function next() {
+        index = Math.min(index + 1, slides.length - 1);
+        update();
+      }
+
+      function prev() {
+        index = Math.max(index - 1, 0);
+        update();
+      }
+
+      function renderTime() {
+        const min = String(Math.floor(remaining / 60)).padStart(2, "0");
+        const sec = String(remaining % 60).padStart(2, "0");
+        timerEl.textContent = `${min}:${sec}`;
+        timerEl.style.color = remaining <= 60 ? "#dc2626" : "#0f172a";
+      }
+
+      function toggleTimer() {
+        if (timerId) {
+          clearInterval(timerId);
+          timerId = null;
+          timerBtn.textContent = "Resume";
+          return;
+        }
+
+        if (remaining <= 0) {
+          remaining = 300;
+          renderTime();
+        }
+
+        timerBtn.textContent = "Pause";
+        timerId = setInterval(() => {
+          remaining -= 1;
+          renderTime();
+          if (remaining <= 0) {
+            clearInterval(timerId);
+            timerId = null;
+            timerBtn.textContent = "Restart";
+          }
+        }, 1000);
+      }
+
+      document.addEventListener("keydown", (e) => {
+        if (["ArrowRight", "PageDown", " "].includes(e.key)) {
+          e.preventDefault();
+          next();
+        }
+        if (["ArrowLeft", "PageUp"].includes(e.key)) {
+          e.preventDefault();
+          prev();
+        }
+        if (e.key.toLowerCase() === "t") {
+          toggleTimer();
+        }
+      });
+
+      prevBtn.addEventListener("click", prev);
+      nextBtn.addEventListener("click", next);
+      timerBtn.addEventListener("click", toggleTimer);
+
+      updateFooterPageCount();
+      update();
+      renderTime();
+    </script>
+  </body>
+</html>
