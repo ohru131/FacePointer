@@ -18,6 +18,9 @@ const confirmText = document.getElementById("confirm-text");
 const confirmZone = document.getElementById("confirm-zone");
 const confirmZonePreview = document.getElementById("confirm-zone-preview");
 const confirmZoneBar = document.getElementById("confirm-zone-bar");
+const appRoot = document.getElementById("app");
+const modePrompt = document.getElementById("mode-prompt");
+const modeSelect = document.getElementById("mode-select");
 
 let faceLandmarker;
 let lastVideoTime = -1;
@@ -79,6 +82,37 @@ const phraseEditorUiState = {
     toolbarSetup: false
 };
 
+const APP_MODE_KEY = "app_mode";
+const APP_MODES = Object.freeze({
+    SYMPTOM: "symptom",
+    HIERARCHY: "hierarchy"
+});
+const SYMPTOM_STAGE_SYMPTOM = "symptom";
+const SYMPTOM_STAGE_BODY_PART = "body-part";
+const SYMPTOM_IDLE_RESET_MS = 30000;
+const SYMPTOM_RESET_AFTER_CONFIRM_MS = 1200;
+
+const symptomChoices = [
+    { name: "かゆい", icon: "media/symptom-itch.svg" },
+    { name: "痛い", icon: "media/symptom-pain.svg" }
+];
+
+const symptomBodyParts = [
+    { name: "頭", icon: "media/body-head.svg" },
+    { name: "体", icon: "media/body-body.svg" },
+    { name: "手", icon: "media/body-hand.svg" },
+    { name: "足", icon: "media/body-leg.svg" }
+];
+
+let appMode = localStorage.getItem(APP_MODE_KEY) || APP_MODES.SYMPTOM;
+if (!Object.values(APP_MODES).includes(appMode)) {
+    appMode = APP_MODES.SYMPTOM;
+}
+
+let symptomStage = SYMPTOM_STAGE_SYMPTOM;
+let selectedSymptom = null;
+let symptomStageStartedAt = 0;
+
 function escapeHtml(value) {
     return String(value)
         .replaceAll("&", "&amp;")
@@ -91,6 +125,77 @@ function escapeHtml(value) {
 function buildSentence(l1, l2, l3) {
     if (l3 && l3.sentence && l3.sentence.trim()) return l3.sentence.trim();
     return l3 ? l3.name : "";
+}
+
+function isSymptomMode() {
+    return appMode === APP_MODES.SYMPTOM;
+}
+
+function buildSymptomSentence(bodyPart) {
+    if (!selectedSymptom || !bodyPart) return "";
+    return `${bodyPart.name}が${selectedSymptom.name}です。`;
+}
+
+function resetSymptomModeState(shouldRender = true) {
+    symptomStage = SYMPTOM_STAGE_SYMPTOM;
+    selectedSymptom = null;
+    symptomStageStartedAt = 0;
+    if (shouldRender) {
+        renderAll();
+    }
+}
+
+function setAppMode(nextMode, { persist = true } = {}) {
+    appMode = Object.values(APP_MODES).includes(nextMode) ? nextMode : APP_MODES.SYMPTOM;
+
+    if (persist) {
+        localStorage.setItem(APP_MODE_KEY, appMode);
+    }
+
+    confirmZoneActive = false;
+    confirmZoneDwellStart = 0;
+    confirmZoneBar.style.width = "0%";
+
+    if (isSymptomMode()) {
+        resetSymptomModeState(false);
+    } else {
+        applyDefaultSelections();
+    }
+
+    renderAll();
+}
+
+function handleSymptomClick(item) {
+    if (symptomStage === SYMPTOM_STAGE_SYMPTOM) {
+        selectedSymptom = item;
+        symptomStage = SYMPTOM_STAGE_BODY_PART;
+        symptomStageStartedAt = Date.now();
+        renderAll();
+        return;
+    }
+
+    const sentence = buildSymptomSentence(item);
+    if (!sentence) return;
+
+    showConfirm(sentence);
+    speak(sentence);
+
+    window.clearTimeout(window.symptomResetTimer);
+    window.symptomResetTimer = window.setTimeout(() => {
+        if (isSymptomMode()) {
+            resetSymptomModeState();
+        }
+    }, SYMPTOM_RESET_AFTER_CONFIRM_MS);
+}
+
+function checkSymptomIdleReset() {
+    if (!isSymptomMode() || symptomStage !== SYMPTOM_STAGE_BODY_PART || !symptomStageStartedAt) {
+        return;
+    }
+
+    if (Date.now() - symptomStageStartedAt >= SYMPTOM_IDLE_RESET_MS) {
+        resetSymptomModeState();
+    }
 }
 
 // =========================================================
@@ -279,6 +384,11 @@ function renderRow(container, items, rowNum, activeItemName) {
 // Click handler
 // =========================================================
 function handleClick(rowNum, item) {
+    if (isSymptomMode()) {
+        handleSymptomClick(item);
+        return;
+    }
+
     if (rowNum === 1) {
         selectedL1 = item;
         selectedL2 = item?.children?.[0] || null;
@@ -296,7 +406,7 @@ function handleClick(rowNum, item) {
     } else if (rowNum === 3) {
         // Confirm selection
         if (!selectedL1 || !selectedL2) return;
-        const sentence = buildSentence(selectedL1.name, selectedL2.name, item.name);
+        const sentence = buildSentence(selectedL1, selectedL2, item);
         showConfirm(sentence);
         speak(sentence);
     }
@@ -344,6 +454,10 @@ function checkPointerCollision() {
     if (hoveredBtn) {
         const rowNum = parseInt(hoveredBtn.dataset.row);
         const itemName = hoveredBtn.dataset.name;
+
+        if (isSymptomMode()) {
+            return;
+        }
 
         // 1階層目: ホバーしたら即座に選択肢を固定し、2段目を表示
         if (rowNum === 1) {
@@ -416,6 +530,37 @@ function checkPointerCollision() {
 }
 
 function renderAll() {
+    appRoot.dataset.mode = appMode;
+    appRoot.dataset.symptomStage = symptomStage;
+
+    if (isSymptomMode()) {
+        const symptomItems = symptomStage === SYMPTOM_STAGE_SYMPTOM ? symptomChoices : symptomBodyParts;
+        const promptText = symptomStage === SYMPTOM_STAGE_SYMPTOM
+            ? "どうしましたか？"
+            : `${selectedSymptom.name}場所を選んでください`;
+
+        if (modePrompt) {
+            modePrompt.textContent = promptText;
+        }
+
+        row2Container.innerHTML = "";
+        row3Container.innerHTML = "";
+        row2Container.style.display = "none";
+        row3Container.style.display = "none";
+        confirmZone.style.display = "none";
+        confirmZonePreview.textContent = "";
+        renderRow(row1Container, symptomItems, 1, null);
+        updateHierarchyVisualState();
+        return;
+    }
+
+    if (modePrompt) {
+        modePrompt.textContent = "";
+    }
+
+    row2Container.style.display = "grid";
+    row3Container.style.display = "grid";
+    confirmZone.style.display = "flex";
     renderRow(row1Container, menuTree, 1, selectedL1 ? selectedL1.name : null);
     const l2Items = selectedL1?.children || [];
     renderRow(row2Container, l2Items, 2, selectedL2 ? selectedL2.name : null);
@@ -425,12 +570,18 @@ function renderAll() {
 }
 
 function updateHierarchyVisualState() {
+    row1Container.classList.toggle("btn-row--symptom", isSymptomMode());
     row2Container.classList.toggle("btn-row--parent-l1", !!selectedL1);
     row3Container.classList.toggle("btn-row--parent-l1", !!selectedL1);
     row3Container.classList.toggle("btn-row--parent-l2", !!selectedL2);
 }
 
 function updateConfirmZone() {
+    if (isSymptomMode()) {
+        confirmZonePreview.textContent = "";
+        return;
+    }
+
     if (pendingL3 && selectedL1 && selectedL2) {
         const preview = buildSentence(selectedL1, selectedL2, pendingL3);
         confirmZonePreview.textContent = `「${preview}」`;
@@ -667,6 +818,15 @@ async function prefetchAllAudio() {
         });
     });
 
+    symptomChoices.forEach(symptom => {
+        symptomBodyParts.forEach(bodyPart => {
+            const sentence = `${bodyPart.name}が${symptom.name}です。`.trim();
+            if (sentence) {
+                phrases.push(sentence);
+            }
+        });
+    });
+
     // マウスクリックのセリフも含める
     Object.values(mouseClickSpeech).forEach(p => {
         if (p) phrases.push(p.trim());
@@ -766,6 +926,12 @@ async function predictWebcam() {
     if (results.faceLandmarks) {
         for (const landmarks of results.faceLandmarks) {
             drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_TESSELATION, { color: "#808080CC", lineWidth: 1.5 });
+            if (FaceLandmarker.FACE_LANDMARKS_LIPS) {
+                drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_LIPS, {
+                    color: isMouthOpen ? "#ff6b6b" : "#2dc7a1",
+                    lineWidth: isMouthOpen ? 4 : 2.5
+                });
+            }
             const nose = landmarks[4];
             if (isCalibrating) {
                 calibratedNoseX = nose.x;
@@ -787,6 +953,7 @@ async function predictWebcam() {
     pointerElement.style.left = `${pointerX}px`;
     pointerElement.style.top = `${pointerY}px`;
     checkPointerCollision();
+    checkSymptomIdleReset();
     window.requestAnimationFrame(predictWebcam);
 }
 
@@ -806,6 +973,11 @@ function updateGestureDetection(results, landmarks) {
     const nose = landmarks[4];
     const forehead = landmarks[10];
     const relativePos = nose.y - forehead.y;
+    if (isSymptomMode()) {
+        lastNoseY = relativePos;
+        return;
+    }
+
     if (lastNoseY !== 0) {
         const delta = relativePos - lastNoseY;
         if (delta > NOD_THRESHOLD && !isNodding) {
@@ -827,7 +999,7 @@ function showGestureFeedback() {
     setTimeout(() => {
         gestureIndicator.classList.remove("active");
         pointerElement.style.transform = "translate(-50%, -50%) scale(1)";
-        pointerElement.style.backgroundColor = "var(--primary-color)";
+        pointerElement.style.backgroundColor = "var(--primary)";
         gestureCooldown = false;
     }, GESTURE_COOLDOWN_MS);
 }
@@ -1378,6 +1550,7 @@ settingsBtn.addEventListener("click", () => {
     if (mouseLeftInput) mouseLeftInput.value = mouseClickSpeech.left;
     if (mouseMiddleInput) mouseMiddleInput.value = mouseClickSpeech.middle;
     if (mouseRightInput) mouseRightInput.value = mouseClickSpeech.right;
+    if (modeSelect) modeSelect.value = appMode;
     
     settingsModal.classList.add("active");
     
@@ -1431,6 +1604,10 @@ saveSettingsBtn.addEventListener("click", async () => {
     localStorage.setItem("mouse_click_phrase_middle", newMiddle);
     localStorage.setItem("mouse_click_phrase_right", newRight);
 
+    if (modeSelect) {
+        setAppMode(modeSelect.value);
+    }
+
     persistHierarchyToBrowser();
 
     alert("設定を保存しました。");
@@ -1451,5 +1628,6 @@ settingsModal.addEventListener("click", (e) => {
     await initDB();
     await setupMediaPipe();
     await loadHierarchy();
+    setAppMode(appMode, { persist: false });
     // 安全のため、起動時の自動プリフェッチは無効化（ボタン押下時のみ実行）
 })();

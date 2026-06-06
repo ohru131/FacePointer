@@ -23,6 +23,8 @@
         <!-- UI Layer -->
         <div id="ui-layer">
 
+            <div id="mode-prompt" aria-live="polite"></div>
+
 
             <!-- 3 rows of 4 buttons each -->
             <div id="hierarchy-panel">
@@ -88,6 +90,14 @@
 
                 <!-- API Tab -->
                 <div id="api-tab" class="settings-tab-content active">
+                    <div class="setting-item">
+                        <label for="mode-select">操作モード</label>
+                        <select id="mode-select">
+                            <option value="symptom">症状モード</option>
+                            <option value="hierarchy">階層モード</option>
+                        </select>
+                        <small>症状モードでは「かゆい / 痛い」から始めて、口を開くと確定します。</small>
+                    </div>
                     <div class="setting-item">
                         <label for="api-key-input">Gemini API Key (Google Cloud TTS用):</label>
                         <input type="text" id="api-key-input" placeholder="AIZA...">
