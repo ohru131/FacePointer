@@ -72,8 +72,24 @@
                 </div>
             </div>
             <div class="control-item">
-                <span>感度</span>
-                <input type="range" id="sensitivity-slider" min="1" max="10" step="0.5" value="4">
+                <div id="quick-tuning" aria-label="調整スライダー">
+                    <div class="compact-slider-item">
+                        <label for="sensitivity-slider">感度 <span id="sensitivity-value">4.0</span></label>
+                        <input type="range" id="sensitivity-slider" min="1" max="10" step="0.5" value="4">
+                    </div>
+                    <div class="compact-slider-item">
+                        <label for="relative-speed-slider">横移動速度 <span id="relative-speed-value">1400</span></label>
+                        <input type="range" id="relative-speed-slider" min="400" max="2800" step="50" value="1400">
+                    </div>
+                    <div class="compact-slider-item">
+                        <label for="relative-deadzone-slider">反応しきい値 <span id="relative-deadzone-value">0.0018</span></label>
+                        <input type="range" id="relative-deadzone-slider" min="0.0005" max="0.0080" step="0.0001" value="0.0018">
+                    </div>
+                    <div class="compact-slider-item">
+                        <label for="jaw-open-threshold-slider">口開き判定 <span id="jaw-open-threshold-value">0.45</span></label>
+                        <input type="range" id="jaw-open-threshold-slider" min="0.10" max="0.90" step="0.01" value="0.45">
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -93,10 +109,11 @@
                     <div class="setting-item">
                         <label for="mode-select">操作モード</label>
                         <select id="mode-select">
+                            <option value="symptom-relative">新モード（横移動）</option>
                             <option value="symptom">症状モード</option>
                             <option value="hierarchy">階層モード</option>
                         </select>
-                        <small>症状モードでは「かゆい / 痛い」から始めて、口を開くと確定します。</small>
+                        <small>調整スライダーはメイン画面右下で即時反映されます。</small>
                     </div>
                     <div class="setting-item">
                         <label for="api-key-input">Gemini API Key (Google Cloud TTS用):</label>

@@ -40,6 +40,8 @@ let pendingL3 = null;  // last hovered L3 item (for confirm zone)
 const CONFIRM_ZONE_DWELL_MS = 700;
 let confirmZoneDwellStart = 0;
 let confirmZoneActive = false;
+const HOVER_SWITCH_HYSTERESIS_PX = 26;
+let lastHoveredButtonKey = "";
 
 // Track "visited" buttons to keep them colored
 const visitedL1 = new Set();
@@ -52,17 +54,37 @@ let targetX = pointerX;
 let targetY = pointerY;
 const LERP_FACTOR = 0.18;
 
+const POINTER_SENSITIVITY_KEY = "pointer_sensitivity";
+const RELATIVE_POINTER_DEADZONE_KEY = "relative_pointer_deadzone";
+const RELATIVE_POINTER_STEP_GAIN_KEY = "relative_pointer_step_gain";
+const JAW_OPEN_THRESHOLD_KEY = "jaw_open_threshold";
+
+const POINTER_SENSITIVITY_DEFAULT = 4;
+const RELATIVE_POINTER_DEADZONE_DEFAULT = 0.0018;
+const RELATIVE_POINTER_STEP_GAIN_DEFAULT = 1400;
+const JAW_OPEN_THRESHOLD_DEFAULT = 0.45;
+
+function readStoredNumber(key, fallback, min, max) {
+    const raw = localStorage.getItem(key);
+    const parsed = Number.parseFloat(raw);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.max(min, Math.min(max, parsed));
+}
+
 // Calibration
 let calibratedNoseX = 0.5;
 let calibratedNoseY = 0.5;
 let isCalibrating = true;
-let pointerSensitivity = 4;
+let pointerSensitivity = readStoredNumber(POINTER_SENSITIVITY_KEY, POINTER_SENSITIVITY_DEFAULT, 1, 10);
+let relativePointerDeadzone = readStoredNumber(RELATIVE_POINTER_DEADZONE_KEY, RELATIVE_POINTER_DEADZONE_DEFAULT, 0.0005, 0.0080);
+let relativePointerStepGain = readStoredNumber(RELATIVE_POINTER_STEP_GAIN_KEY, RELATIVE_POINTER_STEP_GAIN_DEFAULT, 400, 2800);
+let jawOpenThreshold = readStoredNumber(JAW_OPEN_THRESHOLD_KEY, JAW_OPEN_THRESHOLD_DEFAULT, 0.1, 0.9);
+let lastNoseX = 0;
 
 // Gesture state
 let isMouthOpen = false;
 let lastNoseY = 0;
 let isNodding = false;
-const JAW_OPEN_THRESHOLD = 0.45;
 const NOD_THRESHOLD = 0.012;
 
 // Gesture cooldown
@@ -84,6 +106,7 @@ const phraseEditorUiState = {
 
 const APP_MODE_KEY = "app_mode";
 const APP_MODES = Object.freeze({
+    SYMPTOM_RELATIVE: "symptom-relative",
     SYMPTOM: "symptom",
     HIERARCHY: "hierarchy"
 });
@@ -104,14 +127,16 @@ const symptomBodyParts = [
     { name: "足", icon: "media/body-leg.svg" }
 ];
 
-let appMode = localStorage.getItem(APP_MODE_KEY) || APP_MODES.SYMPTOM;
+let appMode = localStorage.getItem(APP_MODE_KEY) || APP_MODES.SYMPTOM_RELATIVE;
 if (!Object.values(APP_MODES).includes(appMode)) {
-    appMode = APP_MODES.SYMPTOM;
+    appMode = APP_MODES.SYMPTOM_RELATIVE;
 }
 
 let symptomStage = SYMPTOM_STAGE_SYMPTOM;
 let selectedSymptom = null;
-let symptomStageStartedAt = 0;
+let symptomLastActivityAt = 0;
+let lastSymptomNoseX = null;
+let lastSymptomNoseY = null;
 
 function escapeHtml(value) {
     return String(value)
@@ -128,7 +153,11 @@ function buildSentence(l1, l2, l3) {
 }
 
 function isSymptomMode() {
-    return appMode === APP_MODES.SYMPTOM;
+    return appMode === APP_MODES.SYMPTOM || appMode === APP_MODES.SYMPTOM_RELATIVE;
+}
+
+function isRelativePointerMode() {
+    return appMode === APP_MODES.SYMPTOM_RELATIVE;
 }
 
 function buildSymptomSentence(bodyPart) {
@@ -139,14 +168,19 @@ function buildSymptomSentence(bodyPart) {
 function resetSymptomModeState(shouldRender = true) {
     symptomStage = SYMPTOM_STAGE_SYMPTOM;
     selectedSymptom = null;
-    symptomStageStartedAt = 0;
+    symptomLastActivityAt = 0;
+    lastSymptomNoseX = null;
+    lastSymptomNoseY = null;
     if (shouldRender) {
         renderAll();
     }
 }
 
 function setAppMode(nextMode, { persist = true } = {}) {
-    appMode = Object.values(APP_MODES).includes(nextMode) ? nextMode : APP_MODES.SYMPTOM;
+    appMode = Object.values(APP_MODES).includes(nextMode) ? nextMode : APP_MODES.SYMPTOM_RELATIVE;
+    lastNoseX = 0;
+    lastSymptomNoseX = null;
+    lastSymptomNoseY = null;
 
     if (persist) {
         localStorage.setItem(APP_MODE_KEY, appMode);
@@ -165,11 +199,56 @@ function setAppMode(nextMode, { persist = true } = {}) {
     renderAll();
 }
 
+function getSymptomRowPointerBounds() {
+    if (!isSymptomMode()) return null;
+
+    const buttons = Array.from(row1Container.querySelectorAll(".h-btn:not(.h-btn--empty)"));
+    if (buttons.length === 0) return null;
+
+    const centers = buttons.map(btn => {
+        const rect = btn.getBoundingClientRect();
+        return {
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2
+        };
+    });
+
+    const minX = Math.min(...centers.map(c => c.x));
+    const maxX = Math.max(...centers.map(c => c.x));
+    const centerX = centers.reduce((sum, c) => sum + c.x, 0) / centers.length;
+    const centerY = centers.reduce((sum, c) => sum + c.y, 0) / centers.length;
+    return { minX, maxX, centerX, centerY };
+}
+
+function updateRelativePointerTarget(noseX) {
+    const bounds = getSymptomRowPointerBounds();
+    if (!bounds) return;
+
+    if (lastNoseX === 0) {
+        lastNoseX = noseX;
+        targetX = bounds.centerX;
+        targetY = bounds.centerY;
+        return;
+    }
+
+    const movement = lastNoseX - noseX;
+    const absMovement = Math.abs(movement);
+    if (absMovement > relativePointerDeadzone) {
+        const signed = Math.sign(movement);
+        const scaled = (absMovement - relativePointerDeadzone) * relativePointerStepGain * pointerSensitivity;
+        targetX += signed * scaled;
+    }
+
+    targetX = Math.max(bounds.minX, Math.min(bounds.maxX, targetX));
+    targetY = bounds.centerY;
+    lastNoseX = noseX;
+}
+
 function handleSymptomClick(item) {
     if (symptomStage === SYMPTOM_STAGE_SYMPTOM) {
         selectedSymptom = item;
         symptomStage = SYMPTOM_STAGE_BODY_PART;
-        symptomStageStartedAt = Date.now();
+        symptomLastActivityAt = Date.now();
         renderAll();
         return;
     }
@@ -189,13 +268,32 @@ function handleSymptomClick(item) {
 }
 
 function checkSymptomIdleReset() {
-    if (!isSymptomMode() || symptomStage !== SYMPTOM_STAGE_BODY_PART || !symptomStageStartedAt) {
+    if (!isSymptomMode() || symptomStage !== SYMPTOM_STAGE_BODY_PART || !symptomLastActivityAt) {
         return;
     }
 
-    if (Date.now() - symptomStageStartedAt >= SYMPTOM_IDLE_RESET_MS) {
+    if (Date.now() - symptomLastActivityAt >= SYMPTOM_IDLE_RESET_MS) {
         resetSymptomModeState();
     }
+}
+
+function trackSymptomActivityByMovement(noseX, noseY) {
+    if (!isSymptomMode() || symptomStage !== SYMPTOM_STAGE_BODY_PART) return;
+
+    if (lastSymptomNoseX === null || lastSymptomNoseY === null) {
+        lastSymptomNoseX = noseX;
+        lastSymptomNoseY = noseY;
+        return;
+    }
+
+    const dx = Math.abs(noseX - lastSymptomNoseX);
+    const dy = Math.abs(noseY - lastSymptomNoseY);
+    if (dx >= relativePointerDeadzone || dy >= relativePointerDeadzone) {
+        symptomLastActivityAt = Date.now();
+    }
+
+    lastSymptomNoseX = noseX;
+    lastSymptomNoseY = noseY;
 }
 
 // =========================================================
@@ -439,17 +537,46 @@ function showConfirm(sentence) {
 function checkPointerCollision() {
     const allBtns = document.querySelectorAll(".h-btn:not(.h-btn--empty)");
     let hoveredBtn = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    let currentDistance = Number.POSITIVE_INFINITY;
+    let currentHoveredBtn = null;
 
     allBtns.forEach(btn => {
         const rect = btn.getBoundingClientRect();
         const inside = pointerX >= rect.left && pointerX <= rect.right && pointerY >= rect.top && pointerY <= rect.bottom;
         if (inside) {
-            btn.classList.add("hover");
-            hoveredBtn = btn;
-        } else {
-            btn.classList.remove("hover");
+            const cx = rect.left + rect.width / 2;
+            const cy = rect.top + rect.height / 2;
+            const dx = pointerX - cx;
+            const dy = pointerY - cy;
+            const dist = dx * dx + dy * dy;
+            if (dist < bestDistance) {
+                bestDistance = dist;
+                hoveredBtn = btn;
+            }
+
+            const btnKey = `${btn.dataset.row}|${btn.dataset.name}`;
+            if (btnKey === lastHoveredButtonKey) {
+                currentDistance = dist;
+                currentHoveredBtn = btn;
+            }
         }
+        btn.classList.remove("hover");
     });
+
+    if (hoveredBtn && currentHoveredBtn) {
+        const hysteresisSq = HOVER_SWITCH_HYSTERESIS_PX * HOVER_SWITCH_HYSTERESIS_PX;
+        if (currentDistance <= bestDistance + hysteresisSq) {
+            hoveredBtn = currentHoveredBtn;
+        }
+    }
+
+    if (hoveredBtn) {
+        hoveredBtn.classList.add("hover");
+        lastHoveredButtonKey = `${hoveredBtn.dataset.row}|${hoveredBtn.dataset.name}`;
+    } else {
+        lastHoveredButtonKey = "";
+    }
 
     if (hoveredBtn) {
         const rowNum = parseInt(hoveredBtn.dataset.row);
@@ -937,14 +1064,20 @@ async function predictWebcam() {
                 calibratedNoseX = nose.x;
                 calibratedNoseY = nose.y;
                 isCalibrating = false;
+                lastNoseX = nose.x;
                 speak("完了");
             }
-            const deltaX = (calibratedNoseX - nose.x) * pointerSensitivity;
-            const deltaY = (nose.y - calibratedNoseY) * pointerSensitivity;
-            targetX = (0.5 + deltaX) * window.innerWidth;
-            targetY = (0.5 + deltaY) * window.innerHeight;
-            targetX = Math.max(0, Math.min(window.innerWidth, targetX));
-            targetY = Math.max(0, Math.min(window.innerHeight, targetY));
+            if (isRelativePointerMode()) {
+                updateRelativePointerTarget(nose.x);
+            } else {
+                const deltaX = (calibratedNoseX - nose.x) * pointerSensitivity;
+                const deltaY = (nose.y - calibratedNoseY) * pointerSensitivity;
+                targetX = (0.5 + deltaX) * window.innerWidth;
+                targetY = (0.5 + deltaY) * window.innerHeight;
+                targetX = Math.max(0, Math.min(window.innerWidth, targetX));
+                targetY = Math.max(0, Math.min(window.innerHeight, targetY));
+            }
+            trackSymptomActivityByMovement(nose.x, nose.y);
             updateGestureDetection(results, landmarks);
         }
     }
@@ -962,11 +1095,11 @@ function updateGestureDetection(results, landmarks) {
     if (results.faceBlendshapes && results.faceBlendshapes.length > 0) {
         const cats = results.faceBlendshapes[0].categories;
         const jawOpen = cats.find(c => c.categoryName === "jawOpen")?.score || 0;
-        if (jawOpen > JAW_OPEN_THRESHOLD && !isMouthOpen) {
+        if (jawOpen > jawOpenThreshold && !isMouthOpen) {
             isMouthOpen = true;
             showGestureFeedback();
             triggerClick();
-        } else if (jawOpen <= JAW_OPEN_THRESHOLD) {
+        } else if (jawOpen <= jawOpenThreshold) {
             isMouthOpen = false;
         }
     }
@@ -1024,7 +1157,13 @@ calibrateBtn.addEventListener("click", () => {
 });
 sensitivitySlider.addEventListener("input", e => {
     pointerSensitivity = parseFloat(e.target.value);
+    localStorage.setItem(POINTER_SENSITIVITY_KEY, String(pointerSensitivity));
+    refreshTuningSliderLabels();
 });
+
+if (sensitivitySlider) {
+    sensitivitySlider.value = String(pointerSensitivity);
+}
 
 const audioCacheBtn = document.getElementById("audio-cache-btn");
 audioCacheBtn.addEventListener("click", () => {
@@ -1045,9 +1184,52 @@ const apiKeyInput = document.getElementById("api-key-input");
 const mouseLeftInput = document.getElementById("mouse-left-input");
 const mouseMiddleInput = document.getElementById("mouse-middle-input");
 const mouseRightInput = document.getElementById("mouse-right-input");
+const relativeSpeedSlider = document.getElementById("relative-speed-slider");
+const relativeDeadzoneSlider = document.getElementById("relative-deadzone-slider");
+const jawOpenThresholdSlider = document.getElementById("jaw-open-threshold-slider");
+const sensitivityValue = document.getElementById("sensitivity-value");
+const relativeSpeedValue = document.getElementById("relative-speed-value");
+const relativeDeadzoneValue = document.getElementById("relative-deadzone-value");
+const jawOpenThresholdValue = document.getElementById("jaw-open-threshold-value");
 const mouseClickFeedback = document.getElementById("mouse-click-feedback");
 const saveSettingsBtn = document.getElementById("save-settings");
 const closeSettingsBtn = document.getElementById("close-settings");
+
+function refreshTuningSliderLabels() {
+    if (sensitivityValue) sensitivityValue.textContent = pointerSensitivity.toFixed(1);
+    if (relativeSpeedValue) relativeSpeedValue.textContent = String(Math.round(relativePointerStepGain));
+    if (relativeDeadzoneValue) relativeDeadzoneValue.textContent = relativePointerDeadzone.toFixed(4);
+    if (jawOpenThresholdValue) jawOpenThresholdValue.textContent = jawOpenThreshold.toFixed(2);
+}
+
+if (relativeSpeedSlider) {
+    relativeSpeedSlider.addEventListener("input", (e) => {
+        relativePointerStepGain = Number.parseFloat(e.target.value);
+        localStorage.setItem(RELATIVE_POINTER_STEP_GAIN_KEY, String(relativePointerStepGain));
+        refreshTuningSliderLabels();
+    });
+}
+
+if (relativeDeadzoneSlider) {
+    relativeDeadzoneSlider.addEventListener("input", (e) => {
+        relativePointerDeadzone = Number.parseFloat(e.target.value);
+        localStorage.setItem(RELATIVE_POINTER_DEADZONE_KEY, String(relativePointerDeadzone));
+        refreshTuningSliderLabels();
+    });
+}
+
+if (jawOpenThresholdSlider) {
+    jawOpenThresholdSlider.addEventListener("input", (e) => {
+        jawOpenThreshold = Number.parseFloat(e.target.value);
+        localStorage.setItem(JAW_OPEN_THRESHOLD_KEY, String(jawOpenThreshold));
+        refreshTuningSliderLabels();
+    });
+}
+
+if (relativeSpeedSlider) relativeSpeedSlider.value = String(relativePointerStepGain);
+if (relativeDeadzoneSlider) relativeDeadzoneSlider.value = String(relativePointerDeadzone);
+if (jawOpenThresholdSlider) jawOpenThresholdSlider.value = String(jawOpenThreshold);
+refreshTuningSliderLabels();
 
 function showMouseClickFeedback(button, text) {
     if (!mouseClickFeedback) return;
@@ -1551,6 +1733,7 @@ settingsBtn.addEventListener("click", () => {
     if (mouseMiddleInput) mouseMiddleInput.value = mouseClickSpeech.middle;
     if (mouseRightInput) mouseRightInput.value = mouseClickSpeech.right;
     if (modeSelect) modeSelect.value = appMode;
+    refreshTuningSliderLabels();
     
     settingsModal.classList.add("active");
     
@@ -1603,6 +1786,10 @@ saveSettingsBtn.addEventListener("click", async () => {
     localStorage.setItem("mouse_click_phrase_left", newLeft);
     localStorage.setItem("mouse_click_phrase_middle", newMiddle);
     localStorage.setItem("mouse_click_phrase_right", newRight);
+    localStorage.setItem(POINTER_SENSITIVITY_KEY, String(pointerSensitivity));
+    localStorage.setItem(RELATIVE_POINTER_STEP_GAIN_KEY, String(relativePointerStepGain));
+    localStorage.setItem(RELATIVE_POINTER_DEADZONE_KEY, String(relativePointerDeadzone));
+    localStorage.setItem(JAW_OPEN_THRESHOLD_KEY, String(jawOpenThreshold));
 
     if (modeSelect) {
         setAppMode(modeSelect.value);
