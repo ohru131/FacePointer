@@ -47,7 +47,6 @@ const JAW_OPEN_THRESHOLD_DEFAULT = 0.45;
 const SYMPTOM_STAGE_SYMPTOM = "symptom";
 const SYMPTOM_STAGE_BODY_PART = "body-part";
 const SYMPTOM_IDLE_RESET_MS = 30000;
-const SYMPTOM_RESET_AFTER_CONFIRM_MS = 1200;
 
 const SYMPTOM_FLOW_WITH_BODY_PART = "with-body-part";
 const SYMPTOM_FLOW_DIRECT = "direct";
@@ -57,10 +56,11 @@ const symptomChoices = [
     { name: "痛い", icon: "media/symptom-pain.svg", flow: SYMPTOM_FLOW_WITH_BODY_PART },
     {
         name: "体感",
+        icon: "media/symptom-feel.svg",
         flow: SYMPTOM_FLOW_DIRECT,
         options: [
-            { name: "あつい", sentence: "あついです。" },
-            { name: "さむい", sentence: "さむいです。" }
+            { name: "あつい", icon: "media/symptom-hot.svg", sentence: "暑いです。" },
+            { name: "さむい", icon: "media/symptom-cold.svg", sentence: "寒いです。" }
         ]
     }
 ];
@@ -94,6 +94,26 @@ let selectedSymptom = null;
 let symptomLastActivityAt = 0;
 let lastSymptomNoseX = null;
 let lastSymptomNoseY = null;
+let isConfirmInProgress = false;
+let confirmOverlayHideWaiters = [];
+
+function waitForConfirmOverlayToHide() {
+    if (!confirmOverlay || !confirmOverlay.classList.contains("active")) {
+        return Promise.resolve();
+    }
+
+    return new Promise((resolve) => {
+        confirmOverlayHideWaiters.push(resolve);
+    });
+}
+
+function resolveConfirmOverlayHideWaiters() {
+    if (confirmOverlayHideWaiters.length === 0) return;
+
+    const waiters = confirmOverlayHideWaiters;
+    confirmOverlayHideWaiters = [];
+    waiters.forEach((resolve) => resolve());
+}
 
 function buildSymptomSentence(detailItem) {
     if (!selectedSymptom || !detailItem) return "";
@@ -113,6 +133,9 @@ function resetSymptomModeState(shouldRender = true) {
     lastSymptomNoseX = null;
     lastSymptomNoseY = null;
     lastNoseX = 0;
+    isConfirmInProgress = false;
+    window.clearTimeout(window.symptomResetTimer);
+    window.symptomResetTimer = null;
     if (shouldRender) {
         renderAll();
     }
@@ -161,7 +184,9 @@ function updateRelativePointerTarget(noseX) {
     lastNoseX = noseX;
 }
 
-function handleSymptomClick(item) {
+async function handleSymptomClick(item) {
+    if (isConfirmInProgress) return;
+
     if (symptomStage === SYMPTOM_STAGE_SYMPTOM) {
         selectedSymptom = item;
         symptomStage = SYMPTOM_STAGE_BODY_PART;
@@ -174,12 +199,16 @@ function handleSymptomClick(item) {
     if (!sentence) return;
 
     showConfirm(sentence);
-    speak(sentence);
+    isConfirmInProgress = true;
 
-    window.clearTimeout(window.symptomResetTimer);
-    window.symptomResetTimer = window.setTimeout(() => {
+    // 発話は継続させ、ホーム復帰は確認ダイアログの非表示完了に同期
+    void speak(sentence);
+
+    try {
+        await waitForConfirmOverlayToHide();
+    } finally {
         resetSymptomModeState();
-    }, SYMPTOM_RESET_AFTER_CONFIRM_MS);
+    }
 }
 
 function checkSymptomIdleReset() {
@@ -282,6 +311,7 @@ function showConfirm(sentence) {
     if (window.confirmTimer) clearTimeout(window.confirmTimer);
     window.confirmTimer = setTimeout(() => {
         confirmOverlay.classList.remove("active");
+        resolveConfirmOverlayHideWaiters();
     }, 3500);
 }
 
@@ -329,12 +359,16 @@ function checkPointerCollision() {
         lastHoveredButtonKey = "";
     }
 
-    if (pendingClickTimer && pendingClickTargetKey && lastHoveredButtonKey !== pendingClickTargetKey) {
-        clearTimeout(pendingClickTimer);
-        pendingClickTimer = null;
-        pendingClickTargetKey = "";
-        const animBtn = document.querySelector(".h-btn.clicked-anim");
-        if (animBtn) animBtn.classList.remove("clicked-anim");
+    // ペンディングクリック中にターゲットから外れた場合はキャンセル
+    if (pendingClickTimer && pendingClickTargetKey) {
+        const currentKey = lastHoveredButtonKey;
+        if (currentKey !== pendingClickTargetKey) {
+            clearTimeout(pendingClickTimer);
+            pendingClickTimer = null;
+            pendingClickTargetKey = "";
+            const animBtn = document.querySelector(".h-btn.clicked-anim");
+            if (animBtn) animBtn.classList.remove("clicked-anim");
+        }
     }
 }
 
@@ -412,6 +446,7 @@ function getGeminiUrl() {
 }
 
 let currentAudio = null;
+let currentAudioResolve = null;
 let currentSpeechController = null;
 let isSpeechFetching = false;
 
@@ -478,7 +513,7 @@ async function speakGemini(text, silent = false) {
     const cacheKey = text.trim();
     const cachedBlob = await getCachedAudio(cacheKey);
     if (cachedBlob) {
-        if (!silent) playBlob(cachedBlob);
+        if (!silent) await playBlob(cachedBlob);
         return true;
     }
 
@@ -536,7 +571,7 @@ async function speakGemini(text, silent = false) {
         await setCachedAudio(cacheKey, blob);
 
         if (!silent) {
-            playBlob(blob);
+            await playBlob(blob);
         }
 
         isSpeechFetching = false;
@@ -550,18 +585,34 @@ async function speakGemini(text, silent = false) {
 }
 
 function playBlob(blob) {
-    if (currentAudio) {
-        currentAudio.pause();
-        currentAudio.currentTime = 0;
-    }
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    currentAudio = audio;
-    audio.play().catch(e => console.error("Audio playback failed:", e));
-    audio.onended = () => {
-        URL.revokeObjectURL(url);
-        if (currentAudio === audio) currentAudio = null;
-    };
+    return new Promise((resolve) => {
+        if (currentAudio) {
+            currentAudio.pause();
+            currentAudio.currentTime = 0;
+            if (currentAudioResolve) {
+                currentAudioResolve();
+                currentAudioResolve = null;
+            }
+        }
+
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        let settled = false;
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            URL.revokeObjectURL(url);
+            if (currentAudio === audio) currentAudio = null;
+            if (currentAudioResolve === finish) currentAudioResolve = null;
+            resolve();
+        };
+
+        currentAudio = audio;
+        currentAudioResolve = finish;
+        audio.onended = finish;
+        audio.onerror = () => finish();
+        audio.play().catch(() => finish());
+    });
 }
 
 const audioStatus = document.getElementById("audio-status");
@@ -640,16 +691,24 @@ async function speak(text) {
     if (currentAudio) {
         currentAudio.pause();
         currentAudio = null;
+        if (currentAudioResolve) {
+            currentAudioResolve();
+            currentAudioResolve = null;
+        }
     }
 
     const success = await speakGemini(text);
     if (success) return;
 
-    const uttr = new SpeechSynthesisUtterance(text);
-    if (preferredVoice) uttr.voice = preferredVoice;
-    uttr.lang = "ja-JP";
-    uttr.rate = 0.95;
-    window.speechSynthesis.speak(uttr);
+    await new Promise((resolve) => {
+        const uttr = new SpeechSynthesisUtterance(text);
+        if (preferredVoice) uttr.voice = preferredVoice;
+        uttr.lang = "ja-JP";
+        uttr.rate = 0.95;
+        uttr.onend = () => resolve();
+        uttr.onerror = () => resolve();
+        window.speechSynthesis.speak(uttr);
+    });
 }
 
 function flashScreen() {
@@ -673,16 +732,20 @@ async function predictWebcam() {
 
     canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
     const drawingUtils = new DrawingUtils(canvasCtx);
+    updateGestureDetection(results);
 
     if (results.faceLandmarks) {
         for (const landmarks of results.faceLandmarks) {
             drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_TESSELATION, { color: "#808080CC", lineWidth: 1.5 });
             if (FaceLandmarker.FACE_LANDMARKS_LIPS) {
+                const lipsColor = jawOpenFilteredScore >= jawOpenThreshold ? "#ff5252" : "#00e676";
                 drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_LIPS, {
-                    color: "#2dc7a1",
-                    lineWidth: 2.5
+                    color: lipsColor,
+                    lineWidth: jawOpenFilteredScore >= jawOpenThreshold ? 3.2 : 2.5
                 });
             }
+
+            drawMouthDetectionOverlay(landmarks);
 
             const nose = landmarks[4];
             if (isCalibrating) {
@@ -695,7 +758,6 @@ async function predictWebcam() {
 
             updateRelativePointerTarget(nose.x);
             trackSymptomActivityByMovement(nose.x, nose.y);
-            updateGestureDetection(results);
         }
     }
 
@@ -712,34 +774,96 @@ async function predictWebcam() {
 let isMouthOpen = false;
 let gestureCooldown = false;
 const GESTURE_COOLDOWN_MS = 800;
-const JAW_OPEN_REQUIRED_FRAMES = 1;
+const JAW_OPEN_REQUIRED_FRAMES = 4;
+const JAW_OPEN_HYSTERESIS = 0.08;
+const JAW_OPEN_SMOOTHING_ALPHA = 0.35;
 const CONFIRM_COOLDOWN_MS = 100;
 const CLICK_DELAY_MS = 180;
 let jawOpenConsecutiveFrames = 0;
+let jawOpenRawScore = 0;
+let jawOpenFilteredScore = 0;
 let lastConfirmedAt = 0;
 let pendingClickTimer = null;
 let pendingClickTargetKey = "";
 
 function updateGestureDetection(detectResults) {
-    if (gestureCooldown) return;
-    if (!detectResults.faceBlendshapes || detectResults.faceBlendshapes.length === 0) return;
+    if (isConfirmInProgress) return;
+    if (!detectResults.faceBlendshapes || detectResults.faceBlendshapes.length === 0) {
+        jawOpenRawScore = 0;
+        jawOpenFilteredScore *= 0.8;
+        jawOpenConsecutiveFrames = 0;
+        isMouthOpen = false;
+        return;
+    }
 
     const cats = detectResults.faceBlendshapes[0].categories;
-    const jawOpen = cats.find(c => c.categoryName === "jawOpen")?.score || 0;
-    if (jawOpen > jawOpenThreshold) {
+    const jawOpen = cats.find(c => c.categoryName === "jawOpen")?.score ?? 0;
+    jawOpenRawScore = jawOpen;
+    if (jawOpenFilteredScore === 0) {
+        jawOpenFilteredScore = jawOpen;
+    } else {
+        jawOpenFilteredScore = (jawOpenFilteredScore * (1 - JAW_OPEN_SMOOTHING_ALPHA)) + (jawOpen * JAW_OPEN_SMOOTHING_ALPHA);
+    }
+
+    const openThreshold = jawOpenThreshold;
+    const closeThreshold = Math.max(0.05, jawOpenThreshold - JAW_OPEN_HYSTERESIS);
+
+    if (isMouthOpen) {
+        if (jawOpenFilteredScore <= closeThreshold) {
+            isMouthOpen = false;
+            jawOpenConsecutiveFrames = 0;
+        }
+        return;
+    }
+
+    if (jawOpenFilteredScore >= openThreshold) {
         jawOpenConsecutiveFrames += 1;
-        if (jawOpenConsecutiveFrames >= JAW_OPEN_REQUIRED_FRAMES && !isMouthOpen) {
+        if (jawOpenConsecutiveFrames >= JAW_OPEN_REQUIRED_FRAMES) {
             isMouthOpen = true;
-            showGestureFeedback();
-            triggerClick();
+            if (!gestureCooldown) {
+                showGestureFeedback();
+                triggerClick();
+            }
         }
     } else {
         jawOpenConsecutiveFrames = 0;
-        isMouthOpen = false;
     }
 }
 
+function drawMouthDetectionOverlay(landmarks) {
+    const isOpenDetected = jawOpenFilteredScore >= jawOpenThreshold;
+    const accent = isOpenDetected ? "#ff5252" : "#00e676";
+    const label = isOpenDetected ? "口OPEN 判定" : "口CLOSE 判定";
+
+    canvasCtx.save();
+    canvasCtx.fillStyle = "rgba(0, 0, 0, 0.55)";
+    canvasCtx.fillRect(12, 12, 265, 52);
+    canvasCtx.fillStyle = accent;
+    canvasCtx.font = "bold 18px sans-serif";
+    canvasCtx.fillText(label, 22, 34);
+    canvasCtx.fillStyle = "#ffffff";
+    canvasCtx.font = "14px monospace";
+    canvasCtx.fillText(`raw:${jawOpenRawScore.toFixed(3)} filt:${jawOpenFilteredScore.toFixed(3)}`, 22, 54);
+
+    if (landmarks && landmarks[13]) {
+        const mouthX = landmarks[13].x * canvasElement.width;
+        const mouthY = landmarks[13].y * canvasElement.height;
+        canvasCtx.beginPath();
+        canvasCtx.arc(mouthX, mouthY, 9, 0, Math.PI * 2);
+        canvasCtx.fillStyle = accent;
+        canvasCtx.fill();
+        canvasCtx.lineWidth = 2;
+        canvasCtx.strokeStyle = "#ffffff";
+        canvasCtx.stroke();
+    }
+
+    canvasCtx.restore();
+}
+
 function showGestureFeedback() {
+    // 確定サインは現在のポインタ位置を中心に表示する
+    gestureIndicator.style.left = `${pointerX}px`;
+    gestureIndicator.style.top = `${pointerY}px`;
     gestureIndicator.classList.add("active");
     pointerElement.style.transform = "translate(-50%, -50%) scale(2)";
     pointerElement.style.backgroundColor = "#fff";
@@ -753,6 +877,8 @@ function showGestureFeedback() {
 }
 
 function triggerClick() {
+    if (isConfirmInProgress) return;
+
     const now = Date.now();
     if (now - lastConfirmedAt < CONFIRM_COOLDOWN_MS) {
         return;
@@ -770,21 +896,38 @@ function triggerClick() {
 
         activeBtn.classList.add("clicked-anim");
         pendingClickTargetKey = targetKey;
+        // ボタン参照を保持して、タイマー実行時にはこちらを使用
+        const targetBtn = activeBtn;
         pendingClickTimer = setTimeout(() => {
-            const currentHover = document.querySelector(".h-btn.hover");
-            const currentKey = currentHover
-                ? `${currentHover.dataset.row}|${currentHover.dataset.name}`
-                : "";
-
-            if (!currentHover || currentKey !== pendingClickTargetKey) {
-                if (activeBtn) activeBtn.classList.remove("clicked-anim");
+            // 1. アニメーションクラスが削除されている（キャンセルされた）
+            if (!targetBtn.classList.contains("clicked-anim")) {
                 pendingClickTimer = null;
                 pendingClickTargetKey = "";
                 return;
             }
 
-            activeBtn.classList.remove("clicked-anim");
-            activeBtn.click();
+            // 2. 口が閉じられた場合はキャンセル（800ms以上経過でクールダウン解除される）
+            if (isMouthOpen === false) {
+                targetBtn.classList.remove("clicked-anim");
+                pendingClickTimer = null;
+                pendingClickTargetKey = "";
+                return;
+            }
+
+            // 3. 最終的に同じボタンをホバーし続けている場合のみ確定
+            const currentHover = document.querySelector(".h-btn.hover");
+            const currentKey = currentHover
+                ? `${currentHover.dataset.row}|${currentHover.dataset.name}`
+                : "";
+            if (currentKey !== pendingClickTargetKey) {
+                targetBtn.classList.remove("clicked-anim");
+                pendingClickTimer = null;
+                pendingClickTargetKey = "";
+                return;
+            }
+
+            targetBtn.classList.remove("clicked-anim");
+            targetBtn.click();
             lastConfirmedAt = Date.now();
             pendingClickTimer = null;
             pendingClickTargetKey = "";
