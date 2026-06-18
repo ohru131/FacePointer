@@ -38,6 +38,8 @@ const POINTER_SENSITIVITY_KEY = "pointer_sensitivity";
 const RELATIVE_POINTER_DEADZONE_KEY = "relative_pointer_deadzone";
 const RELATIVE_POINTER_STEP_GAIN_KEY = "relative_pointer_step_gain";
 const JAW_OPEN_THRESHOLD_KEY = "jaw_open_threshold";
+const ICON_STYLE_KEY = "icon_style";
+const ICON_STYLE_DEFAULT = "simple";
 
 const POINTER_SENSITIVITY_DEFAULT = 4;
 const RELATIVE_POINTER_DEADZONE_DEFAULT = 0.0018;
@@ -52,24 +54,24 @@ const SYMPTOM_FLOW_WITH_BODY_PART = "with-body-part";
 const SYMPTOM_FLOW_DIRECT = "direct";
 
 const symptomChoices = [
-    { name: "かゆい", icon: "media/symptom-itch.svg", flow: SYMPTOM_FLOW_WITH_BODY_PART },
-    { name: "痛い", icon: "media/symptom-pain.svg", flow: SYMPTOM_FLOW_WITH_BODY_PART },
+    { name: "かゆい", icon: "media/symptom-itch.png", flow: SYMPTOM_FLOW_WITH_BODY_PART },
+    { name: "痛い", icon: "media/symptom-pain.png", flow: SYMPTOM_FLOW_WITH_BODY_PART },
     {
         name: "体感",
-        icon: "media/symptom-feel.svg",
+        icon: "media/symptom-feel.png",
         flow: SYMPTOM_FLOW_DIRECT,
         options: [
-            { name: "あつい", icon: "media/symptom-hot.svg", sentence: "暑いです。" },
-            { name: "さむい", icon: "media/symptom-cold.svg", sentence: "寒いです。" }
+            { name: "あつい", icon: "media/symptom-hot.png", sentence: "暑いです。" },
+            { name: "さむい", icon: "media/symptom-cold.png", sentence: "寒いです。" }
         ]
     }
 ];
 
 const symptomBodyParts = [
-    { name: "頭", icon: "media/body-head.svg" },
-    { name: "体", icon: "media/body-body.svg" },
-    { name: "手", icon: "media/body-hand.svg" },
-    { name: "足", icon: "media/body-leg.svg" }
+    { name: "頭", icon: "media/body-head.png" },
+    { name: "体", icon: "media/body-body.png" },
+    { name: "手", icon: "media/body-hand.png" },
+    { name: "足", icon: "media/body-leg.png" }
 ];
 
 function readStoredNumber(key, fallback, min, max) {
@@ -87,6 +89,7 @@ let pointerSensitivity = readStoredNumber(POINTER_SENSITIVITY_KEY, POINTER_SENSI
 let relativePointerDeadzone = readStoredNumber(RELATIVE_POINTER_DEADZONE_KEY, RELATIVE_POINTER_DEADZONE_DEFAULT, 0.0005, 0.0080);
 let relativePointerStepGain = readStoredNumber(RELATIVE_POINTER_STEP_GAIN_KEY, RELATIVE_POINTER_STEP_GAIN_DEFAULT, 400, 2800);
 let jawOpenThreshold = readStoredNumber(JAW_OPEN_THRESHOLD_KEY, JAW_OPEN_THRESHOLD_DEFAULT, 0.1, 0.9);
+let iconStyle = localStorage.getItem(ICON_STYLE_KEY) || ICON_STYLE_DEFAULT;
 
 // Symptom state
 let symptomStage = SYMPTOM_STAGE_SYMPTOM;
@@ -284,7 +287,7 @@ function renderRow(container, items) {
 
         if (item.icon) {
             const img = document.createElement("img");
-            img.src = item.icon;
+            img.src = iconStyle === "cute" ? item.icon.replace(".png", "-cute.png") : item.icon;
             img.className = "h-btn-icon";
             btn.appendChild(img);
         }
@@ -976,6 +979,7 @@ const relativeSpeedSlider = document.getElementById("relative-speed-slider");
 const relativeDeadzoneSlider = document.getElementById("relative-deadzone-slider");
 const jawOpenThresholdSlider = document.getElementById("jaw-open-threshold-slider");
 const sensitivityValue = document.getElementById("sensitivity-value");
+const iconStyleSelect = document.getElementById("icon-style-select");
 const relativeSpeedValue = document.getElementById("relative-speed-value");
 const relativeDeadzoneValue = document.getElementById("relative-deadzone-value");
 const jawOpenThresholdValue = document.getElementById("jaw-open-threshold-value");
@@ -1081,6 +1085,7 @@ document.addEventListener("mousedown", (event) => {
 
 settingsBtn.addEventListener("click", () => {
     apiKeyInput.value = GEMINI_API_KEY;
+    if (iconStyleSelect) iconStyleSelect.value = iconStyle;
     if (mouseLeftInput) mouseLeftInput.value = mouseClickSpeech.left;
     if (mouseMiddleInput) mouseMiddleInput.value = mouseClickSpeech.middle;
     if (mouseRightInput) mouseRightInput.value = mouseClickSpeech.right;
@@ -1110,8 +1115,13 @@ saveSettingsBtn.addEventListener("click", () => {
     localStorage.setItem(RELATIVE_POINTER_STEP_GAIN_KEY, String(relativePointerStepGain));
     localStorage.setItem(RELATIVE_POINTER_DEADZONE_KEY, String(relativePointerDeadzone));
     localStorage.setItem(JAW_OPEN_THRESHOLD_KEY, String(jawOpenThreshold));
+    if (iconStyleSelect) {
+        iconStyle = iconStyleSelect.value;
+        localStorage.setItem(ICON_STYLE_KEY, iconStyle);
+    }
 
     alert("設定を保存しました。");
+    renderAll();
     settingsModal.classList.remove("active");
 });
 
