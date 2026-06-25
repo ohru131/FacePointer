@@ -368,8 +368,8 @@ header {
 }
 
 #app[data-mode="symptom"] #row1 .h-btn-icon {
-    width: min(78%, 280px);
-    max-height: 68%;
+    width: min(117%, 420px);
+    max-height: 102%;
 }
 
 #app[data-mode="symptom"] #row1 .h-btn.hover {
@@ -454,8 +454,8 @@ header {
 
 /* button content */
 .h-btn-icon {
-    width: min(82%, 260px);
-    max-height: 72%;
+    width: min(123%, 390px);
+    max-height: 108%;
     object-fit: contain;
     margin-bottom: 0;
     flex: 1 1 auto;
@@ -876,11 +876,24 @@ header {
     border: 1px solid var(--glass-border);
     border-radius: 0.6rem;
     padding: 0.8rem 1rem;
-    color: #fff;
     font-size: 1.1rem;
     width: 100%;
     outline: none;
     transition: border-color 0.2s;
+}
+
+.setting-item input {
+    color: #fff;
+}
+
+.setting-item select {
+    background: #f8fafc;
+    color: #0f172a;
+}
+
+.setting-item select option {
+    background: #ffffff;
+    color: #0f172a;
 }
 
 .setting-item input {
@@ -1194,8 +1207,8 @@ header {
     }
 
     #app[data-mode="symptom"] #row1 .h-btn-icon {
-        width: min(42%, 110px);
-        max-height: 42%;
+        width: min(63%, 165px);
+        max-height: 63%;
     }
 
     .phrase-leaf-grid {

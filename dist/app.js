@@ -40,6 +40,8 @@ const RELATIVE_POINTER_STEP_GAIN_KEY = "relative_pointer_step_gain";
 const JAW_OPEN_THRESHOLD_KEY = "jaw_open_threshold";
 const ICON_STYLE_KEY = "icon_style";
 const ICON_STYLE_DEFAULT = "simple";
+const ICON_STYLE_COMIC = "comic";
+const ICON_STYLE_COMIC2 = "comic2";
 
 const POINTER_SENSITIVITY_DEFAULT = 4;
 const RELATIVE_POINTER_DEADZONE_DEFAULT = 0.0018;
@@ -79,6 +81,14 @@ function readStoredNumber(key, fallback, min, max) {
     const parsed = Number.parseFloat(raw);
     if (!Number.isFinite(parsed)) return fallback;
     return Math.max(min, Math.min(max, parsed));
+}
+
+function resolveIconPath(iconPath) {
+    if (!iconPath || !iconPath.endsWith(".png")) return iconPath;
+    if (iconStyle === "cute") return iconPath.replace(".png", "-cute.png");
+    if (iconStyle === ICON_STYLE_COMIC) return iconPath.replace(".png", "-comic.png");
+    if (iconStyle === ICON_STYLE_COMIC2) return iconPath.replace(".png", "-comic2.png");
+    return iconPath;
 }
 
 // Calibration
@@ -287,7 +297,14 @@ function renderRow(container, items) {
 
         if (item.icon) {
             const img = document.createElement("img");
-            img.src = iconStyle === "cute" ? item.icon.replace(".png", "-cute.png") : item.icon;
+            const styledIconPath = resolveIconPath(item.icon);
+            img.src = styledIconPath;
+            if (styledIconPath !== item.icon) {
+                img.onerror = () => {
+                    img.onerror = null;
+                    img.src = item.icon;
+                };
+            }
             img.className = "h-btn-icon";
             btn.appendChild(img);
         }
