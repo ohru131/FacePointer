@@ -368,8 +368,8 @@ header {
 }
 
 #app[data-mode="symptom"] #row1 .h-btn-icon {
-    width: min(34%, 160px);
-    max-height: 34%;
+    width: min(117%, 420px);
+    max-height: 102%;
 }
 
 #app[data-mode="symptom"] #row1 .h-btn.hover {
@@ -387,7 +387,7 @@ header {
     border: 2px solid rgba(255, 255, 255, 0.72);
     color: var(--text);
     font-family: inherit;
-    font-size: clamp(3rem, 6vw, 4.5rem);
+    font-size: clamp(3.4rem, 6.8vw, 5.4rem);
     font-weight: 900;
     line-height: 1.1;
     cursor: pointer;
@@ -395,9 +395,9 @@ header {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 0.4rem;
+    gap: 0.25rem;
     text-align: center;
-    padding: 0.9rem;
+    padding: 0.65rem;
     position: relative;
     overflow: hidden;
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.72) 0%, rgba(248, 249, 250, 0.56) 100%);
@@ -454,17 +454,23 @@ header {
 
 /* button content */
 .h-btn-icon {
-    width: 60%; /* アイコンを大きく */
-    max-height: 60%;
+    width: min(123%, 390px);
+    max-height: 108%;
     object-fit: contain;
-    margin-bottom: 0.2rem;
+    margin-bottom: 0;
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 .h-btn-text {
     /* Font size already handled by clamp on .h-btn, but can refine here */
     font-size: inherit;
-    line-height: 1.1;
+    line-height: 1;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+    word-break: keep-all;
     text-shadow: 0 1px 0 rgba(255, 255, 255, 0.25);
+    flex: 0 0 auto;
 }
 
 /* empty slot */
@@ -764,7 +770,11 @@ header {
     z-index: 2000;
     opacity: 0;
     pointer-events: none;
-    transition: all 0.35s cubic-bezier(0.19, 1, 0.22, 1);
+    transition: opacity 0.35s cubic-bezier(0.19, 1, 0.22, 1),
+        width 0.35s cubic-bezier(0.19, 1, 0.22, 1),
+        height 0.35s cubic-bezier(0.19, 1, 0.22, 1),
+        border-width 0.35s cubic-bezier(0.19, 1, 0.22, 1),
+        box-shadow 0.35s cubic-bezier(0.19, 1, 0.22, 1);
 }
 
 #gesture-indicator.active {
@@ -866,11 +876,24 @@ header {
     border: 1px solid var(--glass-border);
     border-radius: 0.6rem;
     padding: 0.8rem 1rem;
-    color: #fff;
     font-size: 1.1rem;
     width: 100%;
     outline: none;
     transition: border-color 0.2s;
+}
+
+.setting-item input {
+    color: #fff;
+}
+
+.setting-item select {
+    background: #f8fafc;
+    color: #0f172a;
+}
+
+.setting-item select option {
+    background: #ffffff;
+    color: #0f172a;
 }
 
 .setting-item input {
@@ -1184,8 +1207,8 @@ header {
     }
 
     #app[data-mode="symptom"] #row1 .h-btn-icon {
-        width: min(42%, 110px);
-        max-height: 42%;
+        width: min(63%, 165px);
+        max-height: 63%;
     }
 
     .phrase-leaf-grid {
