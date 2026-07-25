@@ -29,10 +29,23 @@ let pointerX = window.innerWidth / 2;
 let pointerY = window.innerHeight / 2;
 let targetX = pointerX;
 let targetY = pointerY;
-const LERP_FACTOR = 0.18;
 const HOVER_SWITCH_HYSTERESIS_PX = 26;
 let lastHoveredButtonKey = "";
 let lastNoseX = 0;
+const POINTER_LERP_MIN = 0.10;
+const POINTER_LERP_MAX = 0.78;
+const MOVEMENT_DEADZONE_MIN = 0.0006;
+const MOVEMENT_DEADZONE_MAX = 0.0062;
+const ABSOLUTE_ASSIST_WEIGHT_MIN = 0.16;
+const ABSOLUTE_ASSIST_WEIGHT_MAX = 0.42;
+const ABSOLUTE_ASSIST_RANGE_MIN = 0.07;
+const ABSOLUTE_ASSIST_RANGE_MAX = 0.22;
+const EDGE_RELEASE_PX = 26;
+const EDGE_RELEASE_ASSIST_SCALE = 0.14;
+const EDGE_RELEASE_BOOST = 2.0;
+const SENSITIVITY_EXP_K = 5.0;
+const SENSITIVITY_STEP_GAIN_MIN = 900;
+const SENSITIVITY_STEP_GAIN_MAX = 42000;
 
 const POINTER_SENSITIVITY_KEY = "pointer_sensitivity";
 const RELATIVE_POINTER_DEADZONE_KEY = "relative_pointer_deadzone";
@@ -44,36 +57,61 @@ const ICON_STYLE_COMIC = "comic";
 const ICON_STYLE_COMIC2 = "comic2";
 
 const POINTER_SENSITIVITY_DEFAULT = 4;
-const RELATIVE_POINTER_DEADZONE_DEFAULT = 0.0018;
-const RELATIVE_POINTER_STEP_GAIN_DEFAULT = 1400;
+const RELATIVE_POINTER_DEADZONE_DEFAULT = 4;
+const RELATIVE_POINTER_STEP_GAIN_DEFAULT = 6;
 const JAW_OPEN_THRESHOLD_DEFAULT = 0.45;
 
 const SYMPTOM_STAGE_SYMPTOM = "symptom";
 const SYMPTOM_STAGE_BODY_PART = "body-part";
 const SYMPTOM_IDLE_RESET_MS = 30000;
 
-const SYMPTOM_FLOW_WITH_BODY_PART = "with-body-part";
 const SYMPTOM_FLOW_DIRECT = "direct";
 
 const symptomChoices = [
-    { name: "かゆい", icon: "media/symptom-itch.png", flow: SYMPTOM_FLOW_WITH_BODY_PART },
-    { name: "痛い", icon: "media/symptom-pain.png", flow: SYMPTOM_FLOW_WITH_BODY_PART },
     {
-        name: "体感",
-        icon: "media/symptom-feel.png",
+        name: "身体",
+        icon: "media/menu-body.png",
         flow: SYMPTOM_FLOW_DIRECT,
         options: [
-            { name: "あつい", icon: "media/symptom-hot.png", sentence: "暑いです。" },
-            { name: "さむい", icon: "media/symptom-cold.png", sentence: "寒いです。" }
+            { name: "かゆい", icon: "media/menu-itchy.png", sentence: "かゆいです。" },
+            { name: "痛い", icon: "media/menu-hurt.png", sentence: "痛いです。" },
+            { name: "おなかが張る", icon: "media/menu-bloated-stomach.png", sentence: "おなかが張っています。" },
+            { name: "トイレ", icon: "media/menu-toilet.png", sentence: "トイレに行きたいです。" }
+        ]
+    },
+    {
+        name: "お願い",
+        icon: "media/menu-request.png",
+        flow: SYMPTOM_FLOW_DIRECT,
+        options: [
+            { name: "吸引", icon: "media/menu-suction.png", sentence: "吸引してください。" },
+            { name: "体位かえて", icon: "media/menu-change-position.png", sentence: "体位をかえてください。" },
+            { name: "マッサージして", icon: "media/menu-massage.png", sentence: "マッサージしてください。" },
+            { name: "あつい・さむい", icon: "media/menu-hot-cold.png", sentence: "あつい、または、さむいです。" }
+        ]
+    },
+    {
+        name: "気分転換",
+        icon: "media/menu-refresh.png",
+        flow: SYMPTOM_FLOW_DIRECT,
+        options: [
+            { name: "お話して", icon: "media/menu-talk.png", sentence: "お話してください。" },
+            { name: "本", icon: "media/menu-book.png", sentence: "本を読んでほしいです。" },
+            { name: "音楽", icon: "media/menu-music.png", sentence: "音楽を聴きたいです。" },
+            { name: "DVD", icon: "media/menu-dvd.png", sentence: "DVDを見たいです。" }
+        ]
+    },
+    {
+        name: "会話",
+        icon: "media/menu-conversation.png",
+        flow: SYMPTOM_FLOW_DIRECT,
+        options: [
+            { name: "ありがとう", icon: "media/menu-thank-you.png", sentence: "ありがとう。" },
+            { name: "続きを話して", icon: "media/menu-continue-talking.png", sentence: "続きを話してください。" },
+            { name: "話題を変えて", icon: "media/menu-change-topic.png", sentence: "話題を変えてください。" },
+            { name: "少し休みたい", icon: "media/menu-rest-little.png", sentence: "少し休みたいです。" }
         ]
     }
-];
-
-const symptomBodyParts = [
-    { name: "頭", icon: "media/body-head.png" },
-    { name: "体", icon: "media/body-body.png" },
-    { name: "手", icon: "media/body-hand.png" },
-    { name: "足", icon: "media/body-leg.png" }
 ];
 
 function readStoredNumber(key, fallback, min, max) {
@@ -96,8 +134,8 @@ let calibratedNoseX = 0.5;
 let calibratedNoseY = 0.5;
 let isCalibrating = true;
 let pointerSensitivity = readStoredNumber(POINTER_SENSITIVITY_KEY, POINTER_SENSITIVITY_DEFAULT, 1, 10);
-let relativePointerDeadzone = readStoredNumber(RELATIVE_POINTER_DEADZONE_KEY, RELATIVE_POINTER_DEADZONE_DEFAULT, 0.0005, 0.0080);
-let relativePointerStepGain = readStoredNumber(RELATIVE_POINTER_STEP_GAIN_KEY, RELATIVE_POINTER_STEP_GAIN_DEFAULT, 400, 2800);
+let relativePointerDeadzone = readStoredNumber(RELATIVE_POINTER_DEADZONE_KEY, RELATIVE_POINTER_DEADZONE_DEFAULT, 0, 10);
+let relativePointerStepGain = readStoredNumber(RELATIVE_POINTER_STEP_GAIN_KEY, RELATIVE_POINTER_STEP_GAIN_DEFAULT, 1, 10);
 let jawOpenThreshold = readStoredNumber(JAW_OPEN_THRESHOLD_KEY, JAW_OPEN_THRESHOLD_DEFAULT, 0.1, 0.9);
 let iconStyle = localStorage.getItem(ICON_STYLE_KEY) || ICON_STYLE_DEFAULT;
 
@@ -131,12 +169,8 @@ function resolveConfirmOverlayHideWaiters() {
 function buildSymptomSentence(detailItem) {
     if (!selectedSymptom || !detailItem) return "";
 
-    if (selectedSymptom.flow === SYMPTOM_FLOW_DIRECT) {
-        if (detailItem.sentence && detailItem.sentence.trim()) return detailItem.sentence.trim();
-        return `${detailItem.name}です。`;
-    }
-
-    return `${detailItem.name}が${selectedSymptom.name}です。`;
+    if (detailItem.sentence && detailItem.sentence.trim()) return detailItem.sentence.trim();
+    return `${detailItem.name}です。`;
 }
 
 function resetSymptomModeState(shouldRender = true) {
@@ -173,28 +207,100 @@ function getSymptomRowPointerBounds() {
     return { minX, maxX, centerX, centerY };
 }
 
-function updateRelativePointerTarget(noseX) {
+function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+
+function getFollowSpeedRatio() {
+    return clamp((relativePointerStepGain - 1) / 9, 0, 1);
+}
+
+function getStabilityRatio() {
+    return clamp(relativePointerDeadzone / 10, 0, 1);
+}
+
+function getMovementDeadzone() {
+    const stabilityRatio = getStabilityRatio();
+    return MOVEMENT_DEADZONE_MIN + ((MOVEMENT_DEADZONE_MAX - MOVEMENT_DEADZONE_MIN) * stabilityRatio);
+}
+
+function getFollowLerp() {
+    const followSpeedRatio = getFollowSpeedRatio();
+    const sensitivityRatio = clamp(pointerSensitivity / 10, 0, 1);
+    const boostedRatio = Math.max(followSpeedRatio, sensitivityRatio);
+    return POINTER_LERP_MIN + ((POINTER_LERP_MAX - POINTER_LERP_MIN) * boostedRatio);
+}
+
+function getSensitivityExpCurve() {
+    const x = clamp(pointerSensitivity / 10, 0, 1);
+    const expMax = Math.exp(SENSITIVITY_EXP_K);
+    return (Math.exp(SENSITIVITY_EXP_K * x) - 1) / (expMax - 1);
+}
+
+function getGazeEnhancedX(landmarks, noseX) {
+    // 目線アシストは無効化し、鼻追従のみで制御する
+    return noseX;
+}
+
+function updateRelativePointerTarget(noseX, landmarks) {
     const bounds = getSymptomRowPointerBounds();
     if (!bounds) return;
 
+    const controlX = 1 - getGazeEnhancedX(landmarks, noseX);
+    const sensitivityRatio = clamp(pointerSensitivity / 10, 0, 1);
+
     if (lastNoseX === 0) {
-        lastNoseX = noseX;
+        lastNoseX = controlX;
         targetX = bounds.centerX;
         targetY = bounds.centerY;
         return;
     }
 
-    const movement = lastNoseX - noseX;
+    const movement = controlX - lastNoseX;
     const absMovement = Math.abs(movement);
-    if (absMovement > relativePointerDeadzone) {
+    const deadzoneBySensitivity = 1 - (0.55 * sensitivityRatio);
+    const effectiveDeadzone = getMovementDeadzone() * deadzoneBySensitivity;
+    let relativeDelta = 0;
+    if (absMovement > effectiveDeadzone) {
+        const sensitivityCurve = getSensitivityExpCurve();
+        const followSpeedRatio = getFollowSpeedRatio();
+        const relativeMotionBoost = 0.95 + (followSpeedRatio * 0.85) + (sensitivityCurve * 0.55);
+        const baseStepGain = SENSITIVITY_STEP_GAIN_MIN
+            + ((SENSITIVITY_STEP_GAIN_MAX - SENSITIVITY_STEP_GAIN_MIN) * sensitivityCurve);
         const signed = Math.sign(movement);
-        const scaled = (absMovement - relativePointerDeadzone) * relativePointerStepGain * pointerSensitivity;
-        targetX += signed * scaled;
+        const scaled = (absMovement - effectiveDeadzone)
+            * baseStepGain
+            * relativeMotionBoost;
+        relativeDelta = signed * scaled;
+
+        // 左右端で張り付きやすいときの解除ブースト
+        const atLeftEdge = targetX <= (bounds.minX + EDGE_RELEASE_PX);
+        const atRightEdge = targetX >= (bounds.maxX - EDGE_RELEASE_PX);
+        if ((atLeftEdge && relativeDelta > 0) || (atRightEdge && relativeDelta < 0)) {
+            relativeDelta *= EDGE_RELEASE_BOOST;
+        }
+
+        targetX += relativeDelta;
     }
+
+    // 端まで届きにくい問題を抑えるため、校正位置からの絶対オフセットでも補正する
+    const halfRange = (bounds.maxX - bounds.minX) * 0.5;
+    const followSpeedRatio = getFollowSpeedRatio();
+    const absoluteAssistRange = ABSOLUTE_ASSIST_RANGE_MAX - ((ABSOLUTE_ASSIST_RANGE_MAX - ABSOLUTE_ASSIST_RANGE_MIN) * sensitivityRatio);
+    const absoluteAssistWeight = ABSOLUTE_ASSIST_WEIGHT_MIN + ((ABSOLUTE_ASSIST_WEIGHT_MAX - ABSOLUTE_ASSIST_WEIGHT_MIN) * followSpeedRatio);
+    const normalizedOffset = clamp((controlX - calibratedNoseX) / absoluteAssistRange, -1, 1);
+    const absoluteTargetX = bounds.centerX + (normalizedOffset * halfRange);
+
+    // エッジ付近では絶対アシストを弱め、中央方向へ戻しやすくする
+    const atEdge = targetX <= (bounds.minX + EDGE_RELEASE_PX) || targetX >= (bounds.maxX - EDGE_RELEASE_PX);
+    const effectiveAbsoluteAssistWeight = atEdge
+        ? (absoluteAssistWeight * EDGE_RELEASE_ASSIST_SCALE)
+        : absoluteAssistWeight;
+    targetX = (targetX * (1 - effectiveAbsoluteAssistWeight)) + (absoluteTargetX * effectiveAbsoluteAssistWeight);
 
     targetX = Math.max(bounds.minX, Math.min(bounds.maxX, targetX));
     targetY = bounds.centerY;
-    lastNoseX = noseX;
+    lastNoseX = controlX;
 }
 
 async function handleSymptomClick(item) {
@@ -245,7 +351,8 @@ function trackSymptomActivityByMovement(noseX, noseY) {
 
     const dx = Math.abs(noseX - lastSymptomNoseX);
     const dy = Math.abs(noseY - lastSymptomNoseY);
-    if (dx >= relativePointerDeadzone || dy >= relativePointerDeadzone) {
+    const activityThreshold = getMovementDeadzone();
+    if (dx >= activityThreshold || dy >= activityThreshold) {
         symptomLastActivityAt = Date.now();
     }
 
@@ -400,13 +507,11 @@ function renderAll() {
 
     const symptomItems = symptomStage === SYMPTOM_STAGE_SYMPTOM
         ? symptomChoices
-        : (selectedSymptom?.flow === SYMPTOM_FLOW_DIRECT ? (selectedSymptom.options || []) : symptomBodyParts);
+        : (selectedSymptom?.options || []);
 
     const promptText = symptomStage === SYMPTOM_STAGE_SYMPTOM
-        ? "どうしましたか？"
-        : (selectedSymptom?.flow === SYMPTOM_FLOW_DIRECT
-            ? `${selectedSymptom.name}を選んでください`
-            : `${selectedSymptom.name}場所を選んでください`);
+        ? "項目を選んでください"
+        : `${selectedSymptom?.name || "項目"}を選んでください`;
 
     if (modePrompt) {
         modePrompt.textContent = promptText;
@@ -639,17 +744,9 @@ const audioStatus = document.getElementById("audio-status");
 async function prefetchAllAudio() {
     const phrases = [];
 
-    symptomChoices.forEach(symptom => {
-        if (symptom.flow === SYMPTOM_FLOW_DIRECT) {
-            (symptom.options || []).forEach(option => {
-                const sentence = (option.sentence || `${option.name}です。`).trim();
-                if (sentence) phrases.push(sentence);
-            });
-            return;
-        }
-
-        symptomBodyParts.forEach(bodyPart => {
-            const sentence = `${bodyPart.name}が${symptom.name}です。`.trim();
+    symptomChoices.forEach(category => {
+        (category.options || []).forEach(option => {
+            const sentence = (option.sentence || `${option.name}です。`).trim();
             if (sentence) phrases.push(sentence);
         });
     });
@@ -769,20 +866,21 @@ async function predictWebcam() {
 
             const nose = landmarks[4];
             if (isCalibrating) {
-                calibratedNoseX = nose.x;
+                calibratedNoseX = 1 - nose.x;
                 calibratedNoseY = nose.y;
                 isCalibrating = false;
-                lastNoseX = nose.x;
+                lastNoseX = 1 - nose.x;
                 speak("完了");
             }
 
-            updateRelativePointerTarget(nose.x);
+            updateRelativePointerTarget(nose.x, landmarks);
             trackSymptomActivityByMovement(nose.x, nose.y);
         }
     }
 
-    pointerX += (targetX - pointerX) * LERP_FACTOR;
-    pointerY += (targetY - pointerY) * LERP_FACTOR;
+    const followLerp = getFollowLerp();
+    pointerX += (targetX - pointerX) * followLerp;
+    pointerY += (targetY - pointerY) * followLerp;
     pointerElement.style.left = `${pointerX}px`;
     pointerElement.style.top = `${pointerY}px`;
 
@@ -799,12 +897,21 @@ const JAW_OPEN_HYSTERESIS = 0.08;
 const JAW_OPEN_SMOOTHING_ALPHA = 0.35;
 const CONFIRM_COOLDOWN_MS = 100;
 const CLICK_DELAY_MS = 180;
+const CLICK_FEEDBACK_MS = 320;
+const CLOSE_CLICK_MIN_OPEN_MS = 140;
 let jawOpenConsecutiveFrames = 0;
 let jawOpenRawScore = 0;
 let jawOpenFilteredScore = 0;
 let lastConfirmedAt = 0;
 let pendingClickTimer = null;
 let pendingClickTargetKey = "";
+let clickFeedbackUntil = 0;
+let closeClickEligible = false;
+let mouthOpenedAt = 0;
+
+function markClickFeedback() {
+    clickFeedbackUntil = Date.now() + CLICK_FEEDBACK_MS;
+}
 
 function updateGestureDetection(detectResults) {
     if (isConfirmInProgress) return;
@@ -813,6 +920,8 @@ function updateGestureDetection(detectResults) {
         jawOpenFilteredScore *= 0.8;
         jawOpenConsecutiveFrames = 0;
         isMouthOpen = false;
+        closeClickEligible = false;
+        mouthOpenedAt = 0;
         return;
     }
 
@@ -830,8 +939,21 @@ function updateGestureDetection(detectResults) {
 
     if (isMouthOpen) {
         if (jawOpenFilteredScore <= closeThreshold) {
+            const openHeldMs = mouthOpenedAt ? (Date.now() - mouthOpenedAt) : 0;
+            const canCloseClick = closeClickEligible && openHeldMs >= CLOSE_CLICK_MIN_OPEN_MS && !pendingClickTimer;
+
             isMouthOpen = false;
             jawOpenConsecutiveFrames = 0;
+            mouthOpenedAt = 0;
+
+            if (canCloseClick) {
+                const didSchedule = triggerClick();
+                if (didSchedule && !gestureCooldown) {
+                    showGestureFeedback();
+                }
+            }
+
+            closeClickEligible = false;
         }
         return;
     }
@@ -840,9 +962,13 @@ function updateGestureDetection(detectResults) {
         jawOpenConsecutiveFrames += 1;
         if (jawOpenConsecutiveFrames >= JAW_OPEN_REQUIRED_FRAMES) {
             isMouthOpen = true;
-            if (!gestureCooldown) {
+            mouthOpenedAt = Date.now();
+
+            const didSchedule = triggerClick();
+            closeClickEligible = !didSchedule;
+
+            if (didSchedule && !gestureCooldown) {
                 showGestureFeedback();
-                triggerClick();
             }
         }
     } else {
@@ -852,15 +978,27 @@ function updateGestureDetection(detectResults) {
 
 function drawMouthDetectionOverlay(landmarks) {
     const isOpenDetected = jawOpenFilteredScore >= jawOpenThreshold;
-    const accent = isOpenDetected ? "#ff5252" : "#00e676";
-    const label = isOpenDetected ? "口OPEN 判定" : "口CLOSE 判定";
+    const isClickFeedbackActive = Date.now() < clickFeedbackUntil;
+    // 色はクリック実行タイミングに合わせる（クリック時=赤、それ以外=緑）
+    const accent = isClickFeedbackActive ? "#ff5252" : "#00e676";
+    const label = isClickFeedbackActive
+        ? "CLICK!"
+        : (isOpenDetected ? "口OPEN 判定" : "口CLOSE 判定");
 
     canvasCtx.save();
     canvasCtx.fillStyle = "rgba(0, 0, 0, 0.55)";
     canvasCtx.fillRect(12, 12, 265, 52);
+
+    // 状態ラベルを色付きバッジ表示にして視認性を上げる
+    canvasCtx.strokeStyle = accent;
+    canvasCtx.lineWidth = 2;
+    canvasCtx.strokeRect(12, 12, 265, 52);
     canvasCtx.fillStyle = accent;
-    canvasCtx.font = "bold 18px sans-serif";
-    canvasCtx.fillText(label, 22, 34);
+    canvasCtx.fillRect(18, 18, 132, 22);
+    canvasCtx.fillStyle = "#111111";
+    canvasCtx.font = "bold 15px sans-serif";
+    canvasCtx.fillText(label, 24, 34);
+
     canvasCtx.fillStyle = "#ffffff";
     canvasCtx.font = "14px monospace";
     canvasCtx.fillText(`raw:${jawOpenRawScore.toFixed(3)} filt:${jawOpenFilteredScore.toFixed(3)}`, 22, 54);
@@ -871,7 +1009,10 @@ function drawMouthDetectionOverlay(landmarks) {
         canvasCtx.beginPath();
         canvasCtx.arc(mouthX, mouthY, 9, 0, Math.PI * 2);
         canvasCtx.fillStyle = accent;
+        canvasCtx.shadowColor = accent;
+        canvasCtx.shadowBlur = 10;
         canvasCtx.fill();
+        canvasCtx.shadowBlur = 0;
         canvasCtx.lineWidth = 2;
         canvasCtx.strokeStyle = "#ffffff";
         canvasCtx.stroke();
@@ -901,7 +1042,7 @@ function triggerClick() {
 
     const now = Date.now();
     if (now - lastConfirmedAt < CONFIRM_COOLDOWN_MS) {
-        return;
+        return false;
     }
 
     const activeBtn = document.querySelector(".h-btn.hover");
@@ -926,15 +1067,7 @@ function triggerClick() {
                 return;
             }
 
-            // 2. 口が閉じられた場合はキャンセル（800ms以上経過でクールダウン解除される）
-            if (isMouthOpen === false) {
-                targetBtn.classList.remove("clicked-anim");
-                pendingClickTimer = null;
-                pendingClickTargetKey = "";
-                return;
-            }
-
-            // 3. 最終的に同じボタンをホバーし続けている場合のみ確定
+            // 2. 最終的に同じボタンをホバーし続けている場合のみ確定
             const currentHover = document.querySelector(".h-btn.hover");
             const currentKey = currentHover
                 ? `${currentHover.dataset.row}|${currentHover.dataset.name}`
@@ -947,12 +1080,17 @@ function triggerClick() {
             }
 
             targetBtn.classList.remove("clicked-anim");
+            markClickFeedback();
             targetBtn.click();
             lastConfirmedAt = Date.now();
             pendingClickTimer = null;
             pendingClickTargetKey = "";
         }, CLICK_DELAY_MS);
+
+        return true;
     }
+
+    return false;
 }
 
 // =========================================================
@@ -1006,8 +1144,8 @@ const closeSettingsBtn = document.getElementById("close-settings");
 
 function refreshTuningSliderLabels() {
     if (sensitivityValue) sensitivityValue.textContent = pointerSensitivity.toFixed(1);
-    if (relativeSpeedValue) relativeSpeedValue.textContent = String(Math.round(relativePointerStepGain));
-    if (relativeDeadzoneValue) relativeDeadzoneValue.textContent = relativePointerDeadzone.toFixed(4);
+    if (relativeSpeedValue) relativeSpeedValue.textContent = relativePointerStepGain.toFixed(1);
+    if (relativeDeadzoneValue) relativeDeadzoneValue.textContent = relativePointerDeadzone.toFixed(1);
     if (jawOpenThresholdValue) jawOpenThresholdValue.textContent = jawOpenThreshold.toFixed(2);
 }
 
