@@ -9,6 +9,8 @@ const SCRIPTS_DIR = path.join(ROOT, "scripts");
 
 const SOURCE_A = path.join(SCRIPTS_DIR, "Gemini_Generated_Image_ksardoksardoksar.png");
 const SOURCE_B = path.join(SCRIPTS_DIR, "Gemini_Generated_Image_jhmca9jhmca9jhmc.png");
+// ボーダーなし均等グリッド配置の新ソース
+const SOURCE_SIMPLE = path.join(SCRIPTS_DIR, "Gemini_Generated_Image_j0qvdaj0qvdaj0qv.png");
 
 const BASE_NAMES = [
   "menu-body",
@@ -164,7 +166,7 @@ function findTileBoxes(raw, width, height) {
   return ordered;
 }
 
-function applyEdgeConnectedTransparency(raw, width, height) {
+function applyEdgeConnectedTransparency(raw, width, height, strictWhiteOnly = false) {
   const mask = new Uint8Array(width * height);
   const queue = [];
 
@@ -176,7 +178,12 @@ function applyEdgeConnectedTransparency(raw, width, height) {
     const mi = y * width + x;
     if (mask[mi]) return;
     const i = idx(x, y);
-    if (!isBackgroundLike(raw[i], raw[i + 1], raw[i + 2], raw[i + 3])) return;
+    const r = raw[i], g = raw[i + 1], b = raw[i + 2], a = raw[i + 3];
+    // strictWhiteOnly: ほぼ純白のみ背景と判定し、薄いグレーの枠線を保持する
+    const isBg = strictWhiteOnly
+      ? (a < 8 || (r >= 248 && g >= 248 && b >= 248))
+      : isBackgroundLike(r, g, b, a);
+    if (!isBg) return;
     mask[mi] = 1;
     queue.push([x, y]);
   }
@@ -265,6 +272,92 @@ function trimTopSparseRows(raw, width, height) {
   return { data: out, width, height: newHeight };
 }
 
+// ボーダーなしの均等グリッド画像用: 5列×4行を等分割して切り出す
+function detectGridBands(raw, width, height) {
+  const rowInk = new Array(height).fill(0);
+  const colInk = new Array(width).fill(0);
+  for (let y = 0; y < height; y++)
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const r = raw[i], g = raw[i + 1], b = raw[i + 2], a = raw[i + 3];
+      if (a >= 8 && !(r > 245 && g > 245 && b > 245)) { rowInk[y]++; colInk[x]++; }
+    }
+
+  // 一定幅以上のバンドのみ有効とすることで細い区切り線アーティファクトを除外する
+  function findBands(ink, crossLen, minFrac, minWidth) {
+    const thr = crossLen * minFrac;
+    const bands = [];
+    let inBand = false, start = 0;
+    for (let i = 0; i < ink.length; i++) {
+      if (!inBand && ink[i] >= thr) { inBand = true; start = i; }
+      else if (inBand && ink[i] < thr) {
+        if (i - 1 - start >= minWidth) bands.push({ start, end: i - 1 });
+        inBand = false;
+      }
+    }
+    if (inBand) bands.push({ start, end: ink.length - 1 });
+    return bands;
+  }
+
+  const rowBands = findBands(rowInk, width, 0.02, 100);
+  const colBands = findBands(colInk, height, 0.02, 100);
+
+  if (rowBands.length !== 4) throw new Error(`Expected 4 row bands, got ${rowBands.length}`);
+  if (colBands.length !== 5) throw new Error(`Expected 5 col bands, got ${colBands.length}`);
+
+  return { rowBands, colBands };
+}
+
+async function cropAndSaveSetGrid(sourcePath, suffix) {
+  const src = sharp(sourcePath);
+  const { width, height } = await src.metadata();
+  if (!width || !height) throw new Error(`Invalid image metadata: ${sourcePath}`);
+
+  const raw = await src.ensureAlpha().raw().toBuffer();
+  const { rowBands, colBands } = detectGridBands(raw, width, height);
+
+  const COLS = 5;
+  const extend = 2; // バンド境界の外側へ少し広げて枠線の欠けを防ぐ
+
+  const written = [];
+  for (let i = 0; i < BASE_NAMES.length; i++) {
+    const row = Math.floor(i / COLS);
+    const col = i % COLS;
+    const rb = rowBands[row];
+    const cb = colBands[col];
+
+    const left   = Math.max(0, cb.start - extend);
+    const top    = Math.max(0, rb.start - extend);
+    const right  = Math.min(width,  cb.end + 1 + extend);
+    const bottom = Math.min(height, rb.end + 1 + extend);
+    const w = right - left;
+    const h = bottom - top;
+
+    const tileRaw = await src
+      .clone()
+      .extract({ left, top, width: w, height: h })
+      .ensureAlpha()
+      .raw()
+      .toBuffer();
+
+    // 枠線の薄いグレーを消さないよう純白のみ背景と判定する厳密モード
+    const alphaApplied = applyEdgeConnectedTransparency(tileRaw, w, h, true);
+    const trimmed = trimTopSparseRows(alphaApplied, w, h);
+
+    const base = BASE_NAMES[i];
+    const fileName = suffix ? `${base}-${suffix}.png` : `${base}.png`;
+    const outPath = path.join(MEDIA_DIR, fileName);
+
+    await sharp(trimmed.data, { raw: { width: trimmed.width, height: trimmed.height, channels: 4 } })
+      .png()
+      .toFile(outPath);
+
+    written.push(fileName);
+  }
+
+  return written;
+}
+
 async function cropAndSaveSet(sourcePath, suffix) {
   const src = sharp(sourcePath);
   const { width, height } = await src.metadata();
@@ -319,7 +412,7 @@ async function cropAndSaveSet(sourcePath, suffix) {
 async function main() {
   const created = [];
 
-  const setSimple = await cropAndSaveSet(SOURCE_A, "");
+  const setSimple = await cropAndSaveSetGrid(SOURCE_SIMPLE, "");
   created.push(...setSimple);
 
   const setComic = await cropAndSaveSet(SOURCE_A, "comic");
