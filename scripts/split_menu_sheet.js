@@ -7,8 +7,8 @@ const ROOT = path.resolve(__dirname, "..");
 const MEDIA_DIR = path.join(ROOT, "dist", "media");
 const SCRIPTS_DIR = path.join(ROOT, "scripts");
 
-const SOURCE_A = path.join(SCRIPTS_DIR, "Gemini_Generated_Image_obws6kobws6kobws.png");
-const SOURCE_B = path.join(SCRIPTS_DIR, "Gemini_Generated_Image_prjl1jprjl1jprjl.png");
+const SOURCE_A = path.join(SCRIPTS_DIR, "Gemini_Generated_Image_ksardoksardoksar.png");
+const SOURCE_B = path.join(SCRIPTS_DIR, "Gemini_Generated_Image_jhmca9jhmca9jhmc.png");
 
 const BASE_NAMES = [
   "menu-body",
