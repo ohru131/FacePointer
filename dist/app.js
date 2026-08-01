@@ -41,7 +41,7 @@ let debugPixN = 0;
 let debugPixY = 0;
 let debugDeltaX = 0;
 // 鏡像表示ポリシー: 見た目右向き -> controlX増加 に固定変換する符号
-const YAW_MIRROR_SIGN = -1;
+const YAW_MIRROR_SIGN = 1;
 const FOLLOW_LERP = 0.35;
 const NOSE_GAIN_KEY = "nose_gain";
 const YAW_GAIN_KEY = "yaw_gain";
@@ -55,7 +55,7 @@ const YAW_FILTER_ALPHA = 0.22;
 const NOSE_SCALE_MIN = 2000;
 const NOSE_SCALE_MAX = 38000;
 const YAW_SCALE_MIN = 120;
-const YAW_SCALE_MAX = 2200;
+const YAW_SCALE_MAX = 5200;
 const NOSE_GAIN_EXPONENT = 1.4;
 const YAW_GAIN_EXPONENT = 1.8;
 const NOSE_DEADZONE_MIN = 0.0006;
@@ -63,6 +63,10 @@ const NOSE_DEADZONE_MAX = 0.0062;
 const YAW_DEADZONE_MIN = 0.002;
 const YAW_DEADZONE_MAX = 0.025;
 const MAX_DELTA_PER_FRAME = 60;
+const YAW_ACCEL_START_RAD = 0.03;
+const YAW_ACCEL_FULL_RAD = 0.24;
+const YAW_ACCEL_MAX_MULTIPLIER = 3.6;
+const YAW_ACCEL_EXPONENT = 1.7;
 
 const JAW_OPEN_THRESHOLD_KEY = "jaw_open_threshold";
 const ICON_STYLE_KEY = "icon_style";
@@ -97,7 +101,7 @@ const symptomChoices = [
         options: [
             { name: "吸引", icon: "media/menu-suction.png", sentence: "吸引してください。" },
             { name: "体位かえて", icon: "media/menu-change-position.png", sentence: "体位をかえてください。" },
-            { name: "マッサージして", icon: "media/menu-massage.png", sentence: "マッサージしてください。" },
+            { name: "マッサージ", icon: "media/menu-massage.png", sentence: "マッサージしてください。" },
             { name: "おむつ変えて", icon: "media/menu-toilet.png", sentence: "おむつを変えてください。" }
         ]
     },
@@ -134,7 +138,11 @@ function readStoredNumber(key, fallback, min, max) {
 
 function resolveIconPath(iconPath) {
     if (!iconPath || !iconPath.endsWith(".png")) return iconPath;
-    if (iconStyle === "cute") return iconPath.replace(".png", "-cute.png");
+    // menu系は -cute 素材が未配置のため通常素材を使う
+    if (iconStyle === "cute") {
+        if (iconPath.startsWith("media/menu-")) return iconPath;
+        return iconPath.replace(".png", "-cute.png");
+    }
     if (iconStyle === ICON_STYLE_COMIC) return iconPath.replace(".png", "-comic.png");
     if (iconStyle === ICON_STYLE_COMIC2) return iconPath.replace(".png", "-comic2.png");
     return iconPath;
@@ -153,6 +161,7 @@ let iconStyle = localStorage.getItem(ICON_STYLE_KEY) || ICON_STYLE_DEFAULT;
 // Symptom state
 let symptomStage = SYMPTOM_STAGE_SYMPTOM;
 let selectedSymptom = null;
+let previewSymptomName = null; // ホバー中に下段プレビュー表示している上位項目名
 let symptomLastActivityAt = 0;
 let lastSymptomNoseX = null;
 let lastSymptomNoseY = null;
@@ -187,6 +196,7 @@ function buildSymptomSentence(detailItem) {
 function resetSymptomModeState(shouldRender = true) {
     symptomStage = SYMPTOM_STAGE_SYMPTOM;
     selectedSymptom = null;
+    previewSymptomName = null;
     symptomLastActivityAt = 0;
     lastSymptomNoseX = null;
     lastSymptomNoseY = null;
@@ -203,7 +213,9 @@ function resetSymptomModeState(shouldRender = true) {
 }
 
 function getSymptomRowPointerBounds() {
-    const buttons = Array.from(row1Container.querySelectorAll(".h-btn:not(.h-btn--empty)"));
+    // 選択中の階層（未選択なら row1、選択後は row2）にポインタを追従させる
+    const activeContainer = symptomStage === SYMPTOM_STAGE_BODY_PART ? row2Container : row1Container;
+    const buttons = Array.from(activeContainer.querySelectorAll(".h-btn:not(.h-btn--empty):not(.h-btn--static)"));
     if (buttons.length === 0) return null;
 
     const centers = buttons.map(btn => {
@@ -254,6 +266,13 @@ function getNoseDeadzone() {
 function getYawDeadzone() {
     const curved = gainCurve(yawGain, YAW_GAIN_MAX, YAW_GAIN_EXPONENT);
     return YAW_DEADZONE_MAX - ((YAW_DEADZONE_MAX - YAW_DEADZONE_MIN) * curved);
+}
+
+function getYawOffsetAcceleration(currentYaw) {
+    const offsetAbs = Math.abs((currentYaw ?? calibratedYaw) - calibratedYaw);
+    const norm = clamp((offsetAbs - YAW_ACCEL_START_RAD) / (YAW_ACCEL_FULL_RAD - YAW_ACCEL_START_RAD), 0, 1);
+    const curved = Math.pow(norm, YAW_ACCEL_EXPONENT);
+    return 1 + ((YAW_ACCEL_MAX_MULTIPLIER - 1) * curved);
 }
 
 function applyDeadzone(delta, deadzone) {
@@ -370,7 +389,8 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex)
     let pixY = 0;
     if (yawGain > 0) {
         const yawDelta = applyDeadzone(dY, yawDeadzone);
-        pixY = yawDelta * YAW_MIRROR_SIGN * getYawScale();
+        const yawAccel = getYawOffsetAcceleration(filteredYaw);
+        pixY = yawDelta * YAW_MIRROR_SIGN * getYawScale() * yawAccel;
     }
     debugPixN = pixN;
     debugPixY = pixY;
@@ -471,7 +491,36 @@ async function startCamera() {
     video.addEventListener("loadeddata", predictWebcam);
 }
 
-function renderRow(container, items) {
+function fitButtonText(btn, label) {
+    label.style.whiteSpace = "nowrap";
+    label.style.fontSize = "";
+    const maxWidth = btn.clientWidth - 16;
+    if (maxWidth <= 0) return;
+    let fontSize = parseFloat(getComputedStyle(label).fontSize);
+    let guard = 0;
+    // 改行しないサイズまで 1px ずつ縮小
+    while (label.scrollWidth > maxWidth && fontSize > 8 && guard < 60) {
+        fontSize -= 1;
+        label.style.fontSize = `${fontSize}px`;
+        guard += 1;
+    }
+}
+
+function refitAllButtonText() {
+    document.querySelectorAll(".h-btn").forEach((btn) => {
+        const label = btn.querySelector(".h-btn-text");
+        if (label) fitButtonText(btn, label);
+    });
+}
+
+let refitResizeTimer = null;
+window.addEventListener("resize", () => {
+    clearTimeout(refitResizeTimer);
+    refitResizeTimer = setTimeout(refitAllButtonText, 120);
+});
+
+function renderRow(container, items, rowNumber, onClick, options = {}) {
+    const { isStatic = false, selectedName = null } = options;
     container.innerHTML = "";
     if (!items || items.length === 0) return;
 
@@ -480,7 +529,11 @@ function renderRow(container, items) {
     items.forEach((item, idx) => {
         const btn = document.createElement("div");
         btn.className = "h-btn";
-        btn.dataset.row = "1";
+        if (isStatic) btn.classList.add("h-btn--static");
+        if (selectedName) {
+            btn.classList.add(item.name === selectedName ? "selected" : "dimmed");
+        }
+        btn.dataset.row = String(rowNumber);
         btn.dataset.idx = String(idx);
         btn.dataset.name = item.name;
 
@@ -503,8 +556,12 @@ function renderRow(container, items) {
         label.innerText = item.name;
         btn.appendChild(label);
 
-        btn.addEventListener("click", () => handleSymptomClick(item));
         container.appendChild(btn);
+        fitButtonText(btn, label);
+
+        if (onClick) {
+            btn.addEventListener("click", () => onClick(item));
+        }
     });
 }
 
@@ -532,6 +589,7 @@ function checkPointerCollision() {
     let currentHoveredBtn = null;
 
     allBtns.forEach(btn => {
+        if (btn.classList.contains("h-btn--static")) return;
         const rect = btn.getBoundingClientRect();
         const inside = pointerX >= rect.left && pointerX <= rect.right && pointerY >= rect.top && pointerY <= rect.bottom;
         if (inside) {
@@ -568,10 +626,16 @@ function checkPointerCollision() {
         lastHoveredButtonKey = "";
     }
 
+    updateSymptomPreview(hoveredBtn);
+
     // ペンディングクリック中にターゲットから外れた場合はキャンセル
     if (pendingClickTimer && pendingClickTargetKey) {
         const currentKey = lastHoveredButtonKey;
         if (currentKey !== pendingClickTargetKey) {
+            logClickDebug("click_canceled_pointer_leave", {
+                currentKey,
+                targetKey: pendingClickTargetKey
+            });
             clearTimeout(pendingClickTimer);
             pendingClickTimer = null;
             pendingClickTargetKey = "";
@@ -581,15 +645,36 @@ function checkPointerCollision() {
     }
 }
 
+function updateSymptomPreview(hoveredBtn) {
+    // 上位階層選択前（symptom段階）のみ、ホバー中の項目の次階層を下段にプレビュー表示する
+    if (symptomStage !== SYMPTOM_STAGE_SYMPTOM || !row2Container) return;
+
+    const isRow1Hover = hoveredBtn && hoveredBtn.dataset.row === "1";
+    const name = isRow1Hover ? hoveredBtn.dataset.name : null;
+
+    if (name === previewSymptomName) return;
+    previewSymptomName = name;
+
+    const item = name ? symptomChoices.find((c) => c.name === name) : null;
+    const options = item?.options || [];
+
+    if (options.length === 0) {
+        row2Container.innerHTML = "";
+        row2Container.style.display = "none";
+        row2Container.classList.remove("preview");
+        return;
+    }
+
+    row2Container.classList.add("preview");
+    row2Container.style.display = "";
+    renderRow(row2Container, options, 2, null, { isStatic: true });
+}
+
 function renderAll() {
     if (appRoot) {
         appRoot.dataset.mode = "symptom";
         appRoot.dataset.symptomStage = symptomStage;
     }
-
-    const symptomItems = symptomStage === SYMPTOM_STAGE_SYMPTOM
-        ? symptomChoices
-        : (selectedSymptom?.options || []);
 
     const promptText = symptomStage === SYMPTOM_STAGE_SYMPTOM
         ? "項目を選んでください"
@@ -599,14 +684,6 @@ function renderAll() {
         modePrompt.textContent = promptText;
     }
 
-    if (row2Container) {
-        row2Container.innerHTML = "";
-        row2Container.style.display = "none";
-    }
-    if (row3Container) {
-        row3Container.innerHTML = "";
-        row3Container.style.display = "none";
-    }
     if (confirmZone) {
         confirmZone.style.display = "none";
     }
@@ -614,7 +691,29 @@ function renderAll() {
         confirmZonePreview.textContent = "";
     }
 
-    renderRow(row1Container, symptomItems);
+    previewSymptomName = null;
+
+    if (symptomStage === SYMPTOM_STAGE_SYMPTOM) {
+        renderRow(row1Container, symptomChoices, 1, handleSymptomClick);
+        if (row2Container) {
+            row2Container.innerHTML = "";
+            row2Container.style.display = "none";
+            row2Container.classList.remove("preview");
+        }
+    } else {
+        // 上位階層は縮小したパンくずとして上部に表示し続ける
+        renderRow(row1Container, symptomChoices, 1, null, { isStatic: true, selectedName: selectedSymptom?.name });
+        if (row2Container) {
+            row2Container.classList.remove("preview");
+            row2Container.style.display = "";
+            renderRow(row2Container, selectedSymptom?.options || [], 2, handleSymptomClick);
+        }
+    }
+
+    if (row3Container) {
+        row3Container.innerHTML = "";
+        row3Container.style.display = "none";
+    }
 }
 
 // =========================================================
@@ -624,6 +723,7 @@ let voices = [];
 let preferredVoice = null;
 
 let GEMINI_API_KEY = localStorage.getItem("gemini_api_key") || "";
+let geminiAuthBlocked = false;
 
 const DEFAULT_MOUSE_CLICK_SPEECH = {
     left: "ありがとう。",
@@ -727,6 +827,9 @@ async function speakGemini(text, silent = false) {
     if (!GEMINI_API_KEY) {
         return false;
     }
+    if (geminiAuthBlocked) {
+        return false;
+    }
 
     if (currentSpeechController) {
         currentSpeechController.abort();
@@ -758,7 +861,11 @@ async function speakGemini(text, silent = false) {
         });
 
         if (!response.ok) {
-            throw new Error(`API Error: ${response.status}`);
+            const errorBody = await response.text().catch(() => "");
+            if (response.status === 401 || response.status === 403) {
+                geminiAuthBlocked = true;
+            }
+            throw new Error(`API Error: ${response.status}${errorBody ? ` ${errorBody}` : ""}`);
         }
 
         const data = await response.json();
@@ -931,7 +1038,8 @@ async function predictWebcam() {
 
     canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
     const drawingUtils = new DrawingUtils(canvasCtx);
-    updateGestureDetection(results);
+    const primaryLandmarks = results?.faceLandmarks?.[0] || null;
+    updateGestureDetection(results, primaryLandmarks);
     let hasFace = false;
 
     if (results.faceLandmarks) {
@@ -977,15 +1085,27 @@ async function predictWebcam() {
 let isMouthOpen = false;
 let gestureCooldown = false;
 const GESTURE_COOLDOWN_MS = 800;
-const JAW_OPEN_REQUIRED_FRAMES = 3;
+const JAW_OPEN_REQUIRED_FRAMES = 5;
 const JAW_OPEN_HYSTERESIS = 0.08;
 const JAW_OPEN_SMOOTHING_ALPHA = 0.35;
 const CONFIRM_COOLDOWN_MS = 100;
 const CLICK_DELAY_MS = 180;
 const CLICK_FEEDBACK_MS = 320;
 const CLOSE_CLICK_MIN_OPEN_MS = 140;
+const JAW_OPEN_RAW_MIN = 0.12;
+const JAW_OPEN_MIN_DELTA_FROM_BASELINE = 0.045;
+const FACE_REACQUIRE_GUARD_MS = 650;
+const JAW_RAW_MEDIAN_WINDOW = 5;
+const MOUTH_RATIO_OPEN_MIN = 0.03;
+const MOUTH_RATIO_DELTA_MIN = 0.011;
+const MOUTH_RATIO_BASELINE_ALPHA = 0.08;
+const MOUTH_RATIO_CLOSE_ABS_MAX = 0.02;
+const MOUTH_RATIO_CLOSE_DELTA_MAX = 0.004;
+const JAW_CLOSE_RAW_ABS_MAX = 0.1;
+const MAX_MOUTH_OPEN_HOLD_MS = 1400;
 let jawOpenConsecutiveFrames = 0;
 let jawOpenRawScore = 0;
+let jawOpenRawInstantScore = 0;
 let jawOpenFilteredScore = 0;
 let lastConfirmedAt = 0;
 let pendingClickTimer = null;
@@ -994,69 +1114,291 @@ let clickFeedbackUntil = 0;
 let closeClickEligible = false;
 let mouthOpenedAt = 0;
 let jawClosedBaseline = null;
+let mouthOpenRatio = 0;
+let mouthOpenRatioBaseline = null;
 let debugJawOpenThreshold = 0;
 let debugJawCloseThreshold = 0;
+let jawRawRecent = [];
+let wasFaceBlendshapeAvailable = false;
+let faceJustReacquiredUntil = 0;
+let loggedReacquireGuard = false;
 const JAW_BASELINE_ALPHA = 0.08;
 const JAW_CLOSE_RATIO = 0.45;
 const JAW_CLOSE_MIN_GAP = 0.02;
 const JAW_OPEN_THRESHOLD_GAIN = 0.72;
+const JAW_BASELINE_MAX = 0.11;
+const JAW_OPEN_ABS_MIN = 0.115;
+const JAW_CLOSE_ABS_MIN = 0.075;
+const CLICK_DEBUG_LOG = true;
+const CLICK_DEBUG_CONSOLE = false;
+const CLICK_DEBUG_MAX_ENTRIES = 6000;
+const CLICK_DEBUG_STORAGE_KEY = "click_debug_log_entries_v1";
+const CLICK_DEBUG_SEQ_STORAGE_KEY = "click_debug_log_seq_v1";
+const CLICK_DEBUG_AUTO_PERSIST = true;
+const CLICK_DEBUG_PERSIST_INTERVAL_MS = 1200;
+let clickDebugSeq = 0;
+let clickDebugEntries = [];
+let clickDebugPersistTimer = null;
+
+function persistClickDebugToLocalStorage() {
+    if (!CLICK_DEBUG_AUTO_PERSIST) return;
+    try {
+        localStorage.setItem(CLICK_DEBUG_STORAGE_KEY, JSON.stringify(clickDebugEntries));
+        localStorage.setItem(CLICK_DEBUG_SEQ_STORAGE_KEY, String(clickDebugSeq));
+    } catch (err) {
+        if (CLICK_DEBUG_CONSOLE) {
+            console.warn("[CLICK_DEBUG] localStorage persist failed", err);
+        }
+    }
+}
+
+function scheduleClickDebugPersist() {
+    if (!CLICK_DEBUG_AUTO_PERSIST) return;
+    if (clickDebugPersistTimer) return;
+    clickDebugPersistTimer = setTimeout(() => {
+        clickDebugPersistTimer = null;
+        persistClickDebugToLocalStorage();
+    }, CLICK_DEBUG_PERSIST_INTERVAL_MS);
+}
+
+function loadClickDebugFromLocalStorage() {
+    if (!CLICK_DEBUG_AUTO_PERSIST) return;
+    try {
+        const rawEntries = localStorage.getItem(CLICK_DEBUG_STORAGE_KEY);
+        const rawSeq = localStorage.getItem(CLICK_DEBUG_SEQ_STORAGE_KEY);
+        if (rawEntries) {
+            const parsed = JSON.parse(rawEntries);
+            if (Array.isArray(parsed)) {
+                clickDebugEntries = parsed.slice(-CLICK_DEBUG_MAX_ENTRIES);
+            }
+        }
+        if (rawSeq && Number.isFinite(Number(rawSeq))) {
+            clickDebugSeq = Number(rawSeq);
+        } else {
+            clickDebugSeq = clickDebugEntries.length;
+        }
+    } catch (err) {
+        clickDebugEntries = [];
+        clickDebugSeq = 0;
+        if (CLICK_DEBUG_CONSOLE) {
+            console.warn("[CLICK_DEBUG] localStorage load failed", err);
+        }
+    }
+}
+
+function exportClickDebugLogFile() {
+    if (clickDebugEntries.length === 0) return false;
+    const jsonl = clickDebugEntries.map((entry) => JSON.stringify(entry)).join("\n");
+    const blob = new Blob([jsonl], { type: "application/x-ndjson" });
+    const url = URL.createObjectURL(blob);
+    const stamp = new Date().toISOString().replace(/[.:]/g, "-");
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `click-debug-${stamp}.jsonl`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    return true;
+}
+
+function clearClickDebugLog() {
+    clickDebugEntries = [];
+    clickDebugSeq = 0;
+    if (clickDebugPersistTimer) {
+        clearTimeout(clickDebugPersistTimer);
+        clickDebugPersistTimer = null;
+    }
+    try {
+        localStorage.removeItem(CLICK_DEBUG_STORAGE_KEY);
+        localStorage.removeItem(CLICK_DEBUG_SEQ_STORAGE_KEY);
+    } catch {
+        // no-op
+    }
+}
+
+loadClickDebugFromLocalStorage();
+
+window.exportClickDebugLogFile = exportClickDebugLogFile;
+window.clearClickDebugLog = clearClickDebugLog;
+
+window.addEventListener("keydown", (e) => {
+    if (!e.ctrlKey || !e.shiftKey || e.key.toLowerCase() !== "l") return;
+    e.preventDefault();
+    const exported = exportClickDebugLogFile();
+    if (!exported) {
+        alert("click-debugログがまだありません。");
+    }
+});
+
+function logClickDebug(event, extra = {}) {
+    if (!CLICK_DEBUG_LOG) return;
+    const hoverBtn = document.querySelector(".h-btn.hover");
+    const hoverKey = hoverBtn ? `${hoverBtn.dataset.row}|${hoverBtn.dataset.name}` : "";
+    const payload = {
+        seq: ++clickDebugSeq,
+        t: new Date().toISOString(),
+        event,
+        stage: symptomStage,
+        isMouthOpen,
+        jawRaw: Number(jawOpenRawScore.toFixed(4)),
+        jawRawInstant: Number(jawOpenRawInstantScore.toFixed(4)),
+        jawFilt: Number(jawOpenFilteredScore.toFixed(4)),
+        jawBaseline: Number((jawClosedBaseline ?? 0).toFixed(4)),
+        mouthRatio: Number((mouthOpenRatio ?? 0).toFixed(4)),
+        mouthRatioBaseline: Number((mouthOpenRatioBaseline ?? 0).toFixed(4)),
+        jawOpenTh: Number(debugJawOpenThreshold.toFixed(4)),
+        jawCloseTh: Number(debugJawCloseThreshold.toFixed(4)),
+        openFrames: jawOpenConsecutiveFrames,
+        hoverKey,
+        pendingClickTargetKey,
+        hasPendingClick: Boolean(pendingClickTimer),
+        pointerX: Math.round(pointerX),
+        pointerY: Math.round(pointerY),
+        ...extra
+    };
+    clickDebugEntries.push(payload);
+    if (clickDebugEntries.length > CLICK_DEBUG_MAX_ENTRIES) {
+        clickDebugEntries.splice(0, clickDebugEntries.length - CLICK_DEBUG_MAX_ENTRIES);
+    }
+    scheduleClickDebugPersist();
+    if (CLICK_DEBUG_CONSOLE) {
+        console.log("[CLICK_DEBUG]", payload);
+    }
+}
 
 function markClickFeedback() {
     clickFeedbackUntil = Date.now() + CLICK_FEEDBACK_MS;
 }
 
+function medianOfNumbers(values) {
+    if (!values || values.length === 0) return 0;
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 0
+        ? (sorted[mid - 1] + sorted[mid]) / 2
+        : sorted[mid];
+}
+
+function pushJawRawSample(value) {
+    jawRawRecent.push(value);
+    if (jawRawRecent.length > JAW_RAW_MEDIAN_WINDOW) {
+        jawRawRecent.shift();
+    }
+    return medianOfNumbers(jawRawRecent);
+}
+
+function computeMouthOpenRatio(landmarks) {
+    if (!landmarks || !landmarks[13] || !landmarks[14]) return null;
+
+    let minY = Number.POSITIVE_INFINITY;
+    let maxY = Number.NEGATIVE_INFINITY;
+    for (const lm of landmarks) {
+        if (lm.y < minY) minY = lm.y;
+        if (lm.y > maxY) maxY = lm.y;
+    }
+
+    const faceHeight = Math.max(0.0001, maxY - minY);
+    const mouthGap = Math.abs(landmarks[14].y - landmarks[13].y);
+    return mouthGap / faceHeight;
+}
+
+function updateMouthRatioBaseline() {
+    if (!Number.isFinite(mouthOpenRatio)) return;
+
+    if (mouthOpenRatioBaseline === null) {
+        mouthOpenRatioBaseline = mouthOpenRatio;
+        return;
+    }
+
+    const candidate = Math.min(mouthOpenRatio, mouthOpenRatioBaseline + 0.0035);
+    mouthOpenRatioBaseline = lowPassFilter(mouthOpenRatioBaseline, candidate, MOUTH_RATIO_BASELINE_ALPHA);
+}
+
 function getEffectiveJawOpenThreshold() {
-    return (jawClosedBaseline ?? 0) + (jawOpenThreshold * JAW_OPEN_THRESHOLD_GAIN);
+    const relativeThreshold = (jawClosedBaseline ?? 0) + (jawOpenThreshold * JAW_OPEN_THRESHOLD_GAIN);
+    return Math.max(JAW_OPEN_ABS_MIN, relativeThreshold);
 }
 
 function getEffectiveJawCloseThreshold() {
     const openThreshold = getEffectiveJawOpenThreshold();
     const adjustedGap = jawOpenThreshold * JAW_OPEN_THRESHOLD_GAIN;
-    return openThreshold - Math.max(JAW_CLOSE_MIN_GAP, adjustedGap * JAW_CLOSE_RATIO);
+    const closeThreshold = openThreshold - Math.max(JAW_CLOSE_MIN_GAP, adjustedGap * JAW_CLOSE_RATIO);
+    return Math.max(JAW_CLOSE_ABS_MIN, closeThreshold);
 }
 
 function updateJawClosedBaseline() {
     if (!Number.isFinite(jawOpenFilteredScore)) return;
+    const filtered = Math.min(jawOpenFilteredScore, JAW_BASELINE_MAX);
 
     if (jawClosedBaseline === null) {
-        jawClosedBaseline = jawOpenFilteredScore;
+        jawClosedBaseline = filtered;
         return;
     }
 
-    const candidate = Math.min(jawOpenFilteredScore, jawClosedBaseline + 0.015);
+    const candidate = Math.min(filtered, jawClosedBaseline + 0.008);
     jawClosedBaseline = lowPassFilter(jawClosedBaseline, candidate, JAW_BASELINE_ALPHA);
 }
 
 function isJawOpenVisualActive() {
-    return isMouthOpen || jawOpenConsecutiveFrames >= JAW_OPEN_REQUIRED_FRAMES;
+    return isMouthOpen;
 }
 
-function updateGestureDetection(detectResults) {
+function updateGestureDetection(detectResults, primaryLandmarks = null) {
     if (isConfirmInProgress) return;
     if (!detectResults.faceBlendshapes || detectResults.faceBlendshapes.length === 0) {
+        const hadState = isMouthOpen || jawOpenConsecutiveFrames > 0 || jawOpenFilteredScore > 0.02;
+        wasFaceBlendshapeAvailable = false;
+        jawRawRecent = [];
+        loggedReacquireGuard = false;
         jawOpenRawScore = 0;
+        jawOpenRawInstantScore = 0;
         jawOpenFilteredScore *= 0.8;
         jawOpenConsecutiveFrames = 0;
         isMouthOpen = false;
         closeClickEligible = false;
         mouthOpenedAt = 0;
         jawClosedBaseline = null;
+        mouthOpenRatio = 0;
+        mouthOpenRatioBaseline = null;
         debugJawOpenThreshold = jawOpenThreshold * JAW_OPEN_THRESHOLD_GAIN;
         debugJawCloseThreshold = Math.max(0, (jawOpenThreshold * JAW_OPEN_THRESHOLD_GAIN) - JAW_CLOSE_MIN_GAP);
+        if (hadState) {
+            logClickDebug("no_face_reset");
+        }
         return;
+    }
+
+    if (!wasFaceBlendshapeAvailable) {
+        wasFaceBlendshapeAvailable = true;
+        faceJustReacquiredUntil = Date.now() + FACE_REACQUIRE_GUARD_MS;
+        jawRawRecent = [];
+        jawOpenConsecutiveFrames = 0;
+        isMouthOpen = false;
+        closeClickEligible = false;
+        mouthOpenedAt = 0;
+        jawClosedBaseline = null;
+        mouthOpenRatioBaseline = null;
+        loggedReacquireGuard = false;
+        logClickDebug("face_reacquired", { guardMs: FACE_REACQUIRE_GUARD_MS });
     }
 
     const cats = detectResults.faceBlendshapes[0].categories;
     const jawOpen = cats.find(c => c.categoryName === "jawOpen")?.score ?? 0;
-    jawOpenRawScore = jawOpen;
+    jawOpenRawInstantScore = jawOpen;
+    jawOpenRawScore = pushJawRawSample(jawOpen);
     if (jawOpenFilteredScore === 0) {
-        jawOpenFilteredScore = jawOpen;
+        jawOpenFilteredScore = jawOpenRawScore;
     } else {
-        jawOpenFilteredScore = (jawOpenFilteredScore * (1 - JAW_OPEN_SMOOTHING_ALPHA)) + (jawOpen * JAW_OPEN_SMOOTHING_ALPHA);
+        jawOpenFilteredScore = (jawOpenFilteredScore * (1 - JAW_OPEN_SMOOTHING_ALPHA)) + (jawOpenRawScore * JAW_OPEN_SMOOTHING_ALPHA);
     }
+
+    const ratio = computeMouthOpenRatio(primaryLandmarks);
+    mouthOpenRatio = Number.isFinite(ratio) ? ratio : 0;
 
     if (!isMouthOpen) {
         updateJawClosedBaseline();
+        updateMouthRatioBaseline();
     }
 
     const openThreshold = getEffectiveJawOpenThreshold();
@@ -1064,33 +1406,71 @@ function updateGestureDetection(detectResults) {
     debugJawOpenThreshold = openThreshold;
     debugJawCloseThreshold = closeThreshold;
 
-    if (isMouthOpen) {
-        if (jawOpenFilteredScore <= closeThreshold) {
-            const openHeldMs = mouthOpenedAt ? (Date.now() - mouthOpenedAt) : 0;
-            const canCloseClick = closeClickEligible && openHeldMs >= CLOSE_CLICK_MIN_OPEN_MS && !pendingClickTimer;
+    if (Date.now() < faceJustReacquiredUntil) {
+        if (!loggedReacquireGuard) {
+            logClickDebug("face_reacquire_guard", {
+                remainMs: faceJustReacquiredUntil - Date.now()
+            });
+            loggedReacquireGuard = true;
+        }
+        jawOpenConsecutiveFrames = 0;
+        return;
+    }
+    loggedReacquireGuard = false;
 
+    if (isMouthOpen) {
+        const openHeldMs = mouthOpenedAt ? (Date.now() - mouthOpenedAt) : 0;
+        const ratioBaseline = mouthOpenRatioBaseline ?? 0;
+        const ratioCloseThreshold = Math.max(MOUTH_RATIO_CLOSE_ABS_MAX, ratioBaseline + MOUTH_RATIO_CLOSE_DELTA_MAX);
+        const closeByFiltered = jawOpenFilteredScore <= closeThreshold;
+        const closeByRawAndRatio = jawOpenRawInstantScore <= JAW_CLOSE_RAW_ABS_MAX && mouthOpenRatio <= ratioCloseThreshold;
+        const closeByTimeout = openHeldMs >= MAX_MOUTH_OPEN_HOLD_MS;
+
+        if (closeByFiltered || closeByRawAndRatio || closeByTimeout) {
+            const openHeldMs = mouthOpenedAt ? (Date.now() - mouthOpenedAt) : 0;
+            logClickDebug("mouth_close", {
+                openHeldMs,
+                closeByFiltered,
+                closeByRawAndRatio,
+                closeByTimeout,
+                ratioCloseTh: Number(ratioCloseThreshold.toFixed(4))
+            });
             isMouthOpen = false;
             jawOpenConsecutiveFrames = 0;
             mouthOpenedAt = 0;
-
-            if (canCloseClick) {
-                const didSchedule = triggerClick();
-                if (didSchedule && !gestureCooldown) {
-                    showGestureFeedback();
-                }
-            }
-
             closeClickEligible = false;
         }
         return;
     }
 
-    if (jawOpenFilteredScore >= openThreshold) {
+    const baseline = jawClosedBaseline ?? 0;
+    const openDelta = jawOpenFilteredScore - baseline;
+    const ratioBaseline = mouthOpenRatioBaseline ?? 0;
+    const ratioThreshold = Math.max(MOUTH_RATIO_OPEN_MIN, ratioBaseline + MOUTH_RATIO_DELTA_MIN);
+    const passByRatio = Number.isFinite(mouthOpenRatio) && mouthOpenRatio >= ratioThreshold;
+    const passesOpenGate =
+        jawOpenFilteredScore >= openThreshold
+        && jawOpenRawScore >= JAW_OPEN_RAW_MIN
+        && openDelta >= JAW_OPEN_MIN_DELTA_FROM_BASELINE
+        && passByRatio;
+
+    if (passesOpenGate) {
         jawOpenConsecutiveFrames += 1;
+        if (jawOpenConsecutiveFrames === 1) {
+            logClickDebug("open_gate_start", {
+                openDelta: Number(openDelta.toFixed(4)),
+                ratio: Number(mouthOpenRatio.toFixed(4)),
+                ratioTh: Number(ratioThreshold.toFixed(4))
+            });
+        }
         if (jawOpenConsecutiveFrames >= JAW_OPEN_REQUIRED_FRAMES) {
             isMouthOpen = true;
             mouthOpenedAt = Date.now();
-
+            logClickDebug("mouth_open_confirmed", {
+                openDelta: Number(openDelta.toFixed(4)),
+                ratio: Number(mouthOpenRatio.toFixed(4)),
+                ratioTh: Number(ratioThreshold.toFixed(4))
+            });
             const didSchedule = triggerClick();
             closeClickEligible = !didSchedule;
 
@@ -1099,6 +1479,17 @@ function updateGestureDetection(detectResults) {
             }
         }
     } else {
+        if (jawOpenConsecutiveFrames > 0) {
+            logClickDebug("open_gate_break", {
+                openDelta: Number(openDelta.toFixed(4)),
+                passByFilt: jawOpenFilteredScore >= openThreshold,
+                passByRaw: jawOpenRawScore >= JAW_OPEN_RAW_MIN,
+                passByDelta: openDelta >= JAW_OPEN_MIN_DELTA_FROM_BASELINE,
+                passByRatio,
+                ratio: Number(mouthOpenRatio.toFixed(4)),
+                ratioTh: Number(ratioThreshold.toFixed(4))
+            });
+        }
         jawOpenConsecutiveFrames = 0;
     }
 }
@@ -1165,10 +1556,14 @@ function showGestureFeedback() {
 }
 
 function triggerClick() {
-    if (isConfirmInProgress) return;
+    if (isConfirmInProgress) {
+        logClickDebug("click_blocked_confirm_in_progress");
+        return false;
+    }
 
     const now = Date.now();
     if (now - lastConfirmedAt < CONFIRM_COOLDOWN_MS) {
+        logClickDebug("click_blocked_cooldown", { sinceLastConfirmMs: now - lastConfirmedAt });
         return false;
     }
 
@@ -1177,11 +1572,13 @@ function triggerClick() {
         const targetKey = `${activeBtn.dataset.row}|${activeBtn.dataset.name}`;
 
         if (pendingClickTimer) {
+            logClickDebug("click_pending_replaced", { replacedTargetKey: pendingClickTargetKey, newTargetKey: targetKey });
             clearTimeout(pendingClickTimer);
             pendingClickTimer = null;
             pendingClickTargetKey = "";
         }
 
+        logClickDebug("click_scheduled", { targetKey, clickDelayMs: CLICK_DELAY_MS });
         activeBtn.classList.add("clicked-anim");
         pendingClickTargetKey = targetKey;
         // ボタン参照を保持して、タイマー実行時にはこちらを使用
@@ -1189,6 +1586,7 @@ function triggerClick() {
         pendingClickTimer = setTimeout(() => {
             // 1. アニメーションクラスが削除されている（キャンセルされた）
             if (!targetBtn.classList.contains("clicked-anim")) {
+                logClickDebug("click_canceled_missing_anim", { targetKey });
                 pendingClickTimer = null;
                 pendingClickTargetKey = "";
                 return;
@@ -1200,6 +1598,7 @@ function triggerClick() {
                 ? `${currentHover.dataset.row}|${currentHover.dataset.name}`
                 : "";
             if (currentKey !== pendingClickTargetKey) {
+                logClickDebug("click_canceled_hover_changed", { targetKey, currentKey });
                 targetBtn.classList.remove("clicked-anim");
                 pendingClickTimer = null;
                 pendingClickTargetKey = "";
@@ -1208,6 +1607,7 @@ function triggerClick() {
 
             targetBtn.classList.remove("clicked-anim");
             markClickFeedback();
+            logClickDebug("click_executed", { targetKey });
             targetBtn.click();
             lastConfirmedAt = Date.now();
             pendingClickTimer = null;
@@ -1216,6 +1616,8 @@ function triggerClick() {
 
         return true;
     }
+
+    logClickDebug("click_blocked_no_hover");
 
     return false;
 }
@@ -1379,10 +1781,9 @@ closeSettingsBtn.addEventListener("click", () => {
 
 saveSettingsBtn.addEventListener("click", () => {
     const newKey = apiKeyInput.value.trim();
-    if (newKey) {
-        GEMINI_API_KEY = newKey;
-        localStorage.setItem("gemini_api_key", newKey);
-    }
+    GEMINI_API_KEY = newKey;
+    geminiAuthBlocked = false;
+    localStorage.setItem("gemini_api_key", newKey);
 
     const newLeft = normalizedPhrase(mouseLeftInput ? mouseLeftInput.value : "", DEFAULT_MOUSE_CLICK_SPEECH.left);
     const newMiddle = normalizedPhrase(mouseMiddleInput ? mouseMiddleInput.value : "", DEFAULT_MOUSE_CLICK_SPEECH.middle);
