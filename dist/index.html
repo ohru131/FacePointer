@@ -65,16 +65,17 @@
         <div id="controls">
             <div id="controls-top">
                 <button id="settings-btn" class="ctrl-btn icon-btn" title="設定">⚙️</button>
-                <button id="audio-cache-btn" class="ctrl-btn secondary">音声データを更新</button>
-                <button id="calibrate-btn" class="ctrl-btn">校正リセット</button>
-                <div id="audio-status" class="status-info" style="display:none;">
+                <button id="params-toggle-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true">パラメータ ON</button>
+                <button id="audio-cache-btn" class="ctrl-btn secondary control-advanced">音声データを更新</button>
+                <button id="calibrate-btn" class="ctrl-btn control-advanced">校正リセット</button>
+                <div id="audio-status" class="status-info control-advanced" style="display:none;">
                     <div class="status-label"></div>
                     <div class="status-progress-bar">
                         <div class="status-progress-fill"></div>
                     </div>
                 </div>
             </div>
-            <div id="controls-bottom">
+            <div id="controls-bottom" class="control-advanced">
                 <div id="telemetry-panel">
                     <pre id="telemetry-values">計測待機中</pre>
                 </div>
@@ -97,7 +98,7 @@
 
         <!-- Settings Modal -->
         <div id="settings-modal" class="modal">
-            <div class="modal-content" style="max-width: 700px; max-height: 85vh; overflow-y: auto;">
+            <div class="modal-content settings-modal-content">
                 <h3>設定</h3>
                 
                 <!-- Tabs -->
@@ -166,7 +167,7 @@
                     </div>
                 </div>
 
-                <div class="modal-actions" style="margin-top: 15px;">
+                <div class="modal-actions">
                     <button id="save-settings" class="ctrl-btn primary">保存して閉じる</button>
                     <button id="close-settings" class="ctrl-btn secondary">キャンセル</button>
                 </div>

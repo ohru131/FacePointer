@@ -163,6 +163,14 @@ header {
     flex-wrap: wrap;
 }
 
+#controls.params-hidden {
+    padding: 0.6rem 0.7rem;
+}
+
+#controls.params-hidden .control-advanced {
+    display: none !important;
+}
+
 #controls-bottom {
     display: flex;
     gap: 0.8rem;
@@ -230,6 +238,55 @@ header {
 .ctrl-btn:hover {
     background: #f1f3f5;
     transform: translateY(-1px);
+}
+
+.switch-btn {
+    min-width: 136px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0.5rem;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.switch-btn::before {
+    content: "";
+    width: 34px;
+    height: 19px;
+    border-radius: 999px;
+    background: #52b788;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+    position: relative;
+    transition: background 0.2s;
+}
+
+.switch-btn::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 15px;
+    height: 15px;
+    border-radius: 50%;
+    background: #fff;
+    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.3);
+    transform: translate(4px, -50%);
+    transition: transform 0.2s;
+}
+
+#params-toggle-btn.switch-btn {
+    position: relative;
+}
+
+#params-toggle-btn.switch-btn.is-off::before {
+    background: #8b98a5;
+}
+
+#params-toggle-btn.switch-btn.is-off::after {
+    transform: translate(19px, -50%);
 }
 
 #instruction {
@@ -426,7 +483,7 @@ header {
 
 #app[data-mode="symptom"][data-symptom-stage="symptom"] #row2.preview .h-btn {
     min-height: 0;
-    height: 200px;
+    height: 190px;
     font-size: clamp(1.8rem, 2.8vw, 2.2rem);
     gap: 0.25rem;
     padding: 0.35rem 0.4rem;
@@ -445,14 +502,15 @@ header {
 }
 
 #app[data-mode="symptom"][data-symptom-stage="body-part"] #row2 .h-btn:not(.h-btn--empty) {
-    min-height: min(46vh, 380px);
+    min-height: min(46vh, 360px);
     font-size: clamp(3.6rem, 7vw, 5.6rem);
-    gap: 0.75rem;
+    gap: 0.4rem;
+    padding: 0.6rem 0.55rem;
 }
 
 #app[data-mode="symptom"][data-symptom-stage="body-part"] #row2 .h-btn-icon {
-    width: min(96%, 360px);
-    height: min(96%, 360px);
+    width: min(70%, 220px);
+    height: min(70%, 220px);
 }
 
 #app[data-mode="symptom"][data-symptom-stage="body-part"] #row2 .h-btn.hover .h-btn-icon {
@@ -481,9 +539,9 @@ header {
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 0.25rem;
+    gap: 0.35rem;
     text-align: center;
-    padding: 0.65rem;
+    padding: 0.75rem 0.6rem;
     position: relative;
     overflow: hidden;
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.72) 0%, rgba(248, 249, 250, 0.56) 100%);
@@ -540,8 +598,8 @@ header {
 
 /* button content: アイコンは幅・高さを固定してサイズを揃える（object-fit:containで縦横比は保持） */
 .h-btn-icon {
-    width: min(70%, 160px);
-    height: min(70%, 160px);
+    width: min(64%, 150px);
+    height: min(64%, 150px);
     object-fit: contain;
     margin-bottom: 0;
     flex: 0 0 auto;
@@ -549,7 +607,7 @@ header {
 
 .h-btn-text {
     font-size: inherit;
-    line-height: 1;
+    line-height: 1.05;
     max-width: 100%;
     white-space: nowrap;
     overflow: hidden;
@@ -928,12 +986,15 @@ header {
     background: rgba(30, 40, 50, 0.95);
     border: 1px solid var(--glass-border);
     border-radius: 1.5rem;
-    padding: 2.5rem;
-    width: 90%;
-    max-width: 500px;
+    padding: 1.2rem 1.4rem 1rem;
+    width: min(920px, 92vw);
+    max-width: 920px;
+    max-height: 92vh;
     box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
     transform: scale(0.9);
     transition: transform 0.3s cubic-bezier(0.19, 1, 0.22, 1);
+    display: flex;
+    flex-direction: column;
 }
 
 .modal.active .modal-content {
@@ -941,21 +1002,21 @@ header {
 }
 
 .modal-content h3 {
-    font-size: 1.8rem;
-    margin-bottom: 1.5rem;
+    font-size: 1.45rem;
+    margin-bottom: 0.65rem;
     color: #fff;
     text-align: center;
 }
 
 .setting-item {
-    margin-bottom: 2rem;
+    margin-bottom: 0.9rem;
     display: flex;
     flex-direction: column;
-    gap: 0.8rem;
+    gap: 0.45rem;
 }
 
 .setting-item label {
-    font-size: 1.1rem;
+    font-size: 1rem;
     font-weight: 700;
     color: var(--text-dim);
 }
@@ -965,8 +1026,8 @@ header {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid var(--glass-border);
     border-radius: 0.6rem;
-    padding: 0.8rem 1rem;
-    font-size: 1.1rem;
+    padding: 0.6rem 0.8rem;
+    font-size: 0.95rem;
     width: 100%;
     outline: none;
     transition: border-color 0.2s;
@@ -1004,12 +1065,15 @@ header {
     display: flex;
     gap: 1.2rem;
     justify-content: stretch;
+    margin-top: 0.75rem;
+    padding-top: 0.6rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.12);
 }
 
 .modal-actions button {
     flex: 1;
-    height: 3.5rem;
-    font-size: 1.1rem;
+    height: 3.1rem;
+    font-size: 1rem;
     font-weight: 700;
 }
 
@@ -1048,7 +1112,7 @@ header {
 .settings-tabs {
     display: flex;
     gap: 0.8rem;
-    margin-bottom: 1.5rem;
+    margin-bottom: 0.8rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
@@ -1079,6 +1143,9 @@ header {
 
 .settings-tab-content.active {
     display: block;
+    overflow-y: auto;
+    min-height: 0;
+    flex: 1 1 auto;
 }
 
 .phrase-editor-toolbar {
@@ -1319,6 +1386,39 @@ header {
 
     #controls-top {
         gap: 0.4rem;
+    }
+
+    .switch-btn {
+        min-width: 126px;
+        font-size: 0.76rem;
+    }
+
+    .switch-btn::before {
+        width: 30px;
+        height: 17px;
+    }
+
+    .switch-btn::after {
+        width: 13px;
+        height: 13px;
+    }
+
+    #params-toggle-btn.switch-btn.is-off::after {
+        transform: translate(17px, -50%);
+    }
+
+    .modal-content {
+        width: calc(100% - 1rem);
+        max-height: 95vh;
+        padding: 0.9rem 0.9rem 0.8rem;
+    }
+
+    .setting-item {
+        margin-bottom: 0.7rem;
+    }
+
+    .modal-actions {
+        gap: 0.6rem;
     }
 
     #quick-tuning {

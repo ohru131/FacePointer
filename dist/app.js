@@ -70,6 +70,7 @@ const YAW_ACCEL_EXPONENT = 1.7;
 
 const JAW_OPEN_THRESHOLD_KEY = "jaw_open_threshold";
 const ICON_STYLE_KEY = "icon_style";
+const PARAM_PANEL_VISIBLE_KEY = "param_panel_visible";
 const ICON_STYLE_DEFAULT = "simple";
 const ICON_STYLE_COMIC = "comic";
 const ICON_STYLE_COMIC2 = "comic2";
@@ -91,7 +92,7 @@ const symptomChoices = [
             { name: "かゆい", icon: "media/menu-itchy.png", sentence: "かゆいです。" },
             { name: "痛い", icon: "media/menu-hurt.png", sentence: "痛いです。" },
             { name: "おなかが張る", icon: "media/menu-bloated-stomach.png", sentence: "おなかが張っています。" },
-            { name: "あつい・さむい", icon: "media/menu-hot-cold.png", sentence: "あつい、または、さむいです。" }
+            { name: "あつい・さむい", icon: "media/menu-hot-cold.png", sentence: "暑いか寒いです。" }
         ]
     },
     {
@@ -110,8 +111,8 @@ const symptomChoices = [
         icon: "media/menu-refresh.png",
         flow: SYMPTOM_FLOW_DIRECT,
         options: [
-            { name: "お話して", icon: "media/menu-talk.png", sentence: "お話してください。" },
-            { name: "本", icon: "media/menu-book.png", sentence: "本を読んでほしいです。" },
+            { name: "お話して", icon: "media/menu-talk.png", sentence: "お話ししてください。" },
+            { name: "本", icon: "media/menu-book.png", sentence: "本を読んでください。" },
             { name: "音楽", icon: "media/menu-music.png", sentence: "音楽を聴きたいです。" },
             { name: "DVD", icon: "media/menu-dvd.png", sentence: "DVDを見たいです。" }
         ]
@@ -498,7 +499,7 @@ function fitButtonText(btn, label) {
     if (maxWidth <= 0) return;
     let fontSize = parseFloat(getComputedStyle(label).fontSize);
     let guard = 0;
-    // 改行しないサイズまで 1px ずつ縮小
+    // 元仕様: 横幅超過のみを条件に 1px ずつ縮小
     while (label.scrollWidth > maxWidth && fontSize > 8 && guard < 60) {
         fontSize -= 1;
         label.style.fontSize = `${fontSize}px`;
@@ -1666,6 +1667,30 @@ const yawGainValue = document.getElementById("yaw-gain-value");
 const mouseClickFeedback = document.getElementById("mouse-click-feedback");
 const saveSettingsBtn = document.getElementById("save-settings");
 const closeSettingsBtn = document.getElementById("close-settings");
+const controlsRoot = document.getElementById("controls");
+const paramsToggleBtn = document.getElementById("params-toggle-btn");
+
+let isParamPanelVisible = localStorage.getItem(PARAM_PANEL_VISIBLE_KEY) !== "0";
+
+function applyParamPanelVisibility() {
+    if (!controlsRoot) return;
+    controlsRoot.classList.toggle("params-hidden", !isParamPanelVisible);
+    if (!paramsToggleBtn) return;
+
+    paramsToggleBtn.classList.toggle("is-off", !isParamPanelVisible);
+    paramsToggleBtn.setAttribute("aria-pressed", isParamPanelVisible ? "true" : "false");
+    paramsToggleBtn.textContent = isParamPanelVisible ? "パラメータ ON" : "パラメータ OFF";
+}
+
+if (paramsToggleBtn) {
+    paramsToggleBtn.addEventListener("click", () => {
+        isParamPanelVisible = !isParamPanelVisible;
+        localStorage.setItem(PARAM_PANEL_VISIBLE_KEY, isParamPanelVisible ? "1" : "0");
+        applyParamPanelVisibility();
+    });
+}
+
+applyParamPanelVisibility();
 
 function refreshTuningSliderLabels() {
     if (jawOpenThresholdValue) jawOpenThresholdValue.textContent = jawOpenThreshold.toFixed(2);
@@ -1800,7 +1825,6 @@ saveSettingsBtn.addEventListener("click", () => {
         localStorage.setItem(ICON_STYLE_KEY, iconStyle);
     }
 
-    alert("設定を保存しました。");
     renderAll();
     settingsModal.classList.remove("active");
 });

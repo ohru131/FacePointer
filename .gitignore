@@ -1,4 +1,6 @@
 node_modules/
+models/
+outputs/
 .DS_Store
 *.log
 src-tauri/target/
