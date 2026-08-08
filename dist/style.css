@@ -241,6 +241,7 @@ header {
 }
 
 .switch-btn {
+    position: relative;
     min-width: 136px;
     display: inline-flex;
     align-items: center;
@@ -277,15 +278,11 @@ header {
     transition: transform 0.2s;
 }
 
-#params-toggle-btn.switch-btn {
-    position: relative;
-}
-
-#params-toggle-btn.switch-btn.is-off::before {
+.switch-btn.is-off::before {
     background: #8b98a5;
 }
 
-#params-toggle-btn.switch-btn.is-off::after {
+.switch-btn.is-off::after {
     transform: translate(19px, -50%);
 }
 
@@ -1403,7 +1400,7 @@ header {
         height: 13px;
     }
 
-    #params-toggle-btn.switch-btn.is-off::after {
+    .switch-btn.is-off::after {
         transform: translate(17px, -50%);
     }
 

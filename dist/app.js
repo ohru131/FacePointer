@@ -32,14 +32,21 @@ let targetY = pointerY;
 const HOVER_SWITCH_HYSTERESIS_PX = 26;
 let lastHoveredButtonKey = "";
 let lastNoseControlX = null;
+let lastNoseControlY = null;
 let lastYaw = null;
+let lastPitch = null;
 let filteredNoseControlX = null;
+let filteredNoseControlY = null;
 let filteredYaw = null;
+let filteredPitch = null;
 let debugDeltaN = 0;
 let debugDeltaY = 0;
 let debugPixN = 0;
 let debugPixY = 0;
 let debugDeltaX = 0;
+let debugDeltaNoseY = 0;
+let debugDeltaPitch = 0;
+let debugDeltaYPx = 0;
 // 鏡像表示ポリシー: 見た目右向き -> controlX増加 に固定変換する符号
 const YAW_MIRROR_SIGN = 1;
 const FOLLOW_LERP = 0.35;
@@ -67,6 +74,19 @@ const YAW_ACCEL_START_RAD = 0.03;
 const YAW_ACCEL_FULL_RAD = 0.24;
 const YAW_ACCEL_MAX_MULTIPLIER = 3.6;
 const YAW_ACCEL_EXPONENT = 1.7;
+
+// 上下移動（鼻の縦位置 + 顔の上下向き）。横移動と同じゲインスライダーを共有する
+const VERTICAL_MOVE_KEY = "vertical_move_enabled";
+// 縦の可動域は横より狭いので、必要ならこの比率で感度を落とす
+const VERTICAL_NOSE_SCALE_RATIO = 1.0;
+const VERTICAL_PITCH_SCALE_RATIO = 1.0;
+// 顔を下へ向けた時にポインタが下がる向き。逆に感じる場合は -1 にする
+const PITCH_MIRROR_SIGN = 1;
+// 行を跨いだ直後の往復（チャタリング）を防ぐロックアウト
+const VERTICAL_STAGE_SWITCH_LOCKOUT_MS = 420;
+// 上下限（各行のボタン中央）と階層切替ラインの最小間隔
+const VERTICAL_STAGE_TRIGGER_MARGIN_PX = 24;
+const VERTICAL_MIN_TRAVEL_PX = 40;
 
 const JAW_OPEN_THRESHOLD_KEY = "jaw_open_threshold";
 const ICON_STYLE_KEY = "icon_style";
@@ -153,7 +173,10 @@ function resolveIconPath(iconPath) {
 let calibratedNoseX = 0.5;
 let calibratedNoseY = 0.5;
 let calibratedYaw = 0;
+let calibratedPitch = 0;
 let isCalibrating = true;
+let isVerticalMoveEnabled = localStorage.getItem(VERTICAL_MOVE_KEY) !== "0";
+let lastVerticalStageSwitchAt = 0;
 let jawOpenThreshold = readStoredNumber(JAW_OPEN_THRESHOLD_KEY, JAW_OPEN_THRESHOLD_DEFAULT, 0.0, 0.2);
 let noseGain = readStoredNumber(NOSE_GAIN_KEY, NOSE_GAIN_DEFAULT, 0, NOSE_GAIN_MAX);
 let yawGain = readStoredNumber(YAW_GAIN_KEY, YAW_GAIN_DEFAULT, 0, YAW_GAIN_MAX);
@@ -201,16 +224,33 @@ function resetSymptomModeState(shouldRender = true) {
     symptomLastActivityAt = 0;
     lastSymptomNoseX = null;
     lastSymptomNoseY = null;
-    lastNoseControlX = null;
-    lastYaw = null;
-    filteredNoseControlX = null;
-    filteredYaw = null;
+    resetPointerMotionHistory();
     isConfirmInProgress = false;
     window.clearTimeout(window.symptomResetTimer);
     window.symptomResetTimer = null;
     if (shouldRender) {
         renderAll();
+        // ホーム復帰時はポインタを上段の高さへ戻し、再降下できる状態にする
+        refreshHoverAndPreview();
+        snapPointerToUpperRow();
     }
+}
+
+// プレビュー行の有無で上段の高さが変わるため、位置合わせ前に描画を確定させる
+function refreshHoverAndPreview() {
+    if (!isVerticalMoveEnabled) return;
+    checkPointerCollision();
+}
+
+function resetPointerMotionHistory() {
+    lastNoseControlX = null;
+    lastNoseControlY = null;
+    lastYaw = null;
+    lastPitch = null;
+    filteredNoseControlX = null;
+    filteredNoseControlY = null;
+    filteredYaw = null;
+    filteredPitch = null;
 }
 
 function getSymptomRowPointerBounds() {
@@ -232,6 +272,91 @@ function getSymptomRowPointerBounds() {
     const centerX = centers.reduce((sum, c) => sum + c.x, 0) / centers.length;
     const centerY = centers.reduce((sum, c) => sum + c.y, 0) / centers.length;
     return { minX, maxX, centerX, centerY };
+}
+
+// 表示中の行の縦位置。パンくず表示・プレビュー表示（h-btn--static）も対象にする
+function getRowGeometry(container) {
+    if (!container || container.style.display === "none") return null;
+
+    const buttons = Array.from(container.querySelectorAll(".h-btn:not(.h-btn--empty)"));
+    if (buttons.length === 0) return null;
+
+    let top = Number.POSITIVE_INFINITY;
+    let bottom = Number.NEGATIVE_INFINITY;
+    let centerSum = 0;
+    let count = 0;
+
+    buttons.forEach((btn) => {
+        const rect = btn.getBoundingClientRect();
+        if (rect.height <= 0) return;
+        top = Math.min(top, rect.top);
+        bottom = Math.max(bottom, rect.bottom);
+        centerSum += rect.top + (rect.height / 2);
+        count += 1;
+    });
+
+    if (count === 0) return null;
+    return { top, bottom, centerY: centerSum / count };
+}
+
+// 上下移動の限界は上段/下段それぞれのボタン中央
+function getVerticalPointerBounds() {
+    if (!isVerticalMoveEnabled) return null;
+
+    const upper = getRowGeometry(row1Container);
+    const lower = getRowGeometry(row2Container);
+    if (!upper || !lower) return null;
+
+    const minY = Math.min(upper.centerY, lower.centerY);
+    const maxY = Math.max(upper.centerY, lower.centerY);
+    if (maxY - minY < VERTICAL_MIN_TRAVEL_PX) return null;
+
+    // 切替ラインは必ず上下限の内側に置き、到達不能・即時往復を防ぐ
+    const downTriggerY = clamp(lower.top, minY + VERTICAL_STAGE_TRIGGER_MARGIN_PX, maxY);
+    const upTriggerY = clamp(upper.bottom, minY, maxY - VERTICAL_STAGE_TRIGGER_MARGIN_PX);
+    return { minY, maxY, upper, lower, downTriggerY, upTriggerY };
+}
+
+// 行の切替直後は追従補間を挟まずに中央へ乗せ直す（切替ラインの再通過を防ぐ）
+function snapPointerToRowCenter(container) {
+    if (!isVerticalMoveEnabled) return;
+
+    const geometry = getRowGeometry(container);
+    if (!geometry) return;
+
+    targetY = geometry.centerY;
+    pointerY = geometry.centerY;
+    lastVerticalStageSwitchAt = Date.now();
+}
+
+function snapPointerToUpperRow() {
+    snapPointerToRowCenter(row1Container);
+}
+
+function snapPointerToLowerRow() {
+    snapPointerToRowCenter(row2Container);
+}
+
+// 行間を通過中もプレビュー対象を保つため、ポインタXから上段ボタンを決める
+function findRow1ButtonByPointerX() {
+    if (!row1Container) return null;
+
+    const buttons = Array.from(row1Container.querySelectorAll(".h-btn:not(.h-btn--empty)"));
+    if (buttons.length === 0) return null;
+
+    let nearest = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const btn of buttons) {
+        const rect = btn.getBoundingClientRect();
+        if (pointerX >= rect.left && pointerX <= rect.right) return btn;
+
+        const distance = Math.abs(pointerX - (rect.left + (rect.width / 2)));
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            nearest = btn;
+        }
+    }
+    return nearest;
 }
 
 function clamp(value, min, max) {
@@ -269,8 +394,8 @@ function getYawDeadzone() {
     return YAW_DEADZONE_MAX - ((YAW_DEADZONE_MAX - YAW_DEADZONE_MIN) * curved);
 }
 
-function getYawOffsetAcceleration(currentYaw) {
-    const offsetAbs = Math.abs((currentYaw ?? calibratedYaw) - calibratedYaw);
+function getAngleOffsetAcceleration(currentAngle, calibratedAngle) {
+    const offsetAbs = Math.abs((currentAngle ?? calibratedAngle) - calibratedAngle);
     const norm = clamp((offsetAbs - YAW_ACCEL_START_RAD) / (YAW_ACCEL_FULL_RAD - YAW_ACCEL_START_RAD), 0, 1);
     const curved = Math.pow(norm, YAW_ACCEL_EXPONENT);
     return 1 + ((YAW_ACCEL_MAX_MULTIPLIER - 1) * curved);
@@ -298,9 +423,15 @@ function updateTelemetryPanel(hasFace) {
         `顔向きΔ: ${f3(debugDeltaY)}`,
         `鼻寄与px: ${f2(debugPixN)}`,
         `傾き寄与px: ${f2(debugPixY)}`,
-        `移動量px: ${f2(debugDeltaX)}`,
+        `横移動px: ${f2(debugDeltaX)}`,
         `口(実/閾): ${f3(jawOpenFilteredScore)}/${f3(debugJawOpenThreshold)}`
     ];
+
+    if (isVerticalMoveEnabled) {
+        lines.push(`鼻縦Δ: ${f3(debugDeltaNoseY)}`);
+        lines.push(`上下向きΔ: ${f3(debugDeltaPitch)}`);
+        lines.push(`縦移動px: ${f2(debugDeltaYPx)}`);
+    }
 
     telemetryValues.textContent = lines.join("\n");
 }
@@ -339,6 +470,26 @@ function extractHeadYawRadians(detectResults, faceIndex = 0) {
     return Math.atan2(m[2], m[0]);
 }
 
+// 4x4 の並び順を平行移動成分の位置から判定する（row-major は末尾行が 0,0,0,1）
+function isRowMajorMatrix(m) {
+    const rowMajorTail = Math.abs(m[12]) + Math.abs(m[13]) + Math.abs(m[14]);
+    const columnMajorTail = Math.abs(m[3]) + Math.abs(m[7]) + Math.abs(m[11]);
+    return rowMajorTail <= columnMajorTail;
+}
+
+function extractHeadPitchRadians(detectResults, faceIndex = 0) {
+    const matrices = detectResults?.facialTransformationMatrixes;
+    if (!matrices || matrices.length <= faceIndex) return null;
+
+    const m = toMatrixArray(matrices[faceIndex]);
+    if (!m || m.length !== 16) return null;
+
+    const rowMajor = isRowMajorMatrix(m);
+    const at = (row, col) => (rowMajor ? m[(row * 4) + col] : m[(col * 4) + row]);
+    // 顔が下を向くほど正になる pitch（R = Ry*Rx*Rz 前提、m12 = -sin(pitch)）
+    return Math.atan2(-at(1, 2), Math.hypot(at(0, 2), at(2, 2)));
+}
+
 function getGazeEnhancedX(landmarks, noseX) {
     // 目線アシストは無効化し、鼻追従のみで制御する
     return noseX;
@@ -348,30 +499,50 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex)
     const bounds = getSymptomRowPointerBounds();
     if (!bounds) return;
 
+    const verticalBounds = getVerticalPointerBounds();
     const mirroredNoseX = 1 - getGazeEnhancedX(landmarks, noseX);
+    const noseControlY = landmarks?.[4]?.y ?? filteredNoseControlY ?? calibratedNoseY;
     const rawYaw = extractHeadYawRadians(detectResults, faceIndex);
     const yaw = Number.isFinite(rawYaw) ? rawYaw : calibratedYaw;
+    const rawPitch = extractHeadPitchRadians(detectResults, faceIndex);
+    const pitch = Number.isFinite(rawPitch) ? rawPitch : calibratedPitch;
 
     filteredNoseControlX = lowPassFilter(filteredNoseControlX, mirroredNoseX, NOSE_FILTER_ALPHA);
+    filteredNoseControlY = lowPassFilter(filteredNoseControlY, noseControlY, NOSE_FILTER_ALPHA);
     filteredYaw = lowPassFilter(filteredYaw, yaw, YAW_FILTER_ALPHA);
+    filteredPitch = lowPassFilter(filteredPitch, pitch, YAW_FILTER_ALPHA);
 
     if (isCalibrating) {
         calibratedNoseX = filteredNoseControlX;
-        calibratedNoseY = landmarks?.[4]?.y ?? calibratedNoseY;
+        calibratedNoseY = filteredNoseControlY;
         calibratedYaw = filteredYaw;
+        calibratedPitch = filteredPitch;
         lastNoseControlX = filteredNoseControlX;
+        lastNoseControlY = filteredNoseControlY;
         lastYaw = filteredYaw;
+        lastPitch = filteredPitch;
         targetX = clamp(targetX, bounds.minX, bounds.maxX);
-        targetY = bounds.centerY;
+        if (isVerticalMoveEnabled) {
+            // 校正直後は必ず上段の高さから始める
+            snapPointerToUpperRow();
+        } else {
+            targetY = bounds.centerY;
+        }
         isCalibrating = false;
         speak("完了");
         return;
     }
 
-    if (lastNoseControlX === null || lastYaw === null) {
+    if (lastNoseControlX === null || lastYaw === null || lastNoseControlY === null || lastPitch === null) {
         lastNoseControlX = filteredNoseControlX;
+        lastNoseControlY = filteredNoseControlY;
         lastYaw = filteredYaw;
-        targetY = bounds.centerY;
+        lastPitch = filteredPitch;
+        if (verticalBounds) {
+            targetY = clamp(targetY, verticalBounds.minY, verticalBounds.maxY);
+        } else {
+            targetY = bounds.centerY;
+        }
         return;
     }
 
@@ -390,7 +561,7 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex)
     let pixY = 0;
     if (yawGain > 0) {
         const yawDelta = applyDeadzone(dY, yawDeadzone);
-        const yawAccel = getYawOffsetAcceleration(filteredYaw);
+        const yawAccel = getAngleOffsetAcceleration(filteredYaw, calibratedYaw);
         pixY = yawDelta * YAW_MIRROR_SIGN * getYawScale() * yawAccel;
     }
     debugPixN = pixN;
@@ -400,9 +571,77 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex)
     debugDeltaX = deltaX;
     targetX = clamp(targetX + deltaX, bounds.minX, bounds.maxX);
 
-    targetY = bounds.centerY;
+    // 上下移動: 鼻の縦位置 + 顔の上下向きを横移動と同じゲインで合成する
+    const dNoseY = filteredNoseControlY - lastNoseControlY;
+    const dPitch = filteredPitch - lastPitch;
+    debugDeltaNoseY = dNoseY;
+    debugDeltaPitch = dPitch;
+
+    if (verticalBounds) {
+        let pixNoseY = 0;
+        if (noseGain > 0) {
+            pixNoseY = applyDeadzone(dNoseY, noseDeadzone) * getNoseScale() * VERTICAL_NOSE_SCALE_RATIO;
+        }
+
+        let pixPitch = 0;
+        if (yawGain > 0) {
+            const pitchDelta = applyDeadzone(dPitch, yawDeadzone);
+            const pitchAccel = getAngleOffsetAcceleration(filteredPitch, calibratedPitch);
+            pixPitch = pitchDelta * PITCH_MIRROR_SIGN * getYawScale() * pitchAccel * VERTICAL_PITCH_SCALE_RATIO;
+        }
+
+        const deltaY = clamp(pixNoseY + pixPitch, -MAX_DELTA_PER_FRAME, MAX_DELTA_PER_FRAME);
+        debugDeltaYPx = deltaY;
+        targetY = clamp(targetY + deltaY, verticalBounds.minY, verticalBounds.maxY);
+    } else {
+        debugDeltaYPx = 0;
+        targetY = bounds.centerY;
+    }
+
     lastNoseControlX = filteredNoseControlX;
+    lastNoseControlY = filteredNoseControlY;
     lastYaw = filteredYaw;
+    lastPitch = filteredPitch;
+}
+
+// 上下移動で行を跨いだら階層を進める/戻す
+function updateVerticalStageTransition() {
+    if (!isVerticalMoveEnabled) return;
+    if (isCalibrating || isConfirmInProgress) return;
+    if (pendingClickTimer) return;
+    if (Date.now() - lastVerticalStageSwitchAt < VERTICAL_STAGE_SWITCH_LOCKOUT_MS) return;
+
+    const verticalBounds = getVerticalPointerBounds();
+    if (!verticalBounds) return;
+
+    if (symptomStage === SYMPTOM_STAGE_SYMPTOM) {
+        if (pointerY < verticalBounds.downTriggerY) return;
+
+        const target = symptomChoices.find((choice) => choice.name === previewSymptomName)
+            || symptomChoices.find((choice) => choice.name === findRow1ButtonByPointerX()?.dataset.name);
+        if (!target) return;
+
+        selectedSymptom = target;
+        symptomStage = SYMPTOM_STAGE_BODY_PART;
+        symptomLastActivityAt = Date.now();
+        renderAll();
+        // 下段が主役サイズへ切り替わるので、新しい下段中央へ乗せ直す
+        snapPointerToLowerRow();
+        return;
+    }
+
+    if (pointerY > verticalBounds.upTriggerY) return;
+
+    // 下段から上へ抜けたら一番上の階層へ戻る
+    symptomStage = SYMPTOM_STAGE_SYMPTOM;
+    selectedSymptom = null;
+    previewSymptomName = null;
+    symptomLastActivityAt = 0;
+    lastSymptomNoseX = null;
+    lastSymptomNoseY = null;
+    renderAll();
+    refreshHoverAndPreview();
+    snapPointerToUpperRow();
 }
 
 async function handleSymptomClick(item) {
@@ -413,6 +652,8 @@ async function handleSymptomClick(item) {
         symptomStage = SYMPTOM_STAGE_BODY_PART;
         symptomLastActivityAt = Date.now();
         renderAll();
+        // 口開けで進んだ場合もポインタを下段中央へ乗せ、直後の階層往復を防ぐ
+        snapPointerToLowerRow();
         return;
     }
 
@@ -618,6 +859,11 @@ function checkPointerCollision() {
         if (currentDistance <= bestDistance + hysteresisSq) {
             hoveredBtn = currentHoveredBtn;
         }
+    }
+
+    // 上下移動で行間を通過中も、上段の選択対象とプレビューを保持する
+    if (!hoveredBtn && isVerticalMoveEnabled && symptomStage === SYMPTOM_STAGE_SYMPTOM) {
+        hoveredBtn = findRow1ButtonByPointerX();
     }
 
     if (hoveredBtn) {
@@ -1075,10 +1321,16 @@ async function predictWebcam() {
         debugPixN = 0;
         debugPixY = 0;
         debugDeltaX = 0;
+        debugDeltaNoseY = 0;
+        debugDeltaPitch = 0;
+        debugDeltaYPx = 0;
     }
     updateTelemetryPanel(hasFace);
 
     checkPointerCollision();
+    if (hasFace) {
+        updateVerticalStageTransition();
+    }
     checkSymptomIdleReset();
     window.requestAnimationFrame(predictWebcam);
 }
@@ -1628,10 +1880,7 @@ function triggerClick() {
 // =========================================================
 calibrateBtn.addEventListener("click", () => {
     isCalibrating = true;
-    lastNoseControlX = null;
-    lastYaw = null;
-    filteredNoseControlX = null;
-    filteredYaw = null;
+    resetPointerMotionHistory();
     jawClosedBaseline = null;
     debugJawOpenThreshold = jawOpenThreshold;
     debugJawCloseThreshold = Math.max(0, jawOpenThreshold - JAW_CLOSE_MIN_GAP);
@@ -1669,8 +1918,29 @@ const saveSettingsBtn = document.getElementById("save-settings");
 const closeSettingsBtn = document.getElementById("close-settings");
 const controlsRoot = document.getElementById("controls");
 const paramsToggleBtn = document.getElementById("params-toggle-btn");
+const verticalMoveToggleBtn = document.getElementById("vertical-move-btn");
 
 let isParamPanelVisible = localStorage.getItem(PARAM_PANEL_VISIBLE_KEY) !== "0";
+
+function applyVerticalMoveToggleState() {
+    if (!verticalMoveToggleBtn) return;
+
+    verticalMoveToggleBtn.classList.toggle("is-off", !isVerticalMoveEnabled);
+    verticalMoveToggleBtn.setAttribute("aria-pressed", isVerticalMoveEnabled ? "true" : "false");
+    verticalMoveToggleBtn.textContent = isVerticalMoveEnabled ? "上下移動 ON" : "上下移動 OFF";
+}
+
+if (verticalMoveToggleBtn) {
+    verticalMoveToggleBtn.addEventListener("click", () => {
+        isVerticalMoveEnabled = !isVerticalMoveEnabled;
+        localStorage.setItem(VERTICAL_MOVE_KEY, isVerticalMoveEnabled ? "1" : "0");
+        applyVerticalMoveToggleState();
+        // OFF→ON / ON→OFF いずれも上段基準へ戻して仕切り直す
+        resetSymptomModeState();
+    });
+}
+
+applyVerticalMoveToggleState();
 
 function applyParamPanelVisibility() {
     if (!controlsRoot) return;
@@ -1721,6 +1991,8 @@ if (yawGainSlider) {
         isCalibrating = true;
         lastYaw = null;
         filteredYaw = null;
+        lastPitch = null;
+        filteredPitch = null;
         refreshTuningSliderLabels();
     });
 }
