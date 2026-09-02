@@ -47,6 +47,10 @@ let debugDeltaX = 0;
 let debugDeltaNoseY = 0;
 let debugDeltaPitch = 0;
 let debugDeltaYPx = 0;
+// 軸ロック: 横/縦それぞれの移動速度(EMA)と、現在どちらが優勢かの状態
+let speedXEma = 0;
+let speedYEma = 0;
+let axisLockDominant = null; // "x" | "y" | null
 // 鏡像表示ポリシー: 見た目右向き -> controlX増加 に固定変換する符号
 const YAW_MIRROR_SIGN = 1;
 const FOLLOW_LERP = 0.35;
@@ -87,6 +91,12 @@ const VERTICAL_STAGE_SWITCH_LOCKOUT_MS = 420;
 // 上下限（各行のボタン中央）と階層切替ラインの最小間隔
 const VERTICAL_STAGE_TRIGGER_MARGIN_PX = 24;
 const VERTICAL_MIN_TRAVEL_PX = 40;
+
+// 軸ロック: 横/縦どちらかが明らかに優勢な速度のとき、もう片方の移動を止めてふらつきを防ぐ
+const AXIS_LOCK_SPEED_ALPHA = 0.35;
+const AXIS_LOCK_ENGAGE_RATIO = 1.8;
+const AXIS_LOCK_RELEASE_RATIO = 1.2;
+const AXIS_LOCK_MIN_SPEED_PX = 3;
 
 const JAW_OPEN_THRESHOLD_KEY = "jaw_open_threshold";
 const ICON_STYLE_KEY = "icon_style";
@@ -431,6 +441,7 @@ function updateTelemetryPanel(hasFace) {
         lines.push(`鼻縦Δ: ${f3(debugDeltaNoseY)}`);
         lines.push(`上下向きΔ: ${f3(debugDeltaPitch)}`);
         lines.push(`縦移動px: ${f2(debugDeltaYPx)}`);
+        lines.push(`軸ロック: ${axisLockDominant === "x" ? "横優先" : axisLockDominant === "y" ? "縦優先" : "なし"}`);
     }
 
     telemetryValues.textContent = lines.join("\n");
@@ -495,6 +506,27 @@ function getGazeEnhancedX(landmarks, noseX) {
     return noseX;
 }
 
+// 横/縦の移動速度(EMA)を比較し、片方が優勢なら axisLockDominant にその軸をセットして
+// もう片方をブロックする。ヒステリシス(ENGAGE > RELEASE)で判定のチャタリングを防ぐ
+function updateAxisLockDominant(speedX, speedY) {
+    if (speedX < AXIS_LOCK_MIN_SPEED_PX && speedY < AXIS_LOCK_MIN_SPEED_PX) {
+        axisLockDominant = null;
+        return;
+    }
+
+    if (axisLockDominant === "x") {
+        if (speedX < speedY * AXIS_LOCK_RELEASE_RATIO) axisLockDominant = null;
+        return;
+    }
+    if (axisLockDominant === "y") {
+        if (speedY < speedX * AXIS_LOCK_RELEASE_RATIO) axisLockDominant = null;
+        return;
+    }
+
+    if (speedX > speedY * AXIS_LOCK_ENGAGE_RATIO) axisLockDominant = "x";
+    else if (speedY > speedX * AXIS_LOCK_ENGAGE_RATIO) axisLockDominant = "y";
+}
+
 function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex) {
     const bounds = getSymptomRowPointerBounds();
     if (!bounds) return;
@@ -529,6 +561,9 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex)
             targetY = bounds.centerY;
         }
         isCalibrating = false;
+        speedXEma = 0;
+        speedYEma = 0;
+        axisLockDominant = null;
         speak("完了");
         return;
     }
@@ -538,6 +573,9 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex)
         lastNoseControlY = filteredNoseControlY;
         lastYaw = filteredYaw;
         lastPitch = filteredPitch;
+        speedXEma = 0;
+        speedYEma = 0;
+        axisLockDominant = null;
         if (verticalBounds) {
             targetY = clamp(targetY, verticalBounds.minY, verticalBounds.maxY);
         } else {
@@ -567,9 +605,7 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex)
     debugPixN = pixN;
     debugPixY = pixY;
 
-    const deltaX = clamp(pixN + pixY, -MAX_DELTA_PER_FRAME, MAX_DELTA_PER_FRAME);
-    debugDeltaX = deltaX;
-    targetX = clamp(targetX + deltaX, bounds.minX, bounds.maxX);
+    const rawDeltaX = pixN + pixY;
 
     // 上下移動: 鼻の縦位置 + 顔の上下向きを横移動と同じゲインで合成する
     const dNoseY = filteredNoseControlY - lastNoseControlY;
@@ -577,6 +613,7 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex)
     debugDeltaNoseY = dNoseY;
     debugDeltaPitch = dPitch;
 
+    let rawDeltaY = 0;
     if (verticalBounds) {
         let pixNoseY = 0;
         if (noseGain > 0) {
@@ -590,7 +627,20 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex)
             pixPitch = pitchDelta * PITCH_MIRROR_SIGN * getYawScale() * pitchAccel * VERTICAL_PITCH_SCALE_RATIO;
         }
 
-        const deltaY = clamp(pixNoseY + pixPitch, -MAX_DELTA_PER_FRAME, MAX_DELTA_PER_FRAME);
+        rawDeltaY = pixNoseY + pixPitch;
+    }
+
+    // 軸ロック: 横/縦の速度を比較し、片方が明らかに優勢ならもう片方の移動を止める
+    speedXEma = lowPassFilter(speedXEma, Math.abs(rawDeltaX), AXIS_LOCK_SPEED_ALPHA);
+    speedYEma = lowPassFilter(speedYEma, Math.abs(rawDeltaY), AXIS_LOCK_SPEED_ALPHA);
+    updateAxisLockDominant(speedXEma, speedYEma);
+
+    const deltaX = clamp(axisLockDominant === "y" ? 0 : rawDeltaX, -MAX_DELTA_PER_FRAME, MAX_DELTA_PER_FRAME);
+    debugDeltaX = deltaX;
+    targetX = clamp(targetX + deltaX, bounds.minX, bounds.maxX);
+
+    if (verticalBounds) {
+        const deltaY = clamp(axisLockDominant === "x" ? 0 : rawDeltaY, -MAX_DELTA_PER_FRAME, MAX_DELTA_PER_FRAME);
         debugDeltaYPx = deltaY;
         targetY = clamp(targetY + deltaY, verticalBounds.minY, verticalBounds.maxY);
     } else {
@@ -1324,6 +1374,9 @@ async function predictWebcam() {
         debugDeltaNoseY = 0;
         debugDeltaPitch = 0;
         debugDeltaYPx = 0;
+        speedXEma = 0;
+        speedYEma = 0;
+        axisLockDominant = null;
     }
     updateTelemetryPanel(hasFace);
 
