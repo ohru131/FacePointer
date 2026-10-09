@@ -313,6 +313,9 @@ pitch 抽出:
 
 結果画面で「保存」すると localStorage に保存して即反映。「やり直し」「中止」も可。
 
+nose_noise / angle_noise / vertical_gain_ratio はスライダーを持たないため、「校正リセット」で初期値（0 / 0 / 1.0）へ戻す。
+nose_gain / yaw_gain / jaw_open_threshold はスライダーで調整できるのでリセット対象外。
+
 ## 22. 操作パネル
 右下パネルは ✕ で歯車ボタンだけに折りたためる（永続化キー: controls_collapsed）。
 パネル上のボタン操作ではマウスクリック発話をしない。

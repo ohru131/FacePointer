@@ -2367,6 +2367,13 @@ calibrateBtn.addEventListener("click", () => {
     jawClosedBaseline = null;
     debugJawOpenThreshold = jawOpenThreshold;
     debugJawCloseThreshold = Math.max(0, jawOpenThreshold - JAW_CLOSE_MIN_GAP);
+    // キャリブレーションで決めた揺れ幅・上下感度倍率はスライダーが無いので、ここで初期値へ戻す
+    noseNoise = 0;
+    angleNoise = 0;
+    verticalGainRatio = 1;
+    localStorage.removeItem(NOSE_NOISE_KEY);
+    localStorage.removeItem(ANGLE_NOISE_KEY);
+    localStorage.removeItem(VERTICAL_GAIN_RATIO_KEY);
     speak("リセット");
 });
 
