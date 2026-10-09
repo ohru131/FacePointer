@@ -53,15 +53,26 @@ let speedYEma = 0;
 let axisLockDominant = null; // "x" | "y" | null
 // 鏡像表示ポリシー: 見た目右向き -> controlX増加 に固定変換する符号
 const YAW_MIRROR_SIGN = 1;
-const FOLLOW_LERP = 0.35;
+// 描画追従の時定数。旧 FOLLOW_LERP=0.35/60fps 相当をフレームレート非依存にしたもの
+const FOLLOW_TIME_CONSTANT_MS = 40;
+// One Euro Filter: 静止時は強く平滑化し、動いている間は遅延を減らす
+const NOSE_EURO_MIN_CUTOFF = 1.0;
+const NOSE_EURO_BETA = 20;
+const ANGLE_EURO_MIN_CUTOFF = 0.8;
+const ANGLE_EURO_BETA = 4;
+const EURO_DERIVATIVE_CUTOFF = 1.0;
+// キャリブレーションで計測した静止時の揺れ(標準偏差)からデッドゾーン下限を決める係数
+const NOISE_DEADZONE_FACTOR = 1.5;
+const NOSE_NOISE_KEY = "nose_noise";
+const ANGLE_NOISE_KEY = "angle_noise";
+const VERTICAL_GAIN_RATIO_KEY = "vertical_gain_ratio";
+const CONTROLS_COLLAPSED_KEY = "controls_collapsed";
 const NOSE_GAIN_KEY = "nose_gain";
 const YAW_GAIN_KEY = "yaw_gain";
 const NOSE_GAIN_MAX = 20;
 const YAW_GAIN_MAX = 20;
 const NOSE_GAIN_DEFAULT = 10;
 const YAW_GAIN_DEFAULT = 10;
-const NOSE_FILTER_ALPHA = 0.35;
-const YAW_FILTER_ALPHA = 0.22;
 // gain=0(無効)〜gain=MAX(最も敏感)で scale/deadzone を線形+べき乗補間する
 const NOSE_SCALE_MIN = 2000;
 const NOSE_SCALE_MAX = 38000;
@@ -185,6 +196,9 @@ let calibratedNoseY = 0.5;
 let calibratedYaw = 0;
 let calibratedPitch = 0;
 let isCalibrating = true;
+let noseNoise = readStoredNumber(NOSE_NOISE_KEY, 0, 0, 0.01);
+let angleNoise = readStoredNumber(ANGLE_NOISE_KEY, 0, 0, 0.05);
+let verticalGainRatio = readStoredNumber(VERTICAL_GAIN_RATIO_KEY, 1, 0.3, 4);
 let isVerticalMoveEnabled = localStorage.getItem(VERTICAL_MOVE_KEY) !== "0";
 let lastVerticalStageSwitchAt = 0;
 let jawOpenThreshold = readStoredNumber(JAW_OPEN_THRESHOLD_KEY, JAW_OPEN_THRESHOLD_DEFAULT, 0.0, 0.2);
@@ -253,6 +267,10 @@ function refreshHoverAndPreview() {
 }
 
 function resetPointerMotionHistory() {
+    noseXFilter.reset();
+    noseYFilter.reset();
+    yawFilter.reset();
+    pitchFilter.reset();
     lastNoseControlX = null;
     lastNoseControlY = null;
     lastYaw = null;
@@ -378,30 +396,87 @@ function lowPassFilter(previous, next, alpha) {
     return (previous * (1 - alpha)) + (next * alpha);
 }
 
+// One Euro Filter (Casiez et al. 2012): 速度に応じてカットオフ周波数を変える低域通過フィルタ
+function smoothingAlpha(cutoffHz, dtSec) {
+    const tau = 1 / (2 * Math.PI * cutoffHz);
+    return 1 / (1 + (tau / dtSec));
+}
+
+class OneEuroFilter {
+    constructor(minCutoff, beta, dCutoff = EURO_DERIVATIVE_CUTOFF) {
+        this.minCutoff = minCutoff;
+        this.beta = beta;
+        this.dCutoff = dCutoff;
+        this.reset();
+    }
+
+    reset() {
+        this.value = null;
+        this.derivative = 0;
+        this.lastTimeMs = null;
+    }
+
+    filter(next, timeMs) {
+        if (this.value === null || this.lastTimeMs === null) {
+            this.value = next;
+            this.derivative = 0;
+            this.lastTimeMs = timeMs;
+            return next;
+        }
+
+        // カメラのフレーム間隔は 1/120〜1/5 秒の範囲に収める（タブ復帰時の長い空白対策）
+        const dtSec = clamp((timeMs - this.lastTimeMs) / 1000, 1 / 120, 0.2);
+        this.lastTimeMs = timeMs;
+
+        const rawDerivative = (next - this.value) / dtSec;
+        this.derivative = lowPassFilter(this.derivative, rawDerivative, smoothingAlpha(this.dCutoff, dtSec));
+        const cutoff = this.minCutoff + (this.beta * Math.abs(this.derivative));
+        this.value = lowPassFilter(this.value, next, smoothingAlpha(cutoff, dtSec));
+        return this.value;
+    }
+}
+
+const noseXFilter = new OneEuroFilter(NOSE_EURO_MIN_CUTOFF, NOSE_EURO_BETA);
+const noseYFilter = new OneEuroFilter(NOSE_EURO_MIN_CUTOFF, NOSE_EURO_BETA);
+const yawFilter = new OneEuroFilter(ANGLE_EURO_MIN_CUTOFF, ANGLE_EURO_BETA);
+const pitchFilter = new OneEuroFilter(ANGLE_EURO_MIN_CUTOFF, ANGLE_EURO_BETA);
+
+// 位置ドメインのデッドゾーン（バックラッシュ）。
+// 揺れ幅 deadzone 以内では anchor を動かさず、超えた分だけ anchor を追従させる。
+// フレーム差分に掛けるデッドゾーンと違い、ゆっくりした動きも取りこぼさない
+function applyBacklash(anchor, value, deadzone) {
+    if (anchor === null) return value;
+    if (value > anchor + deadzone) return value - deadzone;
+    if (value < anchor - deadzone) return value + deadzone;
+    return anchor;
+}
+
 // gain 0..MAX を 0..1 に正規化してべき乗カーブを適用する（gainが大きいほど敏感）
 function gainCurve(gain, gainMax, exponent) {
     const norm = clamp(gain / gainMax, 0, 1);
     return Math.pow(norm, exponent);
 }
 
-function getNoseScale() {
-    const curved = gainCurve(noseGain, NOSE_GAIN_MAX, NOSE_GAIN_EXPONENT);
+function getNoseScale(gain = noseGain) {
+    const curved = gainCurve(gain, NOSE_GAIN_MAX, NOSE_GAIN_EXPONENT);
     return NOSE_SCALE_MIN + ((NOSE_SCALE_MAX - NOSE_SCALE_MIN) * curved);
 }
 
-function getYawScale() {
-    const curved = gainCurve(yawGain, YAW_GAIN_MAX, YAW_GAIN_EXPONENT);
+function getYawScale(gain = yawGain) {
+    const curved = gainCurve(gain, YAW_GAIN_MAX, YAW_GAIN_EXPONENT);
     return YAW_SCALE_MIN + ((YAW_SCALE_MAX - YAW_SCALE_MIN) * curved);
 }
 
 function getNoseDeadzone() {
     const curved = gainCurve(noseGain, NOSE_GAIN_MAX, NOSE_GAIN_EXPONENT);
-    return NOSE_DEADZONE_MAX - ((NOSE_DEADZONE_MAX - NOSE_DEADZONE_MIN) * curved);
+    const byGain = NOSE_DEADZONE_MAX - ((NOSE_DEADZONE_MAX - NOSE_DEADZONE_MIN) * curved);
+    return Math.max(byGain, noseNoise * NOISE_DEADZONE_FACTOR);
 }
 
 function getYawDeadzone() {
     const curved = gainCurve(yawGain, YAW_GAIN_MAX, YAW_GAIN_EXPONENT);
-    return YAW_DEADZONE_MAX - ((YAW_DEADZONE_MAX - YAW_DEADZONE_MIN) * curved);
+    const byGain = YAW_DEADZONE_MAX - ((YAW_DEADZONE_MAX - YAW_DEADZONE_MIN) * curved);
+    return Math.max(byGain, angleNoise * NOISE_DEADZONE_FACTOR);
 }
 
 function getAngleOffsetAcceleration(currentAngle, calibratedAngle) {
@@ -409,12 +484,6 @@ function getAngleOffsetAcceleration(currentAngle, calibratedAngle) {
     const norm = clamp((offsetAbs - YAW_ACCEL_START_RAD) / (YAW_ACCEL_FULL_RAD - YAW_ACCEL_START_RAD), 0, 1);
     const curved = Math.pow(norm, YAW_ACCEL_EXPONENT);
     return 1 + ((YAW_ACCEL_MAX_MULTIPLIER - 1) * curved);
-}
-
-function applyDeadzone(delta, deadzone) {
-    const absDelta = Math.abs(delta);
-    if (absDelta <= deadzone) return 0;
-    return Math.sign(delta) * (absDelta - deadzone);
 }
 
 function formatMetric(value, digits = 3) {
@@ -527,7 +596,7 @@ function updateAxisLockDominant(speedX, speedY) {
     else if (speedY > speedX * AXIS_LOCK_ENGAGE_RATIO) axisLockDominant = "y";
 }
 
-function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex) {
+function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex, timeMs) {
     const bounds = getSymptomRowPointerBounds();
     if (!bounds) return;
 
@@ -539,10 +608,10 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex)
     const rawPitch = extractHeadPitchRadians(detectResults, faceIndex);
     const pitch = Number.isFinite(rawPitch) ? rawPitch : calibratedPitch;
 
-    filteredNoseControlX = lowPassFilter(filteredNoseControlX, mirroredNoseX, NOSE_FILTER_ALPHA);
-    filteredNoseControlY = lowPassFilter(filteredNoseControlY, noseControlY, NOSE_FILTER_ALPHA);
-    filteredYaw = lowPassFilter(filteredYaw, yaw, YAW_FILTER_ALPHA);
-    filteredPitch = lowPassFilter(filteredPitch, pitch, YAW_FILTER_ALPHA);
+    filteredNoseControlX = noseXFilter.filter(mirroredNoseX, timeMs);
+    filteredNoseControlY = noseYFilter.filter(noseControlY, timeMs);
+    filteredYaw = yawFilter.filter(yaw, timeMs);
+    filteredPitch = pitchFilter.filter(pitch, timeMs);
 
     if (isCalibrating) {
         calibratedNoseX = filteredNoseControlX;
@@ -586,21 +655,25 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex)
 
     const noseDeadzone = getNoseDeadzone();
     const yawDeadzone = getYawDeadzone();
-    const dN = filteredNoseControlX - lastNoseControlX;
-    const dY = filteredYaw - lastYaw;
+    // last* はバックラッシュ後の値（anchor）。差分は anchor の移動量
+    const nextNoseX = applyBacklash(lastNoseControlX, filteredNoseControlX, noseDeadzone);
+    const nextYaw = applyBacklash(lastYaw, filteredYaw, yawDeadzone);
+    const nextNoseY = applyBacklash(lastNoseControlY, filteredNoseControlY, noseDeadzone);
+    const nextPitch = applyBacklash(lastPitch, filteredPitch, yawDeadzone);
+    const dN = nextNoseX - lastNoseControlX;
+    const dY = nextYaw - lastYaw;
     debugDeltaN = dN;
     debugDeltaY = dY;
 
     let pixN = 0;
     if (noseGain > 0) {
-        pixN = applyDeadzone(dN, noseDeadzone) * getNoseScale();
+        pixN = dN * getNoseScale();
     }
 
     let pixY = 0;
     if (yawGain > 0) {
-        const yawDelta = applyDeadzone(dY, yawDeadzone);
         const yawAccel = getAngleOffsetAcceleration(filteredYaw, calibratedYaw);
-        pixY = yawDelta * YAW_MIRROR_SIGN * getYawScale() * yawAccel;
+        pixY = dY * YAW_MIRROR_SIGN * getYawScale() * yawAccel;
     }
     debugPixN = pixN;
     debugPixY = pixY;
@@ -608,8 +681,8 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex)
     const rawDeltaX = pixN + pixY;
 
     // 上下移動: 鼻の縦位置 + 顔の上下向きを横移動と同じゲインで合成する
-    const dNoseY = filteredNoseControlY - lastNoseControlY;
-    const dPitch = filteredPitch - lastPitch;
+    const dNoseY = nextNoseY - lastNoseControlY;
+    const dPitch = nextPitch - lastPitch;
     debugDeltaNoseY = dNoseY;
     debugDeltaPitch = dPitch;
 
@@ -617,14 +690,13 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex)
     if (verticalBounds) {
         let pixNoseY = 0;
         if (noseGain > 0) {
-            pixNoseY = applyDeadzone(dNoseY, noseDeadzone) * getNoseScale() * VERTICAL_NOSE_SCALE_RATIO;
+            pixNoseY = dNoseY * getNoseScale() * VERTICAL_NOSE_SCALE_RATIO * verticalGainRatio;
         }
 
         let pixPitch = 0;
         if (yawGain > 0) {
-            const pitchDelta = applyDeadzone(dPitch, yawDeadzone);
             const pitchAccel = getAngleOffsetAcceleration(filteredPitch, calibratedPitch);
-            pixPitch = pitchDelta * PITCH_MIRROR_SIGN * getYawScale() * pitchAccel * VERTICAL_PITCH_SCALE_RATIO;
+            pixPitch = dPitch * PITCH_MIRROR_SIGN * getYawScale() * pitchAccel * VERTICAL_PITCH_SCALE_RATIO * verticalGainRatio;
         }
 
         rawDeltaY = pixNoseY + pixPitch;
@@ -648,10 +720,10 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex)
         targetY = bounds.centerY;
     }
 
-    lastNoseControlX = filteredNoseControlX;
-    lastNoseControlY = filteredNoseControlY;
-    lastYaw = filteredYaw;
-    lastPitch = filteredPitch;
+    lastNoseControlX = nextNoseX;
+    lastNoseControlY = nextNoseY;
+    lastYaw = nextYaw;
+    lastPitch = nextPitch;
 }
 
 // 上下移動で行を跨いだら階層を進める/戻す
@@ -1324,17 +1396,24 @@ function flashScreen() {
 // =========================================================
 // Webcam / face detection loop
 // =========================================================
+let drawingUtils = null;
+let lastRenderTimeMs = null;
+
 async function predictWebcam() {
-    canvasElement.width = video.videoWidth;
-    canvasElement.height = video.videoHeight;
+    // canvas のサイズ代入は毎回バッファを作り直すので、変化したときだけ行う
+    if (canvasElement.width !== video.videoWidth) canvasElement.width = video.videoWidth;
+    if (canvasElement.height !== video.videoHeight) canvasElement.height = video.videoHeight;
     const startTimeMs = performance.now();
+    // rAF(60Hz) はカメラ(30fps前後)より速い。同じ推論結果で移動計算を二重に回さない
+    let isNewFrame = false;
     if (lastVideoTime !== video.currentTime) {
         lastVideoTime = video.currentTime;
         results = faceLandmarker.detectForVideo(video, startTimeMs);
+        isNewFrame = true;
     }
 
     canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-    const drawingUtils = new DrawingUtils(canvasCtx);
+    if (!drawingUtils) drawingUtils = new DrawingUtils(canvasCtx);
     const primaryLandmarks = results?.faceLandmarks?.[0] || null;
     updateGestureDetection(results, primaryLandmarks);
     let hasFace = false;
@@ -1355,15 +1434,24 @@ async function predictWebcam() {
             drawMouthDetectionOverlay(landmarks);
 
             const nose = landmarks[4];
-            updateRelativePointerTarget(nose.x, landmarks, results, faceIndex);
+            if (isNewFrame && faceIndex === 0 && calibrationWizard.isActive()) {
+                calibrationWizard.onFrame(landmarks, results, startTimeMs);
+            } else if (isNewFrame && !calibrationWizard.isActive()) {
+                updateRelativePointerTarget(nose.x, landmarks, results, faceIndex, startTimeMs);
+            }
             trackSymptomActivityByMovement(nose.x, nose.y);
         }
     }
 
-    pointerX += (targetX - pointerX) * FOLLOW_LERP;
-    pointerY += (targetY - pointerY) * FOLLOW_LERP;
-    pointerElement.style.left = `${pointerX}px`;
-    pointerElement.style.top = `${pointerY}px`;
+    // 目標位置への追従はフレームレートに依存しない指数平滑で行う
+    const frameDtMs = lastRenderTimeMs === null ? 16.7 : clamp(startTimeMs - lastRenderTimeMs, 1, 100);
+    lastRenderTimeMs = startTimeMs;
+    const followAlpha = 1 - Math.exp(-frameDtMs / FOLLOW_TIME_CONSTANT_MS);
+    pointerX += (targetX - pointerX) * followAlpha;
+    pointerY += (targetY - pointerY) * followAlpha;
+    // left/top はレイアウトを毎フレーム走らせるので transform で動かす
+    pointerElement.style.setProperty("--pointer-x", `${pointerX}px`);
+    pointerElement.style.setProperty("--pointer-y", `${pointerY}px`);
 
     if (!hasFace) {
         debugDeltaN = 0;
@@ -1379,6 +1467,7 @@ async function predictWebcam() {
         axisLockDominant = null;
     }
     updateTelemetryPanel(hasFace);
+    if (!hasFace && calibrationWizard.isActive()) calibrationWizard.onNoFace();
 
     checkPointerCollision();
     if (hasFace) {
@@ -1850,18 +1939,19 @@ function showGestureFeedback() {
     gestureIndicator.style.left = `${pointerX}px`;
     gestureIndicator.style.top = `${pointerY}px`;
     gestureIndicator.classList.add("active");
-    pointerElement.style.transform = "translate(-50%, -50%) scale(2)";
+    pointerElement.style.setProperty("--pointer-scale", "2");
     pointerElement.style.backgroundColor = "#fff";
     gestureCooldown = true;
     setTimeout(() => {
         gestureIndicator.classList.remove("active");
-        pointerElement.style.transform = "translate(-50%, -50%) scale(1)";
+        pointerElement.style.setProperty("--pointer-scale", "1");
         pointerElement.style.backgroundColor = "var(--primary)";
         gestureCooldown = false;
     }, GESTURE_COOLDOWN_MS);
 }
 
 function triggerClick() {
+    if (calibrationWizard.isActive()) return false;
     if (isConfirmInProgress) {
         logClickDebug("click_blocked_confirm_in_progress");
         return false;
@@ -1929,6 +2019,323 @@ function triggerClick() {
 }
 
 // =========================================================
+// Calibration wizard
+// 手順に沿って顔を動かしてもらい、可動域・静止時の揺れ・口の開きから
+// 感度(nose/yaw gain)・上下感度比・デッドゾーン下限・口の閾値を自動で決める
+// =========================================================
+const CALIB_PREPARE_MS = 1500;
+const CALIB_RECORD_MS = 2000;
+// 横: 利用者の左右可動域のこの割合でボタン行の端から端まで届くようにする
+const CALIB_HORIZONTAL_COMFORT_RATIO = 0.6;
+// 縦: 正面→下向きの可動域のこの割合で上段→下段へ届くようにする
+const CALIB_VERTICAL_COMFORT_RATIO = 0.75;
+// 口: 閉じ〜開きの差のこの割合を開き判定ラインにする
+const CALIB_JAW_OPEN_POINT = 0.45;
+const CALIB_MIN_NOSE_RANGE = 0.01;
+const CALIB_MIN_ANGLE_RANGE = 0.03;
+const CALIB_MIN_JAW_RANGE = 0.12;
+
+const CALIB_STEPS = [
+    { key: "neutral", arrow: "●", text: "正面を向いて じっとしてください", sub: "楽な姿勢で" },
+    { key: "left", arrow: "←", text: "顔を左へ向けて 止めてください", sub: "無理のない範囲で" },
+    { key: "right", arrow: "→", text: "顔を右へ向けて 止めてください", sub: "無理のない範囲で" },
+    { key: "up", arrow: "↑", text: "顔を上へ向けて 止めてください", sub: "無理のない範囲で" },
+    { key: "down", arrow: "↓", text: "顔を下へ向けて 止めてください", sub: "無理のない範囲で" },
+    { key: "mouth", arrow: "😮", text: "口を大きく開けて 止めてください", sub: "クリックと同じ開け方で" }
+];
+
+function meanOf(values) {
+    if (values.length === 0) return NaN;
+    return values.reduce((sum, v) => sum + v, 0) / values.length;
+}
+
+function stdOf(values) {
+    if (values.length < 2) return 0;
+    const mean = meanOf(values);
+    return Math.sqrt(values.reduce((sum, v) => sum + ((v - mean) ** 2), 0) / (values.length - 1));
+}
+
+function percentileOf(values, ratio) {
+    if (values.length === 0) return NaN;
+    const sorted = [...values].sort((a, b) => a - b);
+    return sorted[Math.min(sorted.length - 1, Math.floor(ratio * (sorted.length - 1)))];
+}
+
+function roundTo(value, step) {
+    return Math.round(value / step) * step;
+}
+
+// 角度 from→to を動かしたときの加速込みの累積量（ランタイムの加速と同じ式）
+function integrateAcceleratedAngle(from, to, neutral) {
+    const steps = 60;
+    const step = (to - from) / steps;
+    let total = 0;
+    for (let i = 0; i < steps; i += 1) {
+        const mid = from + (step * (i + 0.5));
+        total += Math.abs(step) * getAngleOffsetAcceleration(mid, neutral);
+    }
+    return total;
+}
+
+// travel(g) が単調増加なので二分探索でゲインを求める
+function solveGainForTravel(travelAt, requiredTravel) {
+    let low = 0.5;
+    let high = NOSE_GAIN_MAX;
+    if (travelAt(high) < requiredTravel) return { gain: high, saturated: true };
+    if (travelAt(low) >= requiredTravel) return { gain: low, saturated: false };
+    for (let i = 0; i < 30; i += 1) {
+        const mid = (low + high) / 2;
+        if (travelAt(mid) < requiredTravel) low = mid;
+        else high = mid;
+    }
+    return { gain: clamp(roundTo(high, 0.5), 0.5, NOSE_GAIN_MAX), saturated: false };
+}
+
+function readCalibrationSample(landmarks, detectResults) {
+    const nose = landmarks?.[4];
+    if (!nose) return null;
+    const yaw = extractHeadYawRadians(detectResults, 0);
+    const pitch = extractHeadPitchRadians(detectResults, 0);
+    if (!Number.isFinite(yaw) || !Number.isFinite(pitch)) return null;
+    const cats = detectResults?.faceBlendshapes?.[0]?.categories;
+    const jaw = cats?.find(c => c.categoryName === "jawOpen")?.score ?? 0;
+    return { noseX: 1 - nose.x, noseY: nose.y, yaw, pitch, jaw };
+}
+
+function summarizeSamples(samples, pick) {
+    const keys = ["noseX", "noseY", "yaw", "pitch", "jaw"];
+    const summary = {};
+    keys.forEach((key) => {
+        summary[key] = pick(samples.map(sample => sample[key]));
+    });
+    return summary;
+}
+
+function computeCalibrationResult(recorded) {
+    const neutralSamples = recorded.neutral;
+    const neutral = summarizeSamples(neutralSamples, meanOf);
+    const median = values => percentileOf(values, 0.5);
+    const left = summarizeSamples(recorded.left, median);
+    const right = summarizeSamples(recorded.right, median);
+    const down = summarizeSamples(recorded.down, median);
+    const up = summarizeSamples(recorded.up, median);
+    const jawClosed = percentileOf(neutralSamples.map(s => s.jaw), 0.5);
+    const jawOpen = percentileOf(recorded.mouth.map(s => s.jaw), 0.9);
+    const warnings = [];
+
+    // 横: 左右の可動域全体を使う
+    const noseRangeX = Math.abs(right.noseX - left.noseX);
+    const yawRange = Math.abs(right.yaw - left.yaw);
+    const yawPath = integrateAcceleratedAngle(left.yaw, right.yaw, neutral.yaw);
+    const rowBounds = getSymptomRowPointerBounds();
+    const rowWidth = rowBounds && (rowBounds.maxX - rowBounds.minX) > 100
+        ? rowBounds.maxX - rowBounds.minX
+        : window.innerWidth * 0.6;
+
+    let gain = noseGain;
+    if (noseRangeX < CALIB_MIN_NOSE_RANGE && yawRange < CALIB_MIN_ANGLE_RANGE) {
+        warnings.push("左右の動きが小さすぎるため、感度は変更しません");
+    } else {
+        const travelX = g => (noseRangeX * getNoseScale(g)) + (yawPath * getYawScale(g));
+        const solved = solveGainForTravel(travelX, rowWidth / CALIB_HORIZONTAL_COMFORT_RATIO);
+        gain = solved.gain;
+        if (solved.saturated) warnings.push("左右の動きが小さいため、感度は最大にしました");
+    }
+
+    // 縦: 上段にいる状態から下を向いて下段へ届くかで決める
+    let vRatio = verticalGainRatio;
+    const upper = getRowGeometry(row1Container);
+    const lower = getRowGeometry(row2Container);
+    const rowHeight = upper && lower && Math.abs(lower.centerY - upper.centerY) > VERTICAL_MIN_TRAVEL_PX
+        ? Math.abs(lower.centerY - upper.centerY)
+        : window.innerHeight * 0.25;
+    const noseRangeDown = Math.abs(down.noseY - neutral.noseY);
+    const pitchRangeDown = Math.abs(down.pitch - neutral.pitch);
+    if (noseRangeDown < CALIB_MIN_NOSE_RANGE / 2 && pitchRangeDown < CALIB_MIN_ANGLE_RANGE / 2) {
+        warnings.push("下向きの動きが小さすぎるため、上下感度は変更しません");
+    } else {
+        const pitchPath = integrateAcceleratedAngle(neutral.pitch, down.pitch, neutral.pitch);
+        const travelDown = (noseRangeDown * getNoseScale(gain) * VERTICAL_NOSE_SCALE_RATIO)
+            + (pitchPath * getYawScale(gain) * VERTICAL_PITCH_SCALE_RATIO);
+        const required = rowHeight / CALIB_VERTICAL_COMFORT_RATIO;
+        vRatio = clamp(roundTo(required / Math.max(travelDown, 1), 0.05), 0.3, 4);
+    }
+    if (Math.abs(up.pitch - neutral.pitch) < CALIB_MIN_ANGLE_RANGE / 2 && Math.abs(up.noseY - neutral.noseY) < CALIB_MIN_NOSE_RANGE / 2) {
+        warnings.push("上向きの動きが小さめです（下段から上段へ戻りにくい場合は上下感度を上げてください）");
+    }
+
+    // 静止時の揺れ → デッドゾーン下限
+    const nNoise = clamp(Math.max(stdOf(neutralSamples.map(s => s.noseX)), stdOf(neutralSamples.map(s => s.noseY))), 0, 0.01);
+    const aNoise = clamp(Math.max(stdOf(neutralSamples.map(s => s.yaw)), stdOf(neutralSamples.map(s => s.pitch))), 0, 0.03);
+
+    // 口: 閉じ〜開きの中間より少し下を判定ラインにする
+    let jawThreshold = jawOpenThreshold;
+    const jawRange = jawOpen - jawClosed;
+    if (!Number.isFinite(jawRange) || jawRange <= 0.02) {
+        warnings.push("口の開きを検出できなかったため、口の閾値は変更しません");
+    } else {
+        jawThreshold = clamp(roundTo((jawRange * CALIB_JAW_OPEN_POINT) / JAW_OPEN_THRESHOLD_GAIN, 0.01), 0.02, 0.2);
+        if (jawRange < CALIB_MIN_JAW_RANGE) warnings.push("口の開きが小さめです。判定しにくい場合は大きめに開けてください");
+    }
+
+    return {
+        gain,
+        verticalRatio: vRatio,
+        noseNoise: nNoise,
+        angleNoise: aNoise,
+        jawThreshold,
+        measured: { noseRangeX, yawRange, noseRangeDown, pitchRangeDown, jawClosed, jawOpen },
+        warnings
+    };
+}
+
+const calibrationWizard = (() => {
+    const root = document.getElementById("calib-wizard");
+    const stepCountEl = document.getElementById("calib-step-count");
+    const arrowEl = document.getElementById("calib-arrow");
+    const instructionEl = document.getElementById("calib-instruction");
+    const subEl = document.getElementById("calib-sub");
+    const progressBar = document.getElementById("calib-progress-bar");
+    const resultEl = document.getElementById("calib-result");
+    const saveBtn = document.getElementById("calib-save-btn");
+    const retryBtn = document.getElementById("calib-retry-btn");
+    const cancelBtn = document.getElementById("calib-cancel-btn");
+
+    let active = false;
+    let finished = false;
+    let stepIndex = 0;
+    let stepElapsedMs = 0;
+    let lastFrameMs = null;
+    let recorded = {};
+    let result = null;
+
+    function renderStep() {
+        const step = CALIB_STEPS[stepIndex];
+        const isPreparing = stepElapsedMs < CALIB_PREPARE_MS;
+        stepCountEl.textContent = `キャリブレーション ${stepIndex + 1} / ${CALIB_STEPS.length}`;
+        arrowEl.textContent = step.arrow;
+        instructionEl.textContent = step.text;
+        subEl.textContent = isPreparing ? `準備… ${step.sub}` : "そのまま止めてください";
+        const ratio = isPreparing
+            ? stepElapsedMs / CALIB_PREPARE_MS
+            : (stepElapsedMs - CALIB_PREPARE_MS) / CALIB_RECORD_MS;
+        progressBar.classList.toggle("is-prepare", isPreparing);
+        progressBar.style.width = `${clamp(ratio, 0, 1) * 100}%`;
+    }
+
+    function start() {
+        active = true;
+        finished = false;
+        stepIndex = 0;
+        stepElapsedMs = 0;
+        lastFrameMs = null;
+        recorded = {};
+        CALIB_STEPS.forEach((step) => { recorded[step.key] = []; });
+        result = null;
+        root.classList.remove("done");
+        root.classList.add("active");
+        renderStep();
+    }
+
+    function close() {
+        active = false;
+        finished = false;
+        root.classList.remove("active", "done");
+        // 計測中はポインタ計算を止めていたので、履歴を捨てて急な飛びを防ぐ
+        resetPointerMotionHistory();
+    }
+
+    function finish() {
+        finished = true;
+        result = computeCalibrationResult(recorded);
+        stepCountEl.textContent = "キャリブレーション結果";
+        arrowEl.textContent = "✓";
+        instructionEl.textContent = "計測が終わりました";
+        subEl.textContent = "保存すると下の値に切り替わります";
+        const m = result.measured;
+        const lines = [
+            `感度（鼻位置・顔の傾き）: ${noseGain.toFixed(1)} / ${yawGain.toFixed(1)} → ${result.gain.toFixed(1)}`,
+            `上下感度の倍率: ${verticalGainRatio.toFixed(2)} → ${result.verticalRatio.toFixed(2)}`,
+            `口の開き閾値: ${jawOpenThreshold.toFixed(2)} → ${result.jawThreshold.toFixed(2)}`,
+            `静止時の揺れ（鼻/角度）: ${formatMetric(result.noseNoise, 4)} / ${formatMetric(result.angleNoise, 4)}`,
+            `計測: 左右 鼻${formatMetric(m.noseRangeX)} 角度${formatMetric(m.yawRange)}rad / 下向き 鼻${formatMetric(m.noseRangeDown)} 角度${formatMetric(m.pitchRangeDown)}rad / 口 ${formatMetric(m.jawClosed, 2)}→${formatMetric(m.jawOpen, 2)}`
+        ];
+        if (result.warnings.length > 0) {
+            lines.push("", ...result.warnings.map(w => `⚠ ${w}`));
+        }
+        resultEl.textContent = lines.join("\n");
+        root.classList.add("done");
+    }
+
+    function apply() {
+        if (!result) return;
+        noseGain = result.gain;
+        yawGain = result.gain;
+        verticalGainRatio = result.verticalRatio;
+        noseNoise = result.noseNoise;
+        angleNoise = result.angleNoise;
+        jawOpenThreshold = result.jawThreshold;
+        localStorage.setItem(NOSE_GAIN_KEY, String(noseGain));
+        localStorage.setItem(YAW_GAIN_KEY, String(yawGain));
+        localStorage.setItem(VERTICAL_GAIN_RATIO_KEY, String(verticalGainRatio));
+        localStorage.setItem(NOSE_NOISE_KEY, String(noseNoise));
+        localStorage.setItem(ANGLE_NOISE_KEY, String(angleNoise));
+        localStorage.setItem(JAW_OPEN_THRESHOLD_KEY, String(jawOpenThreshold));
+        syncTuningSliders();
+        close();
+        // 正面位置も今の姿勢で取り直す
+        isCalibrating = true;
+        jawClosedBaseline = null;
+    }
+
+    function onFrame(landmarks, detectResults, timeMs) {
+        if (!active || finished) return;
+
+        const dt = lastFrameMs === null ? 0 : clamp(timeMs - lastFrameMs, 0, 100);
+        lastFrameMs = timeMs;
+        stepElapsedMs += dt;
+
+        if (stepElapsedMs >= CALIB_PREPARE_MS) {
+            const sample = readCalibrationSample(landmarks, detectResults);
+            if (sample) recorded[CALIB_STEPS[stepIndex].key].push(sample);
+        }
+
+        if (stepElapsedMs >= CALIB_PREPARE_MS + CALIB_RECORD_MS) {
+            if (recorded[CALIB_STEPS[stepIndex].key].length < 5) {
+                // 顔が取れていなければこの手順をやり直す
+                stepElapsedMs = 0;
+                recorded[CALIB_STEPS[stepIndex].key] = [];
+            } else if (stepIndex + 1 >= CALIB_STEPS.length) {
+                finish();
+                return;
+            } else {
+                stepIndex += 1;
+                stepElapsedMs = 0;
+            }
+        }
+        renderStep();
+    }
+
+    function onNoFace() {
+        if (!active || finished) return;
+        // 顔が見えない間は時間を進めない
+        lastFrameMs = null;
+        subEl.textContent = "顔が見えません。カメラの方を向いてください";
+    }
+
+    saveBtn.addEventListener("click", apply);
+    retryBtn.addEventListener("click", start);
+    cancelBtn.addEventListener("click", close);
+
+    return {
+        start,
+        onFrame,
+        onNoFace,
+        isActive: () => active
+    };
+})();
+
+// =========================================================
 // Controls & Settings UI
 // =========================================================
 calibrateBtn.addEventListener("click", () => {
@@ -1973,7 +2380,35 @@ const controlsRoot = document.getElementById("controls");
 const paramsToggleBtn = document.getElementById("params-toggle-btn");
 const verticalMoveToggleBtn = document.getElementById("vertical-move-btn");
 
+const controlsCollapseBtn = document.getElementById("controls-collapse-btn");
+const calibWizardBtn = document.getElementById("calib-wizard-btn");
+
 let isParamPanelVisible = localStorage.getItem(PARAM_PANEL_VISIBLE_KEY) !== "0";
+let isControlsCollapsed = localStorage.getItem(CONTROLS_COLLAPSED_KEY) === "1";
+
+function applyControlsCollapsed() {
+    if (!controlsRoot || !controlsCollapseBtn) return;
+    controlsRoot.classList.toggle("collapsed", isControlsCollapsed);
+    controlsCollapseBtn.textContent = isControlsCollapsed ? "⚙" : "✕";
+    controlsCollapseBtn.title = isControlsCollapsed ? "パネルを開く" : "パネルを閉じる";
+    controlsCollapseBtn.setAttribute("aria-expanded", isControlsCollapsed ? "false" : "true");
+}
+
+if (controlsCollapseBtn) {
+    controlsCollapseBtn.addEventListener("click", () => {
+        isControlsCollapsed = !isControlsCollapsed;
+        localStorage.setItem(CONTROLS_COLLAPSED_KEY, isControlsCollapsed ? "1" : "0");
+        applyControlsCollapsed();
+    });
+}
+
+applyControlsCollapsed();
+
+if (calibWizardBtn) {
+    calibWizardBtn.addEventListener("click", () => {
+        calibrationWizard.start();
+    });
+}
 
 function applyVerticalMoveToggleState() {
     if (!verticalMoveToggleBtn) return;
@@ -2050,10 +2485,14 @@ if (yawGainSlider) {
     });
 }
 
-if (jawOpenThresholdSlider) jawOpenThresholdSlider.value = String(jawOpenThreshold);
-if (noseGainSlider) noseGainSlider.value = String(noseGain);
-if (yawGainSlider) yawGainSlider.value = String(yawGain);
-refreshTuningSliderLabels();
+function syncTuningSliders() {
+    if (jawOpenThresholdSlider) jawOpenThresholdSlider.value = String(jawOpenThreshold);
+    if (noseGainSlider) noseGainSlider.value = String(noseGain);
+    if (yawGainSlider) yawGainSlider.value = String(yawGain);
+    refreshTuningSliderLabels();
+}
+
+syncTuningSliders();
 
 function showMouseClickFeedback(button, text) {
     if (!mouseClickFeedback) return;
@@ -2077,6 +2516,8 @@ function shouldIgnoreMouseSpeech(event) {
     if (!target) return false;
 
     if (settingsModal && settingsModal.classList.contains("active")) return true;
+    // 操作パネル・キャリブレーション画面のボタン操作では発話しない
+    if (target.closest && target.closest("#controls, #calib-wizard")) return true;
     if (target.closest("input, textarea, [contenteditable='true']")) return true;
 
     const activeTag = document.activeElement ? document.activeElement.tagName : "";

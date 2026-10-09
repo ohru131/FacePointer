@@ -73,10 +73,14 @@ body {
     border-radius: 50%;
     box-shadow: 0 0 16px var(--primary-glow), 0 0 36px var(--primary-glow);
     pointer-events: none;
-    transform: translate(-50%, -50%);
+    top: 0;
+    left: 0;
+    /* 位置は JS が --pointer-x / --pointer-y を更新する（left/top より軽い） */
+    transform: translate3d(var(--pointer-x, 50vw), var(--pointer-y, 50vh), 0) translate(-50%, -50%) scale(var(--pointer-scale, 1));
+    will-change: transform;
     z-index: 600;
     /* above ui-layer(10), confirm overlay(500) precedes confirm *zone* */
-    transition: background 0.15s, transform 0.1s;
+    transition: background 0.15s;
     border: 2px solid rgba(255, 255, 255, 0.6);
 }
 
@@ -168,6 +172,17 @@ header {
 }
 
 #controls.params-hidden .control-advanced {
+    display: none !important;
+}
+
+/* 折りたたみ時は開くボタンだけ残す */
+#controls.collapsed {
+    padding: 0.4rem;
+    gap: 0;
+}
+
+#controls.collapsed > :not(#controls-top),
+#controls.collapsed #controls-top > :not(#controls-collapse-btn) {
     display: none !important;
 }
 
@@ -1465,4 +1480,106 @@ header {
 
 #mouse-click-feedback.right {
     border-color: rgba(230, 57, 70, 0.9);
+}
+
+/* ── calibration wizard ──────────────────────────── */
+#calib-wizard {
+    position: fixed;
+    inset: 0;
+    z-index: 2500;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(15, 23, 42, 0.35);
+    pointer-events: auto;
+}
+
+#calib-wizard.active {
+    display: flex;
+}
+
+#calib-box {
+    width: min(560px, calc(100% - 2rem));
+    padding: 1.6rem 1.8rem 1.4rem;
+    border-radius: 1.4rem;
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.25);
+    text-align: center;
+    color: var(--text);
+}
+
+#calib-step-count {
+    font-size: 0.95rem;
+    color: var(--text-dim);
+}
+
+#calib-arrow {
+    font-size: 4.5rem;
+    line-height: 1.1;
+    min-height: 5rem;
+}
+
+#calib-instruction {
+    font-size: clamp(1.4rem, 3vw, 2rem);
+    font-weight: 900;
+}
+
+#calib-sub {
+    margin-top: 0.4rem;
+    min-height: 1.4em;
+    font-size: 1rem;
+    color: var(--text-dim);
+}
+
+#calib-progress {
+    margin: 1rem 0 0.6rem;
+    height: 12px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+}
+
+#calib-progress-bar {
+    width: 0;
+    height: 100%;
+    background: var(--primary);
+}
+
+#calib-progress-bar.is-prepare {
+    background: #adb5bd;
+}
+
+#calib-result {
+    display: none;
+    margin: 0.6rem 0;
+    text-align: left;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    font-family: inherit;
+}
+
+#calib-wizard.done #calib-result {
+    display: block;
+}
+
+#calib-actions {
+    display: flex;
+    justify-content: center;
+    gap: 0.8rem;
+    margin-top: 0.6rem;
+}
+
+#calib-save-btn,
+#calib-retry-btn {
+    display: none;
+}
+
+#calib-wizard.done #calib-save-btn,
+#calib-wizard.done #calib-retry-btn {
+    display: inline-block;
+}
+
+#calib-wizard.done #calib-progress {
+    display: none;
 }
