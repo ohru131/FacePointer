@@ -48,6 +48,23 @@
             </div>
         </div>
 
+        <!-- Calibration Wizard -->
+        <div id="calib-wizard" aria-live="polite">
+            <div id="calib-box">
+                <div id="calib-step-count"></div>
+                <div id="calib-arrow"></div>
+                <div id="calib-instruction"></div>
+                <div id="calib-sub"></div>
+                <div id="calib-progress"><div id="calib-progress-bar"></div></div>
+                <pre id="calib-result"></pre>
+                <div id="calib-actions">
+                    <button id="calib-save-btn" class="ctrl-btn primary" type="button">保存</button>
+                    <button id="calib-retry-btn" class="ctrl-btn secondary" type="button">やり直し</button>
+                    <button id="calib-cancel-btn" class="ctrl-btn secondary" type="button">中止</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Confirm Zone (bottom dwell area) -->
         <div id="confirm-zone">
             <div id="confirm-zone-inner">
@@ -64,9 +81,11 @@
         <!-- Controls (bottom right) -->
         <div id="controls">
             <div id="controls-top">
+                <button id="controls-collapse-btn" class="ctrl-btn icon-btn" type="button" title="パネルを閉じる" aria-expanded="true">✕</button>
                 <button id="settings-btn" class="ctrl-btn icon-btn" title="設定">⚙️</button>
                 <button id="params-toggle-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true">パラメータ ON</button>
                 <button id="vertical-move-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true">上下移動 ON</button>
+                <button id="calib-wizard-btn" class="ctrl-btn" type="button">キャリブレーション</button>
                 <button id="audio-cache-btn" class="ctrl-btn secondary control-advanced">音声データを更新</button>
                 <button id="calibrate-btn" class="ctrl-btn control-advanced">校正リセット</button>
                 <div id="audio-status" class="status-info control-advanced" style="display:none;">
