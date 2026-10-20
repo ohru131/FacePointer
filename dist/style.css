@@ -561,7 +561,7 @@ header {
 }
 
 /* ── simple mode (panel grid) ────────────────────── */
-.simple-grid {
+#simple-panel {
     display: none;
 }
 
@@ -574,12 +574,89 @@ header {
     display: none;
 }
 
+#app[data-mode="simple"] #simple-panel {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
 #app[data-mode="simple"] .simple-grid {
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-auto-rows: minmax(0, 1fr);
     gap: 0.75rem;
+    position: relative;
+}
+
+/* ページ送り・休憩のバー */
+#simple-bar {
+    flex: 0 0 clamp(64px, 12vh, 110px);
+    display: flex;
+    gap: 0.75rem;
+    align-items: stretch;
+}
+
+#simple-bar .h-btn.simple-ctrl {
+    flex: 1 1 0;
+    font-size: clamp(1.4rem, 2.6vw, 2.4rem);
+    padding: 0.2rem 0.6rem;
+    background: linear-gradient(180deg, rgba(232, 244, 253, 0.9) 0%, rgba(208, 228, 244, 0.8) 100%);
+    border-color: rgba(69, 123, 157, 0.45);
+}
+
+#simple-bar .h-btn.simple-ctrl--rest {
+    background: linear-gradient(180deg, rgba(237, 250, 242, 0.92) 0%, rgba(210, 240, 222, 0.82) 100%);
+    border-color: rgba(45, 106, 79, 0.45);
+}
+
+.simple-page-label {
+    flex: 0 0 auto;
+    align-self: center;
+    padding: 0 0.6rem;
+    font-size: clamp(1.2rem, 2.2vw, 2rem);
+    font-weight: 900;
+    color: #334155;
+}
+
+.simple-empty-notice {
+    grid-column: 1 / -1;
+    grid-row: 1 / -1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #475569;
+    background: rgba(255, 255, 255, 0.85);
+    border-radius: 1.4rem;
+}
+
+.h-btn-emoji {
+    font-size: 2.2em;
+    line-height: 1.1;
+    flex: 0 1 auto;
+}
+
+/* 休憩中: 再開パネル以外を暗くする */
+#app[data-mode="simple"][data-simple-paused="1"] .simple-grid .h-btn,
+#app[data-mode="simple"][data-simple-paused="1"] #simple-bar .h-btn:not(.simple-ctrl--rest) {
+    opacity: 0.3;
+    filter: grayscale(0.8);
+}
+
+#app[data-mode="simple"][data-simple-paused="1"] .simple-grid::after {
+    content: "休憩中";
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: clamp(3rem, 9vw, 7rem);
+    font-weight: 900;
+    color: #2d6a4f;
+    pointer-events: none;
 }
 
 #app[data-mode="simple"] .simple-grid .h-btn {
@@ -1648,4 +1725,158 @@ header {
 
 #calib-wizard.done #calib-progress {
     display: none;
+}
+
+/* ── settings: simple mode editor ────────────────── */
+.simple-editor-options {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.simple-editor-check {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #e2e8f0;
+    font-weight: 700;
+}
+
+.simple-editor-heading {
+    margin: 1rem 0 0.5rem;
+    color: #fff;
+    font-size: 1.05rem;
+}
+
+.simple-editor-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    color: #cbd5e1;
+}
+
+#simple-panel-summary {
+    margin-right: auto;
+}
+
+#simple-panel-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    max-height: 42vh;
+    overflow-y: auto;
+    padding-right: 0.3rem;
+}
+
+.simple-editor-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.35rem 0.6rem;
+    border-radius: 0.6rem;
+    background: rgba(255, 255, 255, 0.08);
+    color: #f1f5f9;
+}
+
+.simple-editor-row.is-disabled {
+    opacity: 0.55;
+}
+
+.simple-editor-row input[type="checkbox"] {
+    width: 1.3rem;
+    height: 1.3rem;
+    flex: 0 0 auto;
+}
+
+.simple-editor-thumb {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.8rem;
+    background: #fff;
+    border-radius: 0.5rem;
+    overflow: hidden;
+}
+
+.simple-editor-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.simple-editor-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.simple-editor-text small {
+    color: #94a3b8;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.simple-editor-actions {
+    display: flex;
+    gap: 0.3rem;
+}
+
+.simple-editor-actions .ctrl-btn {
+    padding: 0.3rem 0.6rem;
+    min-width: 0;
+}
+
+.simple-editor-actions .ctrl-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+
+.simple-custom-form {
+    display: grid;
+    grid-template-columns: 1fr 1.6fr 0.7fr;
+    gap: 0.5rem;
+    align-items: center;
+}
+
+.simple-custom-form input[type="text"] {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 0.6rem;
+    padding: 0.55rem 0.7rem;
+    color: #fff;
+    font-size: 0.95rem;
+}
+
+.simple-custom-image {
+    grid-column: 1 / 3;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: #cbd5e1;
+    font-weight: 700;
+}
+
+#simple-custom-image-preview {
+    width: 56px;
+    height: 56px;
+    object-fit: contain;
+    background: #fff;
+    border-radius: 0.5rem;
+}
+
+#simple-custom-add-btn {
+    grid-column: 3;
+}
+
+.simple-editor-note {
+    display: block;
+    margin-top: 0.4rem;
+    color: #94a3b8;
 }

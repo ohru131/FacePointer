@@ -42,7 +42,10 @@
             </div>
 
             <!-- Simple mode: panel grid (select to speak) -->
-            <div id="simple-panel" class="simple-grid"></div>
+            <div id="simple-panel">
+                <div id="simple-grid" class="simple-grid"></div>
+                <div id="simple-bar"></div>
+            </div>
         </div>
 
         <!-- Confirm Overlay -->
@@ -129,7 +132,7 @@
                 <!-- Tabs -->
                 <div class="settings-tabs">
                     <button class="settings-tab-btn active" data-tab="api-tab">API設定</button>
-                    <button class="settings-tab-btn" data-tab="phrase-tab">セリフ編集</button>
+                    <button class="settings-tab-btn" data-tab="simple-tab">シンプルモード</button>
                 </div>
 
                 <!-- API Tab -->
@@ -180,28 +183,45 @@
                     </div>
                 </div>
 
-                <!-- Phrase Tab -->
-                <div id="phrase-tab" class="settings-tab-content">
-                    <div class="phrase-editor-toolbar">
-                        <input id="phrase-search-input" type="text" placeholder="分類名・ボタン名・発話文で検索">
-                        <div class="phrase-editor-toolbar-actions">
-                            <button id="phrase-expand-all" class="ctrl-btn secondary" type="button">全展開</button>
-                            <button id="phrase-collapse-all" class="ctrl-btn secondary" type="button">全折りたたみ</button>
-                            <button id="phrase-clear-search" class="ctrl-btn secondary" type="button">検索クリア</button>
+                <!-- Simple Mode Tab -->
+                <div id="simple-tab" class="settings-tab-content">
+                    <div class="simple-editor-options">
+                        <div class="setting-item">
+                            <label for="simple-grid-size-select">グリッドサイズ（入りきらない分はページ送り）</label>
+                            <select id="simple-grid-size-select">
+                                <option value="2x2">2 × 2（4枚・特大）</option>
+                                <option value="3x2">3 × 2（6枚）</option>
+                                <option value="3x3">3 × 3（9枚）</option>
+                                <option value="4x3">4 × 3（12枚）</option>
+                                <option value="4x4">4 × 4（16枚）</option>
+                            </select>
                         </div>
+                        <label class="simple-editor-check"><input type="checkbox" id="simple-show-rest-input"> 休憩パネルを表示（休憩中は滞留確定を止める）</label>
+                        <label class="simple-editor-check"><input type="checkbox" id="simple-confirm-sound-input"> 確定音を鳴らす</label>
                     </div>
-                    <div id="phrase-editor-summary" class="phrase-editor-summary"></div>
-                    <div id="phrase-editor-container" style="display: grid; grid-template-columns: 1fr; gap: 1.5rem;"></div>
-                    <div id="phrase-synthesis-status" class="status-info" style="display:none; margin-top: 1rem;">
-                        <div class="status-label"></div>
-                        <div class="status-progress-bar">
-                            <div class="status-progress-fill"></div>
-                        </div>
+
+                    <h4 class="simple-editor-heading">表示パネル</h4>
+                    <div class="simple-editor-toolbar">
+                        <span id="simple-panel-summary"></span>
+                        <button id="simple-enable-all-btn" class="ctrl-btn secondary" type="button">全て表示</button>
+                        <button id="simple-disable-all-btn" class="ctrl-btn secondary" type="button">全て非表示</button>
+                        <button id="simple-reset-panels-btn" class="ctrl-btn secondary" type="button">初期状態に戻す</button>
                     </div>
-                    <div style="margin-top: 1.5rem; display: flex; gap: 1rem;">
-                        <button id="prefetch-modified-btn" class="ctrl-btn primary">修正済みセリフのみ再合成</button>
-                        <button id="reset-phrases-btn" class="ctrl-btn secondary">修正内容をリセット</button>
+                    <div id="simple-panel-list"></div>
+
+                    <h4 class="simple-editor-heading">任意パネルを追加</h4>
+                    <div class="simple-custom-form">
+                        <input type="text" id="simple-custom-name-input" placeholder="表示名（例: テレビ）" maxlength="20">
+                        <input type="text" id="simple-custom-sentence-input" placeholder="発話文（空欄なら表示名を読み上げ）" maxlength="80">
+                        <input type="text" id="simple-custom-emoji-input" placeholder="絵文字（例: 📺）" maxlength="8">
+                        <label class="simple-custom-image">
+                            画像（任意）
+                            <input type="file" id="simple-custom-image-input" accept="image/*">
+                        </label>
+                        <img id="simple-custom-image-preview" alt="" style="display:none;">
+                        <button id="simple-custom-add-btn" class="ctrl-btn primary" type="button">追加</button>
                     </div>
+                    <small class="simple-editor-note">※ 画像は 256px に縮小してブラウザに保存されます。画像があれば絵文字より優先。</small>
                 </div>
 
                 <div class="modal-actions">

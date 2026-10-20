@@ -20,6 +20,8 @@ const confirmZonePreview = document.getElementById("confirm-zone-preview");
 const appRoot = document.getElementById("app");
 const modePrompt = document.getElementById("mode-prompt");
 const simplePanelContainer = document.getElementById("simple-panel");
+const simpleGridContainer = document.getElementById("simple-grid");
+const simpleBarContainer = document.getElementById("simple-bar");
 const dwellIndicator = document.getElementById("dwell-indicator");
 
 let faceLandmarker;
@@ -131,7 +133,6 @@ const SYMPTOM_FLOW_DIRECT = "direct";
 const APP_MODE_KEY = "app_mode";
 const APP_MODE_SYMPTOM = "symptom";
 const APP_MODE_SIMPLE = "simple";
-const SIMPLE_GRID_COLUMNS = 4;
 const SIMPLE_ROW_ID = "s";
 const SIMPLE_CONFIRM_DISPLAY_MS = 2200;
 // 滞留(dwell)選択: 同じパネル上でしばらく動かなければ確定する
@@ -1141,7 +1142,8 @@ function renderAll() {
         renderSimpleMode();
         return;
     }
-    if (simplePanelContainer) simplePanelContainer.innerHTML = "";
+    if (simpleGridContainer) simpleGridContainer.innerHTML = "";
+    if (simpleBarContainer) simpleBarContainer.innerHTML = "";
 
     if (appRoot) {
         appRoot.dataset.mode = "symptom";
@@ -1191,18 +1193,164 @@ function renderAll() {
 // =========================================================
 // Simple mode (パネルを選ぶと即発話。滞留またはジェスチャーで確定)
 // =========================================================
-function getSimplePanelItems() {
-    return symptomChoices.flatMap(category => category.options || []);
+const SIMPLE_CONFIG_KEY = "simple_panel_config_v1";
+const SIMPLE_CUSTOM_PANELS_KEY = "simple_custom_panels_v1";
+const SIMPLE_GRID_SIZES = {
+    "2x2": { cols: 2, rows: 2 },
+    "3x2": { cols: 3, rows: 2 },
+    "3x3": { cols: 3, rows: 3 },
+    "4x3": { cols: 4, rows: 3 },
+    "4x4": { cols: 4, rows: 4 }
+};
+const SIMPLE_GRID_SIZE_DEFAULT = "4x4";
+const SIMPLE_CTRL_PREV = "ctrl-prev";
+const SIMPLE_CTRL_NEXT = "ctrl-next";
+const SIMPLE_CTRL_REST = "ctrl-rest";
+// 休憩中に再開するときは誤操作を避けるため長めに滞留させる
+const SIMPLE_RESUME_DWELL_RATIO = 2;
+const SIMPLE_RESUME_DWELL_MIN_MS = 2000;
+const CUSTOM_IMAGE_MAX_PX = 256;
+
+// 既存の症状モード16フレーズに加えて選べるプリセット
+const SIMPLE_EXTRA_PRESETS = [
+    { id: "p-yes", name: "はい", emoji: "⭕", sentence: "はい。" },
+    { id: "p-no", name: "いいえ", emoji: "❌", sentence: "いいえ。" },
+    { id: "p-wait", name: "ちょっと待って", emoji: "✋", sentence: "ちょっと待ってください。" },
+    { id: "p-dont-know", name: "わからない", emoji: "❓", sentence: "わからないです。" },
+    { id: "p-again", name: "もう一度言って", emoji: "🔁", sentence: "もう一度言ってください。" },
+    { id: "p-cold", name: "寒い", icon: "media/symptom-cold.png", sentence: "寒いです。" },
+    { id: "p-hot", name: "暑い", icon: "media/symptom-hot.png", sentence: "暑いです。" },
+    { id: "p-feel-bad", name: "気分が悪い", icon: "media/symptom-feel.png", sentence: "気分が悪いです。" },
+    { id: "p-itch", name: "かゆい", icon: "media/symptom-itch.png", sentence: "かゆいです。" },
+    { id: "p-pain", name: "痛い", icon: "media/symptom-pain.png", sentence: "痛いです。" },
+    { id: "p-head-pain", name: "頭が痛い", icon: "media/body-head.png", sentence: "頭が痛いです。" },
+    { id: "p-body-pain", name: "体が痛い", icon: "media/body-body.png", sentence: "体が痛いです。" },
+    { id: "p-hand-pain", name: "手が痛い", icon: "media/body-hand.png", sentence: "手が痛いです。" },
+    { id: "p-leg-pain", name: "足が痛い", icon: "media/body-leg.png", sentence: "足が痛いです。" },
+    { id: "p-breath", name: "息が苦しい", emoji: "😮‍💨", sentence: "息が苦しいです。" },
+    { id: "p-call", name: "看護師さん呼んで", emoji: "🔔", sentence: "看護師さんを呼んでください。" },
+    { id: "p-stay", name: "そばにいて", emoji: "🤝", sentence: "そばにいてください。" },
+    { id: "p-hold-hand", name: "手をにぎって", emoji: "🤲", sentence: "手をにぎってください。" },
+    { id: "p-light", name: "電気", emoji: "💡", sentence: "電気をつけてください。" },
+    { id: "p-dark", name: "暗くして", emoji: "🌙", sentence: "暗くしてください。" },
+    { id: "p-window", name: "窓をあけて", emoji: "🪟", sentence: "窓をあけてください。" },
+    { id: "p-sleepy", name: "ねむい", emoji: "😴", sentence: "ねむいです。" },
+    { id: "p-good-morning", name: "おはよう", emoji: "🌅", sentence: "おはようございます。" },
+    { id: "p-hello", name: "こんにちは", emoji: "👋", sentence: "こんにちは。" },
+    { id: "p-good-night", name: "おやすみ", emoji: "🛌", sentence: "おやすみなさい。" },
+    { id: "p-happy", name: "うれしい", emoji: "😊", sentence: "うれしいです。" }
+];
+
+function loadSimpleCustomPanels() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(SIMPLE_CUSTOM_PANELS_KEY) || "[]");
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter(p => p && typeof p.id === "string" && typeof p.name === "string" && p.name.trim());
+    } catch {
+        return [];
+    }
+}
+
+function getSimpleBasePanels() {
+    return symptomChoices.flatMap((category, ci) => (category.options || []).map((option, oi) => ({
+        id: `base-${ci}-${oi}`,
+        name: option.name,
+        icon: option.icon,
+        sentence: option.sentence
+    })));
+}
+
+function getSimpleCatalog(customPanels = simpleCustomPanels) {
+    return [...getSimpleBasePanels(), ...SIMPLE_EXTRA_PRESETS, ...customPanels.map(p => ({ ...p, custom: true }))];
+}
+
+function defaultSimpleConfig() {
+    return {
+        gridSize: SIMPLE_GRID_SIZE_DEFAULT,
+        panelIds: getSimpleBasePanels().map(p => p.id),
+        showRest: true,
+        confirmSound: true
+    };
+}
+
+function loadSimpleConfig() {
+    const fallback = defaultSimpleConfig();
+    try {
+        const parsed = JSON.parse(localStorage.getItem(SIMPLE_CONFIG_KEY) || "null");
+        if (!parsed || typeof parsed !== "object") return fallback;
+        return {
+            gridSize: SIMPLE_GRID_SIZES[parsed.gridSize] ? parsed.gridSize : fallback.gridSize,
+            panelIds: Array.isArray(parsed.panelIds) ? parsed.panelIds.filter(id => typeof id === "string") : fallback.panelIds,
+            showRest: parsed.showRest !== false,
+            confirmSound: parsed.confirmSound !== false
+        };
+    } catch {
+        return fallback;
+    }
+}
+
+let simpleCustomPanels = loadSimpleCustomPanels();
+let simpleConfig = loadSimpleConfig();
+let simplePage = 0;
+let isSimplePaused = false;
+
+function getSimpleRowKey(id) {
+    return `${SIMPLE_ROW_ID}|${id}`;
+}
+
+function getEnabledSimplePanels() {
+    const byId = new Map(getSimpleCatalog().map(p => [p.id, p]));
+    return simpleConfig.panelIds.map(id => byId.get(id)).filter(Boolean);
 }
 
 function buildSimpleSentence(item) {
     if (item.sentence && item.sentence.trim()) return item.sentence.trim();
-    return `${item.name}です。`;
+    return `${item.name}。`;
+}
+
+function createSimpleButton(id, label, options = {}) {
+    const { icon = "", emoji = "", image = "", className = "", onClick = null } = options;
+    const btn = document.createElement("div");
+    btn.className = `h-btn ${className}`.trim();
+    btn.dataset.row = SIMPLE_ROW_ID;
+    btn.dataset.name = id;
+
+    if (image || icon) {
+        const img = document.createElement("img");
+        img.className = "h-btn-icon";
+        if (image) {
+            img.src = image;
+        } else {
+            const styledIconPath = resolveIconPath(icon);
+            img.src = styledIconPath;
+            if (styledIconPath !== icon) {
+                img.onerror = () => {
+                    img.onerror = null;
+                    img.src = icon;
+                };
+            }
+        }
+        btn.appendChild(img);
+    } else if (emoji) {
+        const emojiEl = document.createElement("div");
+        emojiEl.className = "h-btn-emoji";
+        emojiEl.textContent = emoji;
+        btn.appendChild(emojiEl);
+    }
+
+    const text = document.createElement("div");
+    text.className = "h-btn-text";
+    text.innerText = label;
+    btn.appendChild(text);
+
+    if (onClick) btn.addEventListener("click", onClick);
+    return btn;
 }
 
 function renderSimpleMode() {
     if (appRoot) {
         appRoot.dataset.mode = APP_MODE_SIMPLE;
+        appRoot.dataset.simplePaused = isSimplePaused ? "1" : "0";
         delete appRoot.dataset.symptomStage;
     }
     if (modePrompt) modePrompt.textContent = "";
@@ -1214,22 +1362,82 @@ function renderSimpleMode() {
     });
     previewSymptomName = null;
 
-    if (!simplePanelContainer) return;
-    renderRow(simplePanelContainer, getSimplePanelItems(), SIMPLE_ROW_ID, handleSimpleClick);
-    simplePanelContainer.style.gridTemplateColumns = `repeat(${SIMPLE_GRID_COLUMNS}, 1fr)`;
+    if (!simpleGridContainer || !simpleBarContainer) return;
+
+    const { cols, rows } = SIMPLE_GRID_SIZES[simpleConfig.gridSize] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
+    const pageSize = cols * rows;
+    const panels = getEnabledSimplePanels();
+    const pageCount = Math.max(1, Math.ceil(panels.length / pageSize));
+    simplePage = clamp(simplePage, 0, pageCount - 1);
+
+    simpleGridContainer.innerHTML = "";
+    simpleGridContainer.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+    simpleGridContainer.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
+    simpleGridContainer.dataset.cols = String(cols);
+
+    const pagePanels = panels.slice(simplePage * pageSize, (simplePage + 1) * pageSize);
+    pagePanels.forEach((item) => {
+        simpleGridContainer.appendChild(createSimpleButton(item.id, item.name, {
+            icon: item.icon,
+            emoji: item.emoji,
+            image: item.image,
+            onClick: () => handleSimpleClick(item)
+        }));
+    });
+    // 最終ページの空きは枠だけ置いて、パネルの大きさと位置をページ間で揃える
+    for (let i = pagePanels.length; i < pageSize; i++) {
+        const empty = document.createElement("div");
+        empty.className = "h-btn h-btn--empty";
+        simpleGridContainer.appendChild(empty);
+    }
+
+    simpleBarContainer.innerHTML = "";
+    if (pageCount > 1) {
+        simpleBarContainer.appendChild(createSimpleButton(SIMPLE_CTRL_PREV, "◀ 前へ", {
+            className: "simple-ctrl",
+            onClick: () => handleSimpleControl(SIMPLE_CTRL_PREV)
+        }));
+        const pageLabel = document.createElement("div");
+        pageLabel.className = "simple-page-label";
+        pageLabel.textContent = `${simplePage + 1} / ${pageCount}`;
+        simpleBarContainer.appendChild(pageLabel);
+        simpleBarContainer.appendChild(createSimpleButton(SIMPLE_CTRL_NEXT, "次へ ▶", {
+            className: "simple-ctrl",
+            onClick: () => handleSimpleControl(SIMPLE_CTRL_NEXT)
+        }));
+    }
+    if (simpleConfig.showRest) {
+        simpleBarContainer.appendChild(createSimpleButton(SIMPLE_CTRL_REST, isSimplePaused ? "▶ 再開" : "⏸ 休憩", {
+            className: "simple-ctrl simple-ctrl--rest",
+            onClick: () => handleSimpleControl(SIMPLE_CTRL_REST)
+        }));
+    }
+    simpleBarContainer.style.display = simpleBarContainer.childElementCount > 0 ? "" : "none";
+
+    if (pagePanels.length === 0 && panels.length === 0) {
+        const notice = document.createElement("div");
+        notice.className = "simple-empty-notice";
+        notice.textContent = "表示するパネルがありません（設定 → シンプルモードで選択）";
+        simpleGridContainer.appendChild(notice);
+    }
+
     refitAllButtonText();
 }
 
+function lockSimpleKeyAfterConfirm(key) {
+    // 口ジェスチャー・滞留のどちらで確定しても、外れるまで同じパネルは再選択しない
+    dwellLockedKey = key;
+    resetDwellProgress();
+}
+
 async function handleSimpleClick(item) {
-    if (isConfirmInProgress) return;
+    if (isConfirmInProgress || isSimplePaused) return;
 
     const sentence = buildSimpleSentence(item);
     if (!sentence) return;
 
-    // 口ジェスチャー・滞留のどちらで確定しても、外れるまで同じパネルは再選択しない
-    dwellLockedKey = `${SIMPLE_ROW_ID}|${item.name}`;
-    resetDwellProgress();
-
+    lockSimpleKeyAfterConfirm(getSimpleRowKey(item.id));
+    playConfirmSound();
     showConfirm(sentence, SIMPLE_CONFIRM_DISPLAY_MS);
     isConfirmInProgress = true;
     void speak(sentence);
@@ -1238,6 +1446,57 @@ async function handleSimpleClick(item) {
         await waitForConfirmOverlayToHide();
     } finally {
         isConfirmInProgress = false;
+    }
+}
+
+function handleSimpleControl(control) {
+    if (isConfirmInProgress) return;
+    if (isSimplePaused && control !== SIMPLE_CTRL_REST) return;
+
+    if (control === SIMPLE_CTRL_REST) {
+        isSimplePaused = !isSimplePaused;
+    } else {
+        const { cols, rows } = SIMPLE_GRID_SIZES[simpleConfig.gridSize] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
+        const pageCount = Math.max(1, Math.ceil(getEnabledSimplePanels().length / (cols * rows)));
+        // 端から押したら反対側へ回り込む
+        const step = control === SIMPLE_CTRL_NEXT ? 1 : -1;
+        simplePage = (simplePage + step + pageCount) % pageCount;
+    }
+
+    lockSimpleKeyAfterConfirm(getSimpleRowKey(control));
+    playConfirmSound();
+    renderSimpleMode();
+    // 描画し直したボタンにホバー表示を付け直す
+    checkPointerCollision();
+}
+
+let confirmSoundContext = null;
+
+function playConfirmSound() {
+    if (!simpleConfig.confirmSound) return;
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        if (!confirmSoundContext) confirmSoundContext = new AudioCtx();
+        const ctx = confirmSoundContext;
+        if (ctx.state === "suspended") void ctx.resume();
+
+        // 短い2音の「ピポッ」
+        const start = ctx.currentTime;
+        [[880, 0], [1320, 0.09]].forEach(([freq, offset]) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = "sine";
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0.0001, start + offset);
+            gain.gain.exponentialRampToValueAtTime(0.25, start + offset + 0.01);
+            gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.12);
+            osc.connect(gain).connect(ctx.destination);
+            osc.start(start + offset);
+            osc.stop(start + offset + 0.13);
+        });
+    } catch (error) {
+        console.warn("confirm sound failed:", error);
     }
 }
 
@@ -1263,7 +1522,10 @@ function updateDwellSelection(hasFace) {
     }
 
     const now = performance.now();
-    const hoveredKey = lastHoveredButtonKey;
+    const restKey = getSimpleRowKey(SIMPLE_CTRL_REST);
+    let hoveredKey = lastHoveredButtonKey;
+    // 休憩中は再開パネル以外では滞留しない
+    if (isSimplePaused && hoveredKey !== restKey) hoveredKey = "";
 
     if (dwellLockedKey === DWELL_LOCK_FIRST_HOVER && hoveredKey) dwellLockedKey = hoveredKey;
     if (dwellLockedKey && dwellLockedKey !== DWELL_LOCK_FIRST_HOVER && hoveredKey !== dwellLockedKey) {
@@ -1272,7 +1534,7 @@ function updateDwellSelection(hasFace) {
 
     if (!hoveredKey || hoveredKey === dwellLockedKey) {
         // 境界のジッタで一瞬外れただけなら進捗を保持する
-        if (dwellTargetKey && !hoveredKey) {
+        if (dwellTargetKey && !hoveredKey && !isSimplePaused) {
             if (!dwellLeftAt) dwellLeftAt = now;
             if (now - dwellLeftAt < DWELL_LEAVE_GRACE_MS) return;
         }
@@ -1294,7 +1556,10 @@ function updateDwellSelection(hasFace) {
     if (!targetBtn) return;
     targetBtn.classList.add("dwelling");
 
-    const progress = clamp((now - dwellStartAt) / dwellTimeMs, 0, 1);
+    const requiredMs = isSimplePaused
+        ? Math.max(dwellTimeMs * SIMPLE_RESUME_DWELL_RATIO, SIMPLE_RESUME_DWELL_MIN_MS)
+        : dwellTimeMs;
+    const progress = clamp((now - dwellStartAt) / requiredMs, 0, 1);
     if (dwellIndicator) {
         dwellIndicator.style.setProperty("--dwell-x", `${pointerX}px`);
         dwellIndicator.style.setProperty("--dwell-y", `${pointerY}px`);
@@ -1310,6 +1575,11 @@ function updateDwellSelection(hasFace) {
     }
 }
 
+// 休憩中は口ジェスチャーでも再開パネル以外を確定しない
+function isSimpleClickBlocked(targetKey) {
+    return isSimpleMode() && isSimplePaused && targetKey !== getSimpleRowKey(SIMPLE_CTRL_REST);
+}
+
 function setAppMode(mode) {
     const nextMode = mode === APP_MODE_SIMPLE ? APP_MODE_SIMPLE : APP_MODE_SYMPTOM;
     if (nextMode === appMode) return;
@@ -1318,6 +1588,8 @@ function setAppMode(mode) {
     localStorage.setItem(APP_MODE_KEY, appMode);
     resetDwellProgress();
     dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+    isSimplePaused = false;
+    simplePage = 0;
     resetSymptomModeState();
 
     if (isSimpleMode()) {
@@ -1328,6 +1600,216 @@ function setAppMode(mode) {
             targetY = pointerY = bounds.centerY;
         }
     }
+}
+
+// ---------------------------------------------------------
+// 設定画面: シンプルモードのパネル選択・任意パネル追加
+// ---------------------------------------------------------
+let simpleEditorDraft = [];   // [{ id, enabled }] 表示順
+let simpleCustomDraft = [];   // 保存前の任意パネル
+
+function openSimplePanelEditor() {
+    simpleCustomDraft = simpleCustomPanels.map(p => ({ ...p }));
+    const catalogIds = getSimpleCatalog(simpleCustomDraft).map(p => p.id);
+    const enabledIds = simpleConfig.panelIds.filter(id => catalogIds.includes(id));
+    simpleEditorDraft = [
+        ...enabledIds.map(id => ({ id, enabled: true })),
+        ...catalogIds.filter(id => !enabledIds.includes(id)).map(id => ({ id, enabled: false }))
+    ];
+
+    if (simpleGridSizeSelect) simpleGridSizeSelect.value = simpleConfig.gridSize;
+    if (simpleShowRestInput) simpleShowRestInput.checked = simpleConfig.showRest;
+    if (simpleConfirmSoundInput) simpleConfirmSoundInput.checked = simpleConfig.confirmSound;
+    resetSimpleCustomForm();
+    renderSimplePanelEditor();
+}
+
+function renderSimplePanelEditor() {
+    if (!simplePanelList) return;
+
+    const byId = new Map(getSimpleCatalog(simpleCustomDraft).map(p => [p.id, p]));
+    simplePanelList.innerHTML = "";
+
+    const enabledCount = simpleEditorDraft.filter(d => d.enabled).length;
+    if (simplePanelSummary) {
+        const { cols, rows } = SIMPLE_GRID_SIZES[simpleGridSizeSelect?.value] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
+        const pages = Math.max(1, Math.ceil(enabledCount / (cols * rows)));
+        simplePanelSummary.textContent = `表示中 ${enabledCount} 枚 / ${pages} ページ（1ページ ${cols * rows} 枚）`;
+    }
+
+    simpleEditorDraft.forEach((entry, index) => {
+        const item = byId.get(entry.id);
+        if (!item) return;
+
+        const row = document.createElement("div");
+        row.className = "simple-editor-row" + (entry.enabled ? "" : " is-disabled");
+
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = entry.enabled;
+        check.title = "表示する";
+        check.addEventListener("change", () => {
+            entry.enabled = check.checked;
+            // 表示ONにしたものは表示中の末尾へ、OFFにしたものは非表示側の先頭へ寄せる
+            simpleEditorDraft.splice(index, 1);
+            const firstDisabled = simpleEditorDraft.findIndex(d => !d.enabled);
+            const insertAt = firstDisabled === -1 ? simpleEditorDraft.length : firstDisabled;
+            simpleEditorDraft.splice(insertAt, 0, entry);
+            renderSimplePanelEditor();
+        });
+        row.appendChild(check);
+
+        const thumb = document.createElement("div");
+        thumb.className = "simple-editor-thumb";
+        if (item.image || item.icon) {
+            const img = document.createElement("img");
+            img.src = item.image || item.icon;
+            thumb.appendChild(img);
+        } else {
+            thumb.textContent = item.emoji || "💬";
+        }
+        row.appendChild(thumb);
+
+        const text = document.createElement("div");
+        text.className = "simple-editor-text";
+        const name = document.createElement("strong");
+        name.textContent = item.name + (item.custom ? "（任意）" : "");
+        const sentence = document.createElement("small");
+        sentence.textContent = buildSimpleSentence(item);
+        text.append(name, sentence);
+        row.appendChild(text);
+
+        const actions = document.createElement("div");
+        actions.className = "simple-editor-actions";
+        const addAction = (label, title, disabled, handler) => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "ctrl-btn secondary";
+            btn.textContent = label;
+            btn.title = title;
+            btn.disabled = disabled;
+            btn.addEventListener("click", handler);
+            actions.appendChild(btn);
+        };
+        const prev = simpleEditorDraft[index - 1];
+        const next = simpleEditorDraft[index + 1];
+        addAction("▲", "前へ", !entry.enabled || !prev || !prev.enabled, () => {
+            [simpleEditorDraft[index - 1], simpleEditorDraft[index]] = [simpleEditorDraft[index], simpleEditorDraft[index - 1]];
+            renderSimplePanelEditor();
+        });
+        addAction("▼", "後ろへ", !entry.enabled || !next || !next.enabled, () => {
+            [simpleEditorDraft[index + 1], simpleEditorDraft[index]] = [simpleEditorDraft[index], simpleEditorDraft[index + 1]];
+            renderSimplePanelEditor();
+        });
+        if (item.custom) {
+            addAction("削除", "この任意パネルを削除", false, () => {
+                simpleCustomDraft = simpleCustomDraft.filter(p => p.id !== item.id);
+                simpleEditorDraft = simpleEditorDraft.filter(d => d.id !== item.id);
+                renderSimplePanelEditor();
+            });
+        }
+        row.appendChild(actions);
+
+        simplePanelList.appendChild(row);
+    });
+}
+
+let simpleCustomImageData = "";
+
+function resetSimpleCustomForm() {
+    simpleCustomImageData = "";
+    if (simpleCustomNameInput) simpleCustomNameInput.value = "";
+    if (simpleCustomSentenceInput) simpleCustomSentenceInput.value = "";
+    if (simpleCustomEmojiInput) simpleCustomEmojiInput.value = "";
+    if (simpleCustomImageInput) simpleCustomImageInput.value = "";
+    if (simpleCustomImagePreview) {
+        simpleCustomImagePreview.removeAttribute("src");
+        simpleCustomImagePreview.style.display = "none";
+    }
+}
+
+// localStorage を圧迫しないよう、画像は縮小してから保存する
+function readImageAsResizedDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+            const scale = Math.min(1, CUSTOM_IMAGE_MAX_PX / Math.max(img.width, img.height));
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.max(1, Math.round(img.width * scale));
+            canvas.height = Math.max(1, Math.round(img.height * scale));
+            canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+            URL.revokeObjectURL(url);
+            resolve(canvas.toDataURL("image/webp", 0.85));
+        };
+        img.onerror = () => {
+            URL.revokeObjectURL(url);
+            reject(new Error("画像を読み込めませんでした"));
+        };
+        img.src = url;
+    });
+}
+
+function addSimpleCustomPanel() {
+    const name = simpleCustomNameInput?.value.trim() || "";
+    if (!name) {
+        alert("表示名を入力してください。");
+        return;
+    }
+    const sentence = simpleCustomSentenceInput?.value.trim() || "";
+    const emoji = simpleCustomEmojiInput?.value.trim() || "";
+    const panel = {
+        id: `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        name,
+        sentence: sentence || `${name}。`
+    };
+    if (simpleCustomImageData) panel.image = simpleCustomImageData;
+    else if (emoji) panel.emoji = emoji;
+
+    simpleCustomDraft.push(panel);
+    // 追加したパネルは表示中の末尾に入れる
+    const firstDisabled = simpleEditorDraft.findIndex(d => !d.enabled);
+    simpleEditorDraft.splice(firstDisabled === -1 ? simpleEditorDraft.length : firstDisabled, 0, { id: panel.id, enabled: true });
+    resetSimpleCustomForm();
+    renderSimplePanelEditor();
+}
+
+function setAllSimplePanelsEnabled(enabled) {
+    simpleEditorDraft.forEach(d => { d.enabled = enabled; });
+    renderSimplePanelEditor();
+}
+
+function resetSimplePanelSelection() {
+    const baseIds = new Set(getSimpleBasePanels().map(p => p.id));
+    const catalogIds = getSimpleCatalog(simpleCustomDraft).map(p => p.id);
+    simpleEditorDraft = [
+        ...catalogIds.filter(id => baseIds.has(id)).map(id => ({ id, enabled: true })),
+        ...catalogIds.filter(id => !baseIds.has(id)).map(id => ({ id, enabled: false }))
+    ];
+    renderSimplePanelEditor();
+}
+
+// 保存に失敗したら false（画像が多すぎて容量超過など）
+function saveSimplePanelEditor() {
+    const nextConfig = {
+        gridSize: SIMPLE_GRID_SIZES[simpleGridSizeSelect?.value] ? simpleGridSizeSelect.value : simpleConfig.gridSize,
+        panelIds: simpleEditorDraft.filter(d => d.enabled).map(d => d.id),
+        showRest: simpleShowRestInput ? simpleShowRestInput.checked : simpleConfig.showRest,
+        confirmSound: simpleConfirmSoundInput ? simpleConfirmSoundInput.checked : simpleConfig.confirmSound
+    };
+    try {
+        localStorage.setItem(SIMPLE_CUSTOM_PANELS_KEY, JSON.stringify(simpleCustomDraft));
+        localStorage.setItem(SIMPLE_CONFIG_KEY, JSON.stringify(nextConfig));
+    } catch (error) {
+        console.error("simple panel save failed:", error);
+        alert("パネル設定を保存できませんでした。画像付きの任意パネルを減らしてください。");
+        return false;
+    }
+    simpleCustomPanels = simpleCustomDraft.map(p => ({ ...p }));
+    simpleConfig = nextConfig;
+    // 休憩パネルを消したときに休憩中のまま戻れなくならないようにする
+    if (!simpleConfig.showRest) isSimplePaused = false;
+    return true;
 }
 
 // =========================================================
@@ -1552,6 +2034,10 @@ async function prefetchAllAudio() {
             const sentence = (option.sentence || `${option.name}です。`).trim();
             if (sentence) phrases.push(sentence);
         });
+    });
+
+    getSimpleCatalog().forEach(panel => {
+        phrases.push(buildSimpleSentence(panel));
     });
 
     Object.values(mouseClickSpeech).forEach(p => {
@@ -2212,6 +2698,10 @@ function triggerClick() {
     const activeBtn = document.querySelector(".h-btn.hover");
     if (activeBtn && !activeBtn.classList.contains("h-btn--empty")) {
         const targetKey = `${activeBtn.dataset.row}|${activeBtn.dataset.name}`;
+        if (isSimpleClickBlocked(targetKey)) {
+            logClickDebug("click_blocked_simple_paused", { targetKey });
+            return false;
+        }
 
         if (pendingClickTimer) {
             logClickDebug("click_pending_replaced", { replacedTargetKey: pendingClickTargetKey, newTargetKey: targetKey });
@@ -2641,6 +3131,19 @@ const yawGainSlider = document.getElementById("yaw-gain-slider");
 const iconStyleSelect = document.getElementById("icon-style-select");
 const modeSelect = document.getElementById("mode-select");
 const dwellTimeSelect = document.getElementById("dwell-time-select");
+const simpleGridSizeSelect = document.getElementById("simple-grid-size-select");
+const simpleShowRestInput = document.getElementById("simple-show-rest-input");
+const simpleConfirmSoundInput = document.getElementById("simple-confirm-sound-input");
+const simplePanelList = document.getElementById("simple-panel-list");
+const simplePanelSummary = document.getElementById("simple-panel-summary");
+const simpleCustomNameInput = document.getElementById("simple-custom-name-input");
+const simpleCustomSentenceInput = document.getElementById("simple-custom-sentence-input");
+const simpleCustomEmojiInput = document.getElementById("simple-custom-emoji-input");
+const simpleCustomImageInput = document.getElementById("simple-custom-image-input");
+const simpleCustomImagePreview = document.getElementById("simple-custom-image-preview");
+const simpleCustomAddBtn = document.getElementById("simple-custom-add-btn");
+const settingsTabButtons = document.querySelectorAll(".settings-tab-btn");
+const settingsTabContents = document.querySelectorAll(".settings-tab-content");
 const jawOpenThresholdValue = document.getElementById("jaw-open-threshold-value");
 const noseGainValue = document.getElementById("nose-gain-value");
 const yawGainValue = document.getElementById("yaw-gain-value");
@@ -2833,6 +3336,7 @@ settingsBtn.addEventListener("click", () => {
     if (iconStyleSelect) iconStyleSelect.value = iconStyle;
     if (modeSelect) modeSelect.value = appMode;
     if (dwellTimeSelect) dwellTimeSelect.value = String(dwellTimeMs);
+    openSimplePanelEditor();
     if (mouseLeftInput) mouseLeftInput.value = mouseClickSpeech.left;
     if (mouseMiddleInput) mouseMiddleInput.value = mouseClickSpeech.middle;
     if (mouseRightInput) mouseRightInput.value = mouseClickSpeech.right;
@@ -2845,6 +3349,8 @@ closeSettingsBtn.addEventListener("click", () => {
 });
 
 saveSettingsBtn.addEventListener("click", () => {
+    if (!saveSimplePanelEditor()) return;
+
     const newKey = apiKeyInput.value.trim();
     GEMINI_API_KEY = newKey;
     geminiAuthBlocked = false;
@@ -2873,6 +3379,40 @@ saveSettingsBtn.addEventListener("click", () => {
     if (modeSelect) setAppMode(modeSelect.value);
     settingsModal.classList.remove("active");
 });
+
+function activateSettingsTab(tabId) {
+    settingsTabButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tabId));
+    settingsTabContents.forEach(content => content.classList.toggle("active", content.id === tabId));
+}
+
+settingsTabButtons.forEach(btn => {
+    btn.addEventListener("click", () => activateSettingsTab(btn.dataset.tab));
+});
+
+if (simpleGridSizeSelect) simpleGridSizeSelect.addEventListener("change", renderSimplePanelEditor);
+if (simpleCustomAddBtn) simpleCustomAddBtn.addEventListener("click", addSimpleCustomPanel);
+document.getElementById("simple-enable-all-btn")?.addEventListener("click", () => setAllSimplePanelsEnabled(true));
+document.getElementById("simple-disable-all-btn")?.addEventListener("click", () => setAllSimplePanelsEnabled(false));
+document.getElementById("simple-reset-panels-btn")?.addEventListener("click", resetSimplePanelSelection);
+
+if (simpleCustomImageInput) {
+    simpleCustomImageInput.addEventListener("change", async () => {
+        const file = simpleCustomImageInput.files?.[0];
+        simpleCustomImageData = "";
+        if (simpleCustomImagePreview) simpleCustomImagePreview.style.display = "none";
+        if (!file) return;
+        try {
+            simpleCustomImageData = await readImageAsResizedDataUrl(file);
+            if (simpleCustomImagePreview) {
+                simpleCustomImagePreview.src = simpleCustomImageData;
+                simpleCustomImagePreview.style.display = "";
+            }
+        } catch (error) {
+            alert(error.message);
+            simpleCustomImageInput.value = "";
+        }
+    });
+}
 
 settingsModal.addEventListener("click", (e) => {
     if (e.target === settingsModal) {
