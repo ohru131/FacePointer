@@ -2163,12 +2163,6 @@ body.calib-active #dwell-indicator {
     text-overflow: ellipsis;
 }
 
-.simple-message-placeholder {
-    font-size: clamp(1rem, 1.8vw, 1.4rem);
-    font-weight: 700;
-    color: #94a3b8;
-}
-
 .simple-message-chip {
     flex: 0 0 auto;
     padding: 0.3rem 0.9rem;
@@ -2178,14 +2172,6 @@ body.calib-active #dwell-indicator {
     font-size: clamp(1.2rem, 2.6vw, 2.2rem);
     font-weight: 900;
     color: var(--text);
-}
-
-.simple-message-count {
-    margin-left: auto;
-    flex: 0 0 auto;
-    font-size: 0.95rem;
-    font-weight: 700;
-    color: var(--text-dim);
 }
 
 /* 押しても何も起きない操作ボタン（ためた文が空の「話す」など） */
@@ -2597,7 +2583,7 @@ body.settings-open #dwell-indicator {
     color: var(--text-dim);
 }
 
-/* 追加できるパネル / 文づくりの言葉: 小さなタイルを並べる（スクロールは設定画面全体の1本だけ） */
+/* 追加できるパネル: 小さなタイルを並べる（スクロールは設定画面全体の1本だけ） */
 .layout-palette {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));

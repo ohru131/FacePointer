@@ -8,7 +8,7 @@ export const TALK_TREE = [
     { id: "greet-morning", label: "おはよう", emoji: "🌅", time: "morning", say: "{呼}、おはよう。", children: [
       { id: "greet-morning-sleep", label: "よく眠れた？", emoji: "😴", say: "{呼}、昨日はよく眠れた？" },
       { id: "greet-morning-today", label: "今日もよろしく", emoji: "🙌", say: "今日もよろしくね。" },
-      { id: "greet-morning-early", label: "朝早いね", emoji: "⏰", say: "{呼}、朝早くから来てくれたんだね。ありがとう。" },
+      { id: "greet-morning-early", label: "朝早いね", emoji: "⏰", for: ["father", "mother", "sister", "brother"], say: "{呼}、朝早くから来てくれたんだね。ありがとう。" },
     ]},
     { id: "greet-day", label: "こんにちは", emoji: "☀️", time: "day", say: "{呼}、こんにちは。", children: [
       { id: "greet-day-rest", label: "休めてる？", emoji: "🍵", say: "{呼}、ちゃんと休めてる？" },
@@ -80,7 +80,7 @@ export const TALK_TREE = [
         { id: "feel-down-lonely-hand", label: "手を握って", emoji: "🤝", say: "{呼}、そばにいて、手を握ってくれる？" },
         { id: "feel-down-lonely-little", label: "少しだけ", emoji: "🕯️", say: "{呼}、少しだけでいいから、ここにいてくれる？" },
         { id: "feel-down-lonely-talk", label: "話したい", emoji: "💭", say: "{呼}、ちょっとおしゃべりしたい気分なんだ。" },
-        { id: "feel-down-lonely-visit", label: "また来てね", emoji: "🏠", say: "{呼}、また来てくれたらうれしいな。" },
+        { id: "feel-down-lonely-visit", label: "また来てね", emoji: "🏠", for: ["father", "mother", "sister", "brother"], say: "{呼}、また来てくれたらうれしいな。" },
       ]},
       { id: "feel-down-anxious", label: "不安なの", emoji: "😟", say: "ちょっと不安な気持ちなんだ。", children: [
         { id: "feel-down-anxious-listen", label: "話を聞いて", emoji: "👂", say: "{呼}、不安なこと、聞いてくれる？" },
@@ -143,11 +143,11 @@ export const TALK_TREE = [
         { id: "ask-life-recent-new", label: "新しいこと", emoji: "🆕", say: "{呼}、最近なにか新しく始めたことはある？" },
         { id: "ask-life-recent-busy", label: "忙しい？", emoji: "🌀", say: "{呼}、最近バタバタしてない？" },
       ]},
-      { id: "ask-life-family", label: "みんな元気？", emoji: "👨‍👩‍👧‍👦", say: "{呼}、家のみんなは元気にしてる？", children: [
-        { id: "ask-life-family-father", label: "お父さんは？", emoji: "👨", for: ["mother", "sister", "brother", "nurse"], say: "お父さんは元気にしてる？" },
-        { id: "ask-life-family-mother", label: "お母さんは？", emoji: "👩", for: ["father", "sister", "brother", "nurse"], say: "お母さんは元気にしてる？" },
-        { id: "ask-life-family-sister", label: "お姉ちゃんは？", emoji: "👧", for: ["father", "mother", "brother", "nurse"], say: "お姉ちゃんは元気にしてる？" },
-        { id: "ask-life-family-brother", label: "お兄ちゃんは？", emoji: "👦", for: ["father", "mother", "sister", "nurse"], say: "お兄ちゃんは元気にしてる？" },
+      { id: "ask-life-family", label: "みんな元気？", emoji: "👨‍👩‍👧‍👦", for: ["father", "mother", "sister", "brother"], say: "{呼}、家のみんなは元気にしてる？", children: [
+        { id: "ask-life-family-father", label: "お父さんは？", emoji: "👨", for: ["mother", "sister", "brother"], say: "お父さんは元気にしてる？" },
+        { id: "ask-life-family-mother", label: "お母さんは？", emoji: "👩", for: ["father", "sister", "brother"], say: "お母さんは元気にしてる？" },
+        { id: "ask-life-family-sister", label: "お姉ちゃんは？", emoji: "👧", for: ["father", "mother", "brother"], say: "お姉ちゃんは元気にしてる？" },
+        { id: "ask-life-family-brother", label: "お兄ちゃんは？", emoji: "👦", for: ["father", "mother", "sister"], say: "お兄ちゃんは元気にしてる？" },
       ]},
       { id: "ask-life-funny", label: "面白い話", emoji: "😂", say: "{呼}、なにか面白い話ない？ 聞きたいな。" },
       { id: "ask-life-home", label: "家の様子", emoji: "🏠", say: "{呼}、最近の家の様子、教えてくれる？" },
@@ -291,7 +291,7 @@ export const TALK_TREE = [
   ]},
 
   { id: "memory", label: "思い出・家族", emoji: "📷", children: [
-    { id: "memory-child", label: "子どものころ", emoji: "🧒", say: "{呼}、子どものころの話しようよ。", children: [
+    { id: "memory-child", label: "子どものころ", emoji: "🧒", for: ["father", "mother", "sister", "brother"], say: "{呼}、子どものころの話しようよ。", children: [
       { id: "memory-child-play", label: "よく遊んだね", emoji: "🛝", say: "{呼}、子どものころ、よく遊んだよね。" },
       { id: "memory-child-school", label: "学校の思い出", emoji: "🎒", say: "{呼}、学校のころのこと、覚えてる？" },
       { id: "memory-child-funny", label: "おかしな話", emoji: "🤭", say: "子どものころの、おかしな話を思い出したよ。", children: [
@@ -301,7 +301,7 @@ export const TALK_TREE = [
       ]},
       { id: "memory-child-snack", label: "おやつの味", emoji: "🍪", say: "子どものころのおやつ、なつかしいなあ。覚えてる？" },
     ]},
-    { id: "memory-trip", label: "家族旅行", emoji: "🧳", say: "{呼}、家族で行った旅行の話しようよ。", children: [
+    { id: "memory-trip", label: "家族旅行", emoji: "🧳", for: ["father", "mother", "sister", "brother"], say: "{呼}、家族で行った旅行の話しようよ。", children: [
       { id: "memory-trip-where", label: "どこ行った？", emoji: "🗺️", say: "{呼}、あのとき、どこに行ったんだっけ？" },
       { id: "memory-trip-fun", label: "楽しかった", emoji: "🎡", say: "家族みんなで行った旅行、楽しかったね。" },
       { id: "memory-trip-again", label: "また行きたい", emoji: "🚃", say: "また、みんなでどこか行きたいな。", children: [
@@ -323,7 +323,7 @@ export const TALK_TREE = [
       ]},
     ]},
     { id: "memory-home", label: "実家・昔の家", emoji: "🏠", children: [
-      { id: "memory-home-old", label: "昔の家", emoji: "🏡", say: "{呼}、昔の家のこと、思い出すなあ。" },
+      { id: "memory-home-old", label: "昔の家", emoji: "🏡", for: ["father", "mother", "sister", "brother"], say: "{呼}、昔の家のこと、思い出すなあ。" },
       { id: "memory-home-room", label: "自分の部屋", emoji: "🛏️", say: "子どものころの自分の部屋、なつかしいな。" },
       { id: "memory-home-town", label: "町の景色", emoji: "🏘️", say: "{呼}、住んでた町の景色、今はどうなってるのかな。" },
       { id: "memory-home-mother", label: "母の料理", emoji: "🍳", say: "お母さんの料理の思い出、話してもいい？", children: [
@@ -333,7 +333,7 @@ export const TALK_TREE = [
       ]},
       { id: "memory-home-father", label: "父の思い出", emoji: "🧓", say: "お父さんとの思い出も、たくさんあるよね。" },
     ]},
-    { id: "memory-gather", label: "みんなで", emoji: "🎊", children: [
+    { id: "memory-gather", label: "みんなで", emoji: "🎊", for: ["father", "mother", "sister", "brother"], children: [
       { id: "memory-gather-all", label: "集まりたい", emoji: "👨‍👩‍👧‍👦", say: "{呼}、またみんなで集まりたいな。" },
       { id: "memory-gather-when", label: "いつ会える？", emoji: "📅", say: "{呼}、次はみんな、いつ会えそうかな？" },
       { id: "memory-gather-video", label: "ビデオ通話", emoji: "📹", say: "みんなが集まれないときは、ビデオ通話でもいいね。" },
@@ -393,10 +393,10 @@ export const TALK_TREE = [
     ]},
     { id: "wish-care", label: "体のこと", emoji: "🛟", children: [
       { id: "wish-care-pos", label: "体勢を変えて", emoji: "🔄", say: "{呼}、体勢を変えてほしいな。" },
-      { id: "wish-care-hot", label: "暑い", emoji: "🥵", say: "{呼}、ちょっと暑いから、調整してくれる？" },
-      { id: "wish-care-cold", label: "寒い", emoji: "🥶", say: "{呼}、ちょっと寒いから、あたたかくしてくれる？" },
+      { id: "wish-care-temp", label: "温度を調整", emoji: "🌡️", say: "{呼}、部屋の温度を調整してくれる？" },
       { id: "wish-care-itch", label: "かゆい", emoji: "😣", say: "{呼}、ちょっとかゆいところがあるから、見てくれる？" },
-      { id: "wish-care-suction", label: "痰が気になる", emoji: "🩺", for: ["father", "mother", "sister", "brother"], say: "{呼}、のどのあたりが苦しいから、看護師さんを呼んでくれる？" },
+      { id: "wish-care-suction", label: "痰が気になる", emoji: "🩺", for: ["father", "mother", "sister", "brother"], say: "{呼}、痰が気になるから、看護師さんを呼んでくれる？" },
+      { id: "wish-care-suction-nurse", label: "痰を取って", emoji: "🩺", for: ["nurse"], say: "看護師さん、痰を吸引してもらえますか？" },
     ]},
   ]},
 ];

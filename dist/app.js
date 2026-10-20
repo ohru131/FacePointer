@@ -1633,6 +1633,7 @@ let talkHistory = loadTalkHistory();
 let talkTab = TALK_TAB_TREE;
 let talkPath = [];          // たどった木のノード（話題 → 内容 → …）
 let talkPartnerId = "";     // 来ている人。呼び名と話題の絞り込みに使う
+let talkFavoriteOrder = null; // 「よく話す」タブを開いている間の並び
 
 function getTalkTree(custom = talkCustom) {
     if (custom.length === 0) return TALK_TREE;
@@ -1678,11 +1679,28 @@ function getTalkCurrentSentence() {
     return node?.say ? resolveTalkSentence(node.say) : "";
 }
 
-function getFavoriteTalkSentences() {
+// 文ごとに変わらないid（並び順が変わっても、ポインタの下のパネルが別の文にすり替わらない）
+function getTalkSentenceId(sentence) {
+    let hash = 0;
+    for (const ch of sentence) hash = (hash * 31 + ch.codePointAt(0)) >>> 0;
+    return `talk-fav-${hash.toString(36)}`;
+}
+
+// 履歴は「{呼}、」を残した形で覚え、出すときに今の相手の呼び名を入れる
+function getFavoriteTalkTemplates() {
     return Object.entries(talkHistory.sentences)
         .sort((a, b) => (b[1].count - a[1].count) || (b[1].at - a[1].at))
         .slice(0, TALK_FAVORITE_LIMIT)
-        .map(([sentence], i) => ({ id: `talk-fav-${i}`, type: "phrase", name: sentence, sentence }));
+        .map(([template]) => template);
+}
+
+function getFavoriteTalkSentences() {
+    // タブを開いている間は並びを固定する（話すたびに入れ替わると選び直しになる）
+    const templates = talkFavoriteOrder || getFavoriteTalkTemplates();
+    return templates.map((template) => {
+        const sentence = resolveTalkSentence(template);
+        return { id: getTalkSentenceId(template), type: "phrase", name: sentence, template };
+    });
 }
 
 function getTalkPanels() {
@@ -1699,7 +1717,9 @@ function getTalkPanels() {
         }));
     }
     const node = getTalkCurrentNode();
-    const panels = getTalkChildren(node).map(child => ({
+    // 発話文がなく、続きも全部隠れた言葉は出さない（選んでも話せないため）
+    const children = getTalkChildren(node).filter(child => child.say || getTalkChildren(child).length > 0);
+    const panels = children.map(child => ({
         id: child.id,
         type: getTalkChildren(child).length > 0 ? "branch" : "leaf",
         name: child.label,
@@ -1728,17 +1748,23 @@ function refreshTalkScreen() {
     dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
 }
 
+// お話タブ中にもう一度お話を選んだら最初の話題へ。相づちなどから戻ったときは、たどっていた場所を保つ
 function goToTalkTab(tab) {
-    if (talkTab === tab && simplePage === 0 && (tab !== TALK_TAB_TREE || talkPath.length === 0)) return;
+    if (tab === TALK_TAB_TREE && talkTab === TALK_TAB_TREE) {
+        if (talkPath.length === 0 && simplePage === 0) return;
+        talkPath = [];
+    } else if (talkTab === tab && simplePage === 0) {
+        return;
+    }
     talkTab = tab;
-    if (tab === TALK_TAB_TREE) talkPath = [];
+    talkFavoriteOrder = tab === TALK_TAB_FAVORITE ? getFavoriteTalkTemplates() : null;
     refreshTalkScreen();
 }
 
-function recordTalkHistory(sentence) {
-    if (!talkConfig.learn || !sentence) return;
-    const entry = talkHistory.sentences[sentence] || { count: 0, at: 0 };
-    talkHistory.sentences[sentence] = { count: entry.count + 1, at: Date.now() };
+function recordTalkHistory(template) {
+    if (!talkConfig.learn || !template) return;
+    const entry = talkHistory.sentences[template] || { count: 0, at: 0 };
+    talkHistory.sentences[template] = { count: entry.count + 1, at: Date.now() };
     // よく話す文は上位だけ残す
     const kept = Object.entries(talkHistory.sentences)
         .sort((a, b) => (b[1].count - a[1].count) || (b[1].at - a[1].at))
@@ -1753,13 +1779,16 @@ function recordTalkHistory(sentence) {
 
 function clearTalkHistory() {
     talkHistory = { sentences: {} };
+    talkFavoriteOrder = null;
     localStorage.removeItem(TALK_HISTORY_KEY);
 }
 
 // 話したら、お話は最初の話題選びへ戻る（相づち・よく話すは続けて選べるようそのまま）
-function speakTalkSentence(sentence) {
+// template は「{呼}、」を含む元の文。相づちは「よく話す」を埋めてしまうので記録しない
+function speakTalkSentence(template, { record = true } = {}) {
+    const sentence = template ? resolveTalkSentence(template) : "";
     if (!sentence) return;
-    recordTalkHistory(sentence);
+    if (record) recordTalkHistory(template);
     if (talkTab === TALK_TAB_TREE) {
         talkPath = [];
         refreshTalkScreen();
@@ -1772,24 +1801,31 @@ function handleTalkPanel(item) {
     if (isConfirmInProgress || isSimplePaused) return;
     lockSimpleKeyAfterConfirm(getSimpleRowKey(item.id));
 
-    if (item.type === "aizuchi" || item.type === "phrase") {
-        speakTalkSentence(item.sentence);
+    if (item.type === "aizuchi") {
+        speakTalkSentence(item.sentence, { record: false });
+        return;
+    }
+    if (item.type === "phrase") {
+        speakTalkSentence(item.template);
         return;
     }
     if (item.partnerId !== undefined) {
         talkPartnerId = item.partnerId;
+        // 相手が変わると出る話題も変わるので、最初の話題選びから
+        talkPath = [];
+        talkTab = TALK_TAB_TREE;
         playConfirmSound();
-        goToTalkTab(TALK_TAB_TREE);
+        refreshTalkScreen();
         rerenderSimpleMode();
         return;
     }
     if (item.id === TALK_SAY_ID) {
-        speakTalkSentence(getTalkCurrentSentence());
+        speakTalkSentence(getTalkCurrentNode()?.say);
         return;
     }
     // 続きのない言葉はそのまま話す。続きがあれば1段進む
     if (item.type === "leaf") {
-        speakTalkSentence(resolveTalkSentence(item.node.say || item.node.label));
+        speakTalkSentence(item.node.say);
         return;
     }
     talkPath.push(item.node);
@@ -1817,11 +1853,18 @@ function getSimpleLayout() {
         : n <= 9 ? { cols: 3, rows: 3 }
         : n <= 12 ? { cols: 4, rows: 3 }
         : { cols: 4, rows: 4 };
-    return {
-        cols: Math.min(auto.cols, userSize.cols),
-        rows: Math.min(auto.rows, userSize.rows),
-        panels
-    };
+    const cols = Math.min(auto.cols, userSize.cols);
+    const rows = Math.min(auto.rows, userSize.rows);
+    return { cols, rows, panels: repeatTalkSayPanel(panels, cols * rows) };
+}
+
+// 「これで話す」は複数ページになっても各ページの先頭に置く（どのページからでも確定できる）
+function repeatTalkSayPanel(panels, pageSize) {
+    if (panels[0]?.id !== TALK_SAY_ID || panels.length <= pageSize || pageSize < 2) return panels;
+    const [say, ...rest] = panels;
+    const paged = [];
+    for (let i = 0; i < rest.length; i += pageSize - 1) paged.push(say, ...rest.slice(i, i + pageSize - 1));
+    return paged;
 }
 
 function renderSimpleMessage() {
@@ -2211,6 +2254,7 @@ function setAppMode(mode) {
     simplePage = 0;
     talkTab = TALK_TAB_TREE;
     talkPath = [];
+    talkFavoriteOrder = null;
     // 質問中に切り替えたら質問は終える（終了後に古いページへ戻らないようにする）
     activeQuestion = null;
     pageBeforeQuestion = 0;
