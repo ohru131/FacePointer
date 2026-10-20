@@ -60,9 +60,9 @@ npm run tauri build
 - `Cloud TTS: ja-JP-...` : Google Cloud Text-to-Speech の日本語音声 (既定: `ja-JP-Neural2-B`)
 - `Gemini: ...-tts` : Gemini API の TTS モデル。「Gemini 話者」で声 (既定: Zephyr)、「Gemini 口調指示」で話し方 (既定: 明るく、はきはきした女性の声) を変更可
 
-- `ブラウザ内蔵の音声` : 無料・通信なし・遅延なし（Edge では「Nanami」など自然な声）。前もって作る必要なし
+- `ブラウザ内蔵の音声` : 無料・通信なし・遅延なし。前もって作る必要なし（Web版を Edge で開くと「Nanami」など自然な声。デスクトップ版は Windows に入っている日本語の声）
 - `VOICEVOX: 話者（スタイル）` : 無料の音声合成ソフト [VOICEVOX](https://voicevox.hiroshiba.jp/) をこのPCで起動して使う。「VOICEVOX」欄の「話者を取得」で一覧に追加
-  - Web版・デスクトップ版から使うには、VOICEVOX の設定（`http://127.0.0.1:50021/setting`）の Allow Origin に `https://ohru131.github.io` と `http://tauri.localhost` を追加
+  - Web版・デスクトップ版から使うには、VOICEVOX の設定（`http://127.0.0.1:50021/setting`）の Allow Origin に `https://ohru131.github.io` と `http://tauri.localhost` を追加し、VOICEVOX を再起動（Safari からは使えません。デスクトップ版での接続は実機で要確認）
   - VOICEVOX で作った音声を公開するときは「VOICEVOX:キャラ名」のクレジット表記が必要（設定画面に表示）
 
 取得した一覧はブラウザに保存されます。Cloud TTS / VOICEVOX に変えて保存すると、まだ音声にしていない文の音声を裏で作り始めます（作成中も普通に話せます）。
@@ -70,7 +70,7 @@ npm run tauri build
 ### 遅延なく話す・オフラインでの利用（重要）
 1. 画面右上の ⚙（介助者メニュー）にある **「音声データを作成」** をクリックします。
 2. 症状モード・シンプルモード・質問・お話モードの全文（呼び名ごとの言い回し・相づちも含む）のうち、まだ音声にしていない文だけを作り、ブラウザ (IndexedDB) に保存します。
-3. 保存済みの文は通信なしですぐに再生されます。**オフライン（病院内などネットがない場所）でも** そのまま使えます。
+3. 保存済みの文は通信なしですぐに再生されます（VOICEVOX の音声も保存されるので、保存済みの文は VOICEVOX を起動していなくても話せます）。**オフライン（病院内などネットがない場所）でも** そのまま使えます。
 4. AIで会話パターンを作ったときも、その文の音声を自動で作ります（Gemini TTS 選択時を除く）。
 5. 設定 →「音声」→「音声を消去」で保存した音声を消せます。
 

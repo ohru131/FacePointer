@@ -461,7 +461,7 @@
                                 <small id="tts-model-status"></small>
                                 <small id="tts-credit-note" class="tts-credit-note"></small>
                                 <p class="settings-help">
-                                    <b>ブラウザ内蔵</b>: 無料・通信なし・遅延なし（Edge では「Nanami」など自然な声）。
+                                    <b>ブラウザ内蔵</b>: 無料・通信なし・遅延なし（Web版を Edge で開くと「Nanami」など自然な声。デスクトップ版は Windows に入っている日本語の声）。
                                     <b>VOICEVOX</b>: 無料・PC内で合成（下で話者を取得）。
                                     <b>Cloud TTS</b>: 無料枠内でほぼ無料。前もって作れば遅延なし。
                                     <b>Gemini</b>: 高品質だが1文数秒かかり回数制限あり。
@@ -473,7 +473,7 @@
                                     <button id="voicevox-fetch-btn" class="ctrl-btn secondary" type="button">話者を取得</button>
                                 </div>
                                 <small id="voicevox-status" aria-live="polite"></small>
-                                <p class="settings-help">このPCで VOICEVOX を起動してから「話者を取得」を押すと、TTSモデルの一覧に話者が増えます。Web版（github.io）やデスクトップ版から使うには、VOICEVOX の設定（ブラウザで http://127.0.0.1:50021/setting）の「Allow Origin」に <code>https://ohru131.github.io</code> と <code>http://tauri.localhost</code> を追加してください。ブラウザが「ローカルネットワークへのアクセス」を確認してきたら許可します。</p>
+                                <p class="settings-help">このPCで VOICEVOX を起動してから「話者を取得」を押すと、TTSモデルの一覧に話者が増えます。Web版（github.io）やデスクトップ版から使うには、VOICEVOX の設定（ブラウザで http://127.0.0.1:50021/setting）の「Allow Origin」に <code>https://ohru131.github.io</code> と <code>http://tauri.localhost</code> を追加し、VOICEVOX を再起動してください。ブラウザが「ローカルネットワークへのアクセス」を確認してきたら許可します（Safari からは使えません）。</p>
                                 <h4><label for="gemini-voice-select">Gemini 話者（Geminiモデル選択時）</label></h4>
                                 <select id="gemini-voice-select"></select>
                                 <h4><label for="gemini-style-input">Gemini 口調指示</label></h4>
@@ -487,7 +487,7 @@
                             <section class="settings-section">
                                 <h4>前もって作った音声</h4>
                                 <div class="settings-section-head">
-                                    <span id="audio-cache-clear-status" class="settings-help">音声・話者・口調ごとに保存されます。容量が気になるときは消去できます。</span>
+                                    <span class="settings-help">音声・話者・口調ごとに保存されます。容量が気になるときは消去できます。<b id="audio-cache-clear-result"></b></span>
                                     <button id="audio-cache-clear-btn" class="ctrl-btn secondary" type="button">音声を消去</button>
                                 </div>
                             </section>
