@@ -134,6 +134,8 @@ const SYMPTOM_FLOW_DIRECT = "direct";
 const APP_MODE_KEY = "app_mode";
 const APP_MODE_SYMPTOM = "symptom";
 const APP_MODE_SIMPLE = "simple";
+const APP_MODE_COMPOSE = "compose";
+const APP_MODES = [APP_MODE_SYMPTOM, APP_MODE_SIMPLE, APP_MODE_COMPOSE];
 const SIMPLE_ROW_ID = "s";
 const SIMPLE_CONFIRM_DISPLAY_MS = 2200;
 // 滞留(dwell)選択: 同じパネル上でしばらく動かなければ確定する
@@ -233,7 +235,7 @@ let jawOpenThreshold = readStoredNumber(JAW_OPEN_THRESHOLD_KEY, JAW_OPEN_THRESHO
 let noseGain = readStoredNumber(NOSE_GAIN_KEY, NOSE_GAIN_DEFAULT, 0, NOSE_GAIN_MAX);
 let yawGain = readStoredNumber(YAW_GAIN_KEY, YAW_GAIN_DEFAULT, 0, YAW_GAIN_MAX);
 let iconStyle = localStorage.getItem(ICON_STYLE_KEY) || ICON_STYLE_DEFAULT;
-let appMode = localStorage.getItem(APP_MODE_KEY) === APP_MODE_SIMPLE ? APP_MODE_SIMPLE : APP_MODE_SYMPTOM;
+let appMode = APP_MODES.includes(localStorage.getItem(APP_MODE_KEY)) ? localStorage.getItem(APP_MODE_KEY) : APP_MODE_SYMPTOM;
 let dwellTimeMs = readStoredNumber(DWELL_TIME_KEY, DWELL_TIME_DEFAULT_MS, 0, DWELL_TIME_MAX_MS); // 0 = 滞留確定OFF
 
 // Dwell state
@@ -248,8 +250,18 @@ let dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
 // 介助者が出した質問への回答中（モードに関係なくパネル選択画面になる）
 let activeQuestion = null;
 
+// パネルを縦横に選ぶ画面（シンプル・文づくり・質問への回答）かどうか
 function isSimpleMode() {
-    return appMode === APP_MODE_SIMPLE || activeQuestion !== null;
+    return appMode !== APP_MODE_SYMPTOM || activeQuestion !== null;
+}
+
+function isComposeScreen() {
+    return appMode === APP_MODE_COMPOSE && activeQuestion === null;
+}
+
+// 設定画面を開いている間は、確定・発話などの機能を止める
+function isSettingsOpen() {
+    return document.getElementById("settings-modal")?.classList.contains("active") ?? false;
 }
 
 // Symptom state
@@ -1316,7 +1328,6 @@ function defaultSimpleConfig() {
         panelIds: getSimpleBasePanels().map(p => p.id),
         showRest: true,
         confirmSound: true,
-        composeMode: false,
         dwellOverrides: {}
     };
 }
@@ -1341,7 +1352,6 @@ function loadSimpleConfig() {
             panelIds: Array.isArray(parsed.panelIds) ? parsed.panelIds.filter(id => typeof id === "string") : fallback.panelIds,
             showRest: parsed.showRest !== false,
             confirmSound: parsed.confirmSound !== false,
-            composeMode: parsed.composeMode === true,
             dwellOverrides: sanitizeDwellOverrides(parsed.dwellOverrides)
         };
     } catch {
@@ -1410,12 +1420,159 @@ function createSimpleButton(id, label, options = {}) {
     return btn;
 }
 
+// =========================================================
+// 文づくりモード
+// 「どこ / だれ / どうした / してほしい」から語句を選ぶと、助詞を補って文にする
+//   例: 頭 + とても + 痛い → 「頭がとても痛いです。」 / お母さん + 会いたい → 「お母さんに会いたいです。」
+// type: noun(名詞) / adv(程度・時) / pred(様子・動作。particle は直前の名詞に付ける助詞)
+// =========================================================
+const COMPOSE_CONFIG_KEY = "compose_config_v1";
+const COMPOSE_CUSTOM_KEY = "compose_custom_v1";
+const COMPOSE_TAB_PREFIX = "ctrl-tab-";
+// next: その分類の語句を選んだら自動で切り替えるタブ
+const COMPOSE_CATEGORIES = [
+    { key: "where", label: "どこ", icon: "📍", next: "state" },
+    { key: "who", label: "だれ", icon: "👤", next: "request" },
+    { key: "state", label: "どうした", icon: "💭", next: null },
+    { key: "request", label: "してほしい", icon: "🙏", next: null }
+];
+const COMPOSE_PRESET_WORDS = [
+    { id: "w-head", cat: "where", type: "noun", name: "頭", icon: "media/body-head.png" },
+    { id: "w-neck", cat: "where", type: "noun", name: "首" },
+    { id: "w-shoulder", cat: "where", type: "noun", name: "肩" },
+    { id: "w-chest", cat: "where", type: "noun", name: "胸" },
+    { id: "w-belly", cat: "where", type: "noun", name: "お腹" },
+    { id: "w-back", cat: "where", type: "noun", name: "背中" },
+    { id: "w-waist", cat: "where", type: "noun", name: "腰" },
+    { id: "w-hand", cat: "where", type: "noun", name: "手", icon: "media/body-hand.png" },
+    { id: "w-leg", cat: "where", type: "noun", name: "足", icon: "media/body-leg.png" },
+    { id: "w-throat", cat: "where", type: "noun", name: "のど" },
+    { id: "w-trach", cat: "where", type: "noun", name: "気切" },
+    { id: "w-hip", cat: "where", type: "noun", name: "おしり" },
+    { id: "w-eye", cat: "where", type: "noun", name: "目" },
+    { id: "w-mouth", cat: "where", type: "noun", name: "口" },
+    { id: "w-body", cat: "where", type: "noun", name: "体", icon: "media/body-body.png" },
+    { id: "w-mother", cat: "who", type: "noun", name: "お母さん", emoji: "👩" },
+    { id: "w-father", cat: "who", type: "noun", name: "お父さん", emoji: "👨" },
+    { id: "w-sister", cat: "who", type: "noun", name: "お姉ちゃん", emoji: "👱‍♀️" },
+    { id: "w-brother", cat: "who", type: "noun", name: "お兄ちゃん", emoji: "🧑" },
+    { id: "w-nurse", cat: "who", type: "noun", name: "看護師さん", emoji: "👩‍⚕️" },
+    { id: "w-doctor", cat: "who", type: "noun", name: "先生", emoji: "🩺" },
+    { id: "w-family", cat: "who", type: "noun", name: "家族", emoji: "🏠" },
+    { id: "w-friend", cat: "who", type: "noun", name: "友だち", emoji: "👭" },
+    { id: "w-little", cat: "state", type: "adv", name: "少し", emoji: "🤏" },
+    { id: "w-very", cat: "state", type: "adv", name: "とても", emoji: "‼️" },
+    { id: "w-always", cat: "state", type: "adv", name: "ずっと", emoji: "⏳" },
+    { id: "w-since", cat: "state", type: "adv", name: "さっきから", emoji: "🕐" },
+    { id: "w-pain", cat: "state", type: "pred", name: "痛い", text: "痛いです。", particle: "が", icon: "media/symptom-pain.png" },
+    { id: "w-itch", cat: "state", type: "pred", name: "かゆい", text: "かゆいです。", particle: "が", icon: "media/symptom-itch.png" },
+    { id: "w-numb", cat: "state", type: "pred", name: "しびれる", text: "しびれます。", particle: "が", emoji: "⚡" },
+    { id: "w-hard", cat: "state", type: "pred", name: "苦しい", text: "苦しいです。", particle: "が", emoji: "😮‍💨" },
+    { id: "w-heavy", cat: "state", type: "pred", name: "重い", text: "重いです。", particle: "が", emoji: "🪨" },
+    { id: "w-hot", cat: "state", type: "pred", name: "熱い", text: "熱いです。", particle: "が", icon: "media/symptom-hot.png" },
+    { id: "w-cold", cat: "state", type: "pred", name: "冷たい", text: "冷たいです。", particle: "が", icon: "media/symptom-cold.png" },
+    { id: "w-sick", cat: "state", type: "pred", name: "気持ち悪い", text: "気持ち悪いです。", particle: "が", icon: "media/symptom-feel.png" },
+    { id: "w-now", cat: "request", type: "adv", name: "今すぐ", emoji: "⚡" },
+    { id: "w-later", cat: "request", type: "adv", name: "あとで", emoji: "⏰" },
+    { id: "w-rub", cat: "request", type: "pred", name: "さすって", text: "さすってください。", particle: "を", emoji: "🤲" },
+    { id: "w-scratch", cat: "request", type: "pred", name: "かいて", text: "かいてください。", particle: "を", emoji: "💅" },
+    { id: "w-cool", cat: "request", type: "pred", name: "冷やして", text: "冷やしてください。", particle: "を", emoji: "🧊" },
+    { id: "w-warm", cat: "request", type: "pred", name: "温めて", text: "温めてください。", particle: "を", emoji: "♨️" },
+    { id: "w-look", cat: "request", type: "pred", name: "見て", text: "見てください。", particle: "を", emoji: "👀" },
+    { id: "w-move", cat: "request", type: "pred", name: "動かして", text: "動かしてください。", particle: "を", emoji: "🔄" },
+    { id: "w-call", cat: "request", type: "pred", name: "呼んで", text: "呼んでください。", particle: "を", emoji: "🔔" },
+    { id: "w-meet", cat: "request", type: "pred", name: "会いたい", text: "会いたいです。", particle: "に", emoji: "🤝" },
+    { id: "w-phone", cat: "request", type: "pred", name: "電話して", text: "電話してください。", particle: "に", emoji: "📞" },
+    { id: "w-come", cat: "request", type: "pred", name: "来てほしい", text: "来てほしいです。", particle: "に", emoji: "🚶" }
+];
+
+function loadComposeCustom() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(COMPOSE_CUSTOM_KEY) || "[]");
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter(w => w && typeof w.id === "string" && typeof w.name === "string"
+            && COMPOSE_CATEGORIES.some(c => c.key === w.cat) && ["noun", "adv", "pred"].includes(w.type));
+    } catch {
+        return [];
+    }
+}
+
+function loadComposeConfig() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(COMPOSE_CONFIG_KEY) || "null");
+        return {
+            hiddenIds: Array.isArray(parsed?.hiddenIds) ? parsed.hiddenIds.filter(id => typeof id === "string") : [],
+            autoAdvance: parsed?.autoAdvance !== false
+        };
+    } catch {
+        return { hiddenIds: [], autoAdvance: true };
+    }
+}
+
+let composeCustom = loadComposeCustom();
+let composeConfig = loadComposeConfig();
+let composeTab = COMPOSE_CATEGORIES[0].key;
+
+function getComposeCatalog(custom = composeCustom) {
+    return [...COMPOSE_PRESET_WORDS, ...custom.map(w => ({ ...w, custom: true }))];
+}
+
+function getComposeWords(cat) {
+    const hidden = new Set(composeConfig.hiddenIds);
+    return getComposeCatalog().filter(w => w.cat === cat && !hidden.has(w.id));
+}
+
+// ためた語句を、助詞を補った文にする
+function buildComposedSentence(parts) {
+    let out = "";
+    parts.forEach((part, i) => {
+        if (part.type === "noun") {
+            const next = parts[i + 1];
+            if (next?.type === "noun") {
+                out += `${part.name}と`;
+                return;
+            }
+            const pred = parts.slice(i + 1).find(p => p.type === "pred");
+            out += pred ? `${part.name}${pred.particle || "が"}` : `${part.name}。`;
+        } else if (part.type === "pred") {
+            out += part.text || `${part.name}。`;
+        } else if (part.type === "adv") {
+            out += part.name;
+        } else {
+            out += part.sentence || `${part.name}。`;
+        }
+    });
+    return out;
+}
+
+function handleComposeWord(word) {
+    if (isConfirmInProgress || isSimplePaused) return;
+    lockSimpleKeyAfterConfirm(getSimpleRowKey(word.id));
+    if (messageParts.length >= MESSAGE_MAX_PARTS) return;
+
+    messageParts.push({ id: word.id, name: word.name, type: word.type, text: word.text, particle: word.particle });
+    playConfirmSound();
+    const category = COMPOSE_CATEGORIES.find(c => c.key === word.cat);
+    if (composeConfig.autoAdvance && category?.next) {
+        composeTab = category.next;
+        simplePage = 0;
+    }
+    rerenderSimpleMode();
+}
+
 // 表示するパネルとグリッド。質問中は回答数に合わせて大きく並べる（設定のグリッドより細かくはしない）
 function getSimpleLayout() {
     const userSize = SIMPLE_GRID_SIZES[simpleConfig.gridSize] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
-    if (!activeQuestion) return { ...userSize, panels: getEnabledSimplePanels() };
+    let panels;
+    if (activeQuestion) {
+        panels = activeQuestion.answers;
+    } else if (appMode === APP_MODE_COMPOSE) {
+        panels = getComposeWords(composeTab);
+    } else {
+        return { ...userSize, panels: getEnabledSimplePanels() };
+    }
 
-    const n = activeQuestion.answers.length;
+    const n = panels.length;
     const auto = n <= 3 ? { cols: Math.max(1, n), rows: 1 }
         : n <= 4 ? { cols: 2, rows: 2 }
         : n <= 6 ? { cols: 3, rows: 2 }
@@ -1425,7 +1582,7 @@ function getSimpleLayout() {
     return {
         cols: Math.min(auto.cols, userSize.cols),
         rows: Math.min(auto.rows, userSize.rows),
-        panels: activeQuestion.answers
+        panels
     };
 }
 
@@ -1444,7 +1601,7 @@ function renderSimpleMessage() {
         return;
     }
 
-    if (!simpleConfig.composeMode) {
+    if (!isComposeScreen()) {
         simpleMessageContainer.style.display = "none";
         return;
     }
@@ -1454,20 +1611,47 @@ function renderSimpleMessage() {
     if (messageParts.length === 0) {
         const placeholder = document.createElement("div");
         placeholder.className = "simple-message-placeholder";
-        placeholder.textContent = "パネルを選ぶと、ここに文がたまります";
+        placeholder.textContent = "言葉を選ぶと、ここに文ができます（例: 頭 → とても → 痛い）";
         simpleMessageContainer.appendChild(placeholder);
         return;
     }
+    const chips = document.createElement("div");
+    chips.className = "simple-message-chips";
     messageParts.forEach((part) => {
         const chip = document.createElement("span");
         chip.className = "simple-message-chip";
         chip.textContent = part.name;
-        simpleMessageContainer.appendChild(chip);
+        chips.appendChild(chip);
     });
+    const preview = document.createElement("div");
+    preview.className = "simple-message-preview";
+    preview.textContent = `🔊 ${buildComposedSentence(messageParts)}`;
+    const body = document.createElement("div");
+    body.className = "simple-message-body";
+    body.append(chips, preview);
+    simpleMessageContainer.appendChild(body);
     const count = document.createElement("span");
     count.className = "simple-message-count";
     count.textContent = `${messageParts.length} / ${MESSAGE_MAX_PARTS}`;
     simpleMessageContainer.appendChild(count);
+}
+
+function renderComposeTabs() {
+    if (!simpleTabsContainer) return;
+    simpleTabsContainer.innerHTML = "";
+    if (!isComposeScreen()) {
+        simpleTabsContainer.style.display = "none";
+        return;
+    }
+    simpleTabsContainer.style.display = "";
+    COMPOSE_CATEGORIES.forEach((category) => {
+        const control = `${COMPOSE_TAB_PREFIX}${category.key}`;
+        const btn = createSimpleButton(control, `${category.icon} ${category.label}`, {
+            className: `simple-ctrl simple-tab${category.key === composeTab ? " active" : ""}`,
+            onClick: () => handleSimpleControl(control)
+        });
+        simpleTabsContainer.appendChild(btn);
+    });
 }
 
 function appendSimpleControl(control, label, extraClass = "", disabled = false) {
@@ -1483,6 +1667,7 @@ function renderSimpleMode() {
         appRoot.dataset.mode = APP_MODE_SIMPLE;
         appRoot.dataset.simplePaused = isSimplePaused ? "1" : "0";
         appRoot.dataset.question = activeQuestion ? "1" : "0";
+        appRoot.dataset.compose = isComposeScreen() ? "1" : "0";
         delete appRoot.dataset.symptomStage;
     }
     if (modePrompt) modePrompt.textContent = "";
@@ -1497,6 +1682,7 @@ function renderSimpleMode() {
     if (!simpleGridContainer || !simpleBarContainer) return;
 
     renderSimpleMessage();
+    renderComposeTabs();
 
     const { cols, rows, panels } = getSimpleLayout();
     const pageSize = cols * rows;
@@ -1514,7 +1700,8 @@ function renderSimpleMode() {
             icon: item.icon,
             emoji: item.emoji,
             image: item.image,
-            onClick: () => handleSimpleClick(item)
+            className: item.type ? `compose-word compose-word--${item.type}` : "",
+            onClick: () => (isComposeScreen() ? handleComposeWord(item) : handleSimpleClick(item))
         }));
     });
     // 最終ページの空きは枠だけ置いて、パネルの大きさと位置をページ間で揃える
@@ -1536,7 +1723,7 @@ function renderSimpleMode() {
     if (activeQuestion) {
         appendSimpleControl(SIMPLE_CTRL_CANCEL, "✕ やめる", "simple-ctrl--cancel");
     } else {
-        if (simpleConfig.composeMode) {
+        if (isComposeScreen()) {
             const isEmpty = messageParts.length === 0;
             appendSimpleControl(SIMPLE_CTRL_BACKSPACE, "⌫ 1つ消す", "", isEmpty);
             appendSimpleControl(SIMPLE_CTRL_CLEAR, "🗑️ 全部消す", "", isEmpty);
@@ -1578,15 +1765,6 @@ async function handleSimpleClick(item) {
 
     lockSimpleKeyAfterConfirm(getSimpleRowKey(item.id));
 
-    // 文をつなげる: 質問への回答以外は、すぐ話さずにためる
-    if (!activeQuestion && simpleConfig.composeMode) {
-        if (messageParts.length >= MESSAGE_MAX_PARTS) return;
-        messageParts.push({ id: item.id, name: item.name, sentence });
-        playConfirmSound();
-        rerenderSimpleMode();
-        return;
-    }
-
     const answeredQuestionId = activeQuestion?.id ?? null;
     await speakSimpleSentence(sentence);
     // 発話中に別の質問へ切り替わっていたら、そちらは閉じない
@@ -1625,14 +1803,17 @@ function handleSimpleControl(control) {
         return;
     }
     if (control === SIMPLE_CTRL_SPEAK) {
-        const sentence = messageParts.map(part => part.sentence).join("");
+        const sentence = buildComposedSentence(messageParts);
         messageParts = [];
         rerenderSimpleMode();
         void speakSimpleSentence(sentence);
         return;
     }
 
-    if (control === SIMPLE_CTRL_REST) {
+    if (control.startsWith(COMPOSE_TAB_PREFIX)) {
+        composeTab = control.slice(COMPOSE_TAB_PREFIX.length);
+        simplePage = 0;
+    } else if (control === SIMPLE_CTRL_REST) {
         isSimplePaused = !isSimplePaused;
     } else if (control === SIMPLE_CTRL_BACKSPACE) {
         messageParts.pop();
@@ -1778,7 +1959,7 @@ function centerPointerOnSimpleGrid() {
 }
 
 function setAppMode(mode) {
-    const nextMode = mode === APP_MODE_SIMPLE ? APP_MODE_SIMPLE : APP_MODE_SYMPTOM;
+    const nextMode = APP_MODES.includes(mode) ? mode : APP_MODE_SYMPTOM;
     if (nextMode === appMode) return;
 
     appMode = nextMode;
@@ -1788,6 +1969,7 @@ function setAppMode(mode) {
     isSimplePaused = false;
     simplePage = 0;
     messageParts = [];
+    composeTab = COMPOSE_CATEGORIES[0].key;
     // 質問中に切り替えたら質問は終える（終了後に古いページへ戻らないようにする）
     activeQuestion = null;
     pageBeforeQuestion = 0;
@@ -1974,7 +2156,7 @@ function endQuestion() {
     simplePage = pageBeforeQuestion;
     resetDwellProgress();
     dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
-    if (appMode === APP_MODE_SIMPLE) {
+    if (appMode !== APP_MODE_SYMPTOM) {
         renderAll();
         centerPointerOnSimpleGrid();
     } else {
@@ -2042,194 +2224,334 @@ function parseQuestionAnswers(text) {
 }
 
 // ---------------------------------------------------------
-// 設定画面: シンプルモードのパネル選択・任意パネル追加
+// 設定画面: シンプルモードの画面配置（ドラッグで並べ替え）・任意パネル追加
 // ---------------------------------------------------------
-let simpleEditorDraft = [];   // [{ id, enabled }] 表示順
+let simpleLayoutDraft = [];   // 画面に並べるパネルID（並び順＝画面の並び）
 let simpleDwellDraft = {};    // パネルごとの滞留時間 { id: ms }
-let simpleEditorFilter = "all";
+let simpleCustomDraft = [];   // 保存前の任意パネル
+let simplePaletteFilter = "all";
+let simpleSelectedTileId = null;
+let layoutDragId = null;
 const SIMPLE_FILTER_ALL = "all";
-const SIMPLE_FILTER_ENABLED = "enabled";
 const SIMPLE_GROUP_BASE = "基本";
 const SIMPLE_GROUP_CUSTOM = "任意";
+const LAYOUT_DRAG_TYPE = "text/plain";
 
 function getSimplePanelGroup(item) {
     if (item.custom) return SIMPLE_GROUP_CUSTOM;
     return item.group || SIMPLE_GROUP_BASE;
 }
 
-function matchesSimpleFilter(item, entry, filter = simpleEditorFilter) {
-    if (filter === SIMPLE_FILTER_ALL) return true;
-    if (filter === SIMPLE_FILTER_ENABLED) return entry.enabled;
-    return getSimplePanelGroup(item) === filter;
+function getDraftGridSize() {
+    return SIMPLE_GRID_SIZES[simpleGridSizeSelect?.value] || SIMPLE_GRID_SIZES[simpleConfig.gridSize] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
 }
 
-function renderSimplePanelFilter(byId) {
-    if (!simplePanelFilter) return;
-
-    const groups = [];
-    simpleEditorDraft.forEach(entry => {
-        const item = byId.get(entry.id);
-        if (!item) return;
-        const group = getSimplePanelGroup(item);
-        if (!groups.includes(group)) groups.push(group);
-    });
-    const filters = [
-        { key: SIMPLE_FILTER_ALL, label: "すべて" },
-        { key: SIMPLE_FILTER_ENABLED, label: "表示中" },
-        ...groups.map(group => ({ key: group, label: group }))
-    ];
-    if (!filters.some(f => f.key === simpleEditorFilter)) simpleEditorFilter = SIMPLE_FILTER_ALL;
-
-    simplePanelFilter.innerHTML = "";
-    filters.forEach(({ key, label }) => {
-        const isActive = key === simpleEditorFilter;
-        const count = simpleEditorDraft.filter(entry => byId.has(entry.id) && matchesSimpleFilter(byId.get(entry.id), entry, key)).length;
-        const chip = document.createElement("button");
-        chip.type = "button";
-        chip.className = "filter-chip" + (isActive ? " active" : "");
-        chip.setAttribute("role", "tab");
-        chip.setAttribute("aria-selected", isActive ? "true" : "false");
-        chip.innerHTML = "";
-        chip.append(label, Object.assign(document.createElement("span"), { className: "filter-chip-count", textContent: String(count) }));
-        chip.addEventListener("click", () => {
-            simpleEditorFilter = key;
-            renderSimplePanelEditor();
-        });
-        simplePanelFilter.appendChild(chip);
-    });
+function getDraftCatalogMap() {
+    return new Map(getSimpleCatalog(simpleCustomDraft).map(p => [p.id, p]));
 }
-let simpleCustomDraft = [];   // 保存前の任意パネル
 
 function openSimplePanelEditor() {
     simpleCustomDraft = simpleCustomPanels.map(p => ({ ...p }));
-    const catalogIds = getSimpleCatalog(simpleCustomDraft).map(p => p.id);
-    const enabledIds = simpleConfig.panelIds.filter(id => catalogIds.includes(id));
-    simpleEditorDraft = [
-        ...enabledIds.map(id => ({ id, enabled: true })),
-        ...catalogIds.filter(id => !enabledIds.includes(id)).map(id => ({ id, enabled: false }))
-    ];
+    const byId = getDraftCatalogMap();
+    simpleLayoutDraft = simpleConfig.panelIds.filter(id => byId.has(id));
 
     if (simpleGridSizeSelect) simpleGridSizeSelect.value = simpleConfig.gridSize;
     if (simpleShowRestInput) simpleShowRestInput.checked = simpleConfig.showRest;
     if (simpleConfirmSoundInput) simpleConfirmSoundInput.checked = simpleConfig.confirmSound;
-    if (simpleComposeInput) simpleComposeInput.checked = simpleConfig.composeMode;
     simpleDwellDraft = { ...simpleConfig.dwellOverrides };
-    simpleEditorFilter = SIMPLE_FILTER_ALL;
+    simplePaletteFilter = SIMPLE_FILTER_ALL;
+    simpleSelectedTileId = null;
     resetSimpleCustomForm();
     renderSimplePanelEditor();
 }
 
-function renderSimplePanelEditor() {
-    if (!simplePanelList) return;
-
-    const byId = new Map(getSimpleCatalog(simpleCustomDraft).map(p => [p.id, p]));
-    simplePanelList.innerHTML = "";
-    renderSimplePanelFilter(byId);
-    // 並び替えは表示順が連続して見える「すべて」「表示中」のときだけ
-    const canReorder = simpleEditorFilter === SIMPLE_FILTER_ALL || simpleEditorFilter === SIMPLE_FILTER_ENABLED;
-
-    const enabledCount = simpleEditorDraft.filter(d => d.enabled).length;
-    if (simplePanelSummary) {
-        const { cols, rows } = SIMPLE_GRID_SIZES[simpleGridSizeSelect?.value] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
-        const pages = Math.max(1, Math.ceil(enabledCount / (cols * rows)));
-        simplePanelSummary.textContent = `表示中 ${enabledCount} 枚 ・ ${pages} ページ`;
+// id を insertIndex の位置へ（未配置なら追加して）並べる
+function moveLayoutPanel(id, insertIndex) {
+    if (!id || !getDraftCatalogMap().has(id)) return;
+    const from = simpleLayoutDraft.indexOf(id);
+    if (from !== -1) {
+        simpleLayoutDraft.splice(from, 1);
+        if (from < insertIndex) insertIndex -= 1;
     }
+    simpleLayoutDraft.splice(clamp(insertIndex, 0, simpleLayoutDraft.length), 0, id);
+    simpleSelectedTileId = id;
+    renderSimplePanelEditor();
+}
 
-    simpleEditorDraft.forEach((entry, index) => {
-        const item = byId.get(entry.id);
-        if (!item || !matchesSimpleFilter(item, entry)) return;
+function removeLayoutPanel(id) {
+    simpleLayoutDraft = simpleLayoutDraft.filter(x => x !== id);
+    if (simpleSelectedTileId === id) simpleSelectedTileId = null;
+    renderSimplePanelEditor();
+}
 
-        const row = document.createElement("div");
-        row.className = "simple-editor-row" + (entry.enabled ? "" : " is-disabled");
+function createLayoutThumb(item, className = "layout-thumb") {
+    const thumb = document.createElement("div");
+    thumb.className = className;
+    if (item.image || item.icon) {
+        const img = document.createElement("img");
+        img.src = item.image || item.icon;
+        img.alt = "";
+        img.draggable = false;
+        thumb.appendChild(img);
+    } else if (item.emoji) {
+        thumb.textContent = item.emoji;
+    } else {
+        thumb.classList.add("is-text");
+    }
+    return thumb;
+}
 
-        const check = document.createElement("input");
-        check.type = "checkbox";
-        check.checked = entry.enabled;
-        check.title = "表示する";
-        check.addEventListener("change", () => {
-            entry.enabled = check.checked;
-            // 表示ONにしたものは表示中の末尾へ、OFFにしたものは非表示側の先頭へ寄せる
-            simpleEditorDraft.splice(index, 1);
-            const firstDisabled = simpleEditorDraft.findIndex(d => !d.enabled);
-            const insertAt = firstDisabled === -1 ? simpleEditorDraft.length : firstDisabled;
-            simpleEditorDraft.splice(insertAt, 0, entry);
-            renderSimplePanelEditor();
-        });
-        row.appendChild(check);
+function bindLayoutDrag(el, id) {
+    el.draggable = true;
+    el.addEventListener("dragstart", (e) => {
+        layoutDragId = id;
+        e.dataTransfer.setData(LAYOUT_DRAG_TYPE, id);
+        e.dataTransfer.effectAllowed = "move";
+        el.classList.add("dragging");
+    });
+    el.addEventListener("dragend", () => {
+        layoutDragId = null;
+        el.classList.remove("dragging");
+        document.querySelectorAll(".drop-target").forEach(t => t.classList.remove("drop-target"));
+    });
+}
 
-        const thumb = document.createElement("div");
-        thumb.className = "simple-editor-thumb";
-        if (item.image || item.icon) {
-            const img = document.createElement("img");
-            img.src = item.image || item.icon;
-            thumb.appendChild(img);
-        } else {
-            thumb.textContent = item.emoji || "💬";
-        }
-        row.appendChild(thumb);
+function bindLayoutDrop(el, onDrop) {
+    el.addEventListener("dragover", (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        el.classList.add("drop-target");
+    });
+    el.addEventListener("dragleave", () => el.classList.remove("drop-target"));
+    el.addEventListener("drop", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        el.classList.remove("drop-target");
+        const id = e.dataTransfer.getData(LAYOUT_DRAG_TYPE) || layoutDragId;
+        if (id) onDrop(id);
+    });
+}
 
-        const text = document.createElement("div");
-        text.className = "simple-editor-text";
-        const name = document.createElement("strong");
-        name.textContent = item.name;
-        const badge = document.createElement("span");
-        badge.className = "simple-editor-group";
-        badge.textContent = getSimplePanelGroup(item);
-        name.appendChild(badge);
-        const sentence = document.createElement("small");
-        sentence.textContent = buildSimpleSentence(item);
-        text.append(name, sentence);
-        row.appendChild(text);
+function renderSimplePanelEditor() {
+    if (!layoutPagesContainer) return;
+    const byId = getDraftCatalogMap();
+    simpleLayoutDraft = simpleLayoutDraft.filter(id => byId.has(id));
 
-        const actions = document.createElement("div");
-        actions.className = "simple-editor-actions";
-        const addAction = (label, title, disabled, handler) => {
-            const btn = document.createElement("button");
-            btn.type = "button";
-            btn.className = "ctrl-btn secondary";
-            btn.textContent = label;
-            btn.title = title;
-            btn.disabled = disabled;
-            btn.addEventListener("click", handler);
-            actions.appendChild(btn);
-        };
-        const prev = simpleEditorDraft[index - 1];
-        const next = simpleEditorDraft[index + 1];
-        if (canReorder) addAction("▲", "前へ", !entry.enabled || !prev || !prev.enabled, () => {
-            [simpleEditorDraft[index - 1], simpleEditorDraft[index]] = [simpleEditorDraft[index], simpleEditorDraft[index - 1]];
-            renderSimplePanelEditor();
-        });
-        if (canReorder) addAction("▼", "後ろへ", !entry.enabled || !next || !next.enabled, () => {
-            [simpleEditorDraft[index + 1], simpleEditorDraft[index]] = [simpleEditorDraft[index], simpleEditorDraft[index + 1]];
-            renderSimplePanelEditor();
-        });
-        const dwellSelect = document.createElement("select");
-        dwellSelect.className = "simple-editor-dwell";
-        dwellSelect.title = "このパネルの滞留時間";
-        dwellSelect.add(new Option("滞留 既定", ""));
-        PANEL_DWELL_CHOICES.forEach(ms => dwellSelect.add(new Option(`${(ms / 1000).toFixed(1)}秒`, String(ms))));
-        dwellSelect.value = simpleDwellDraft[item.id] ? String(simpleDwellDraft[item.id]) : "";
-        if (dwellSelect.value !== "") dwellSelect.classList.add("is-custom");
-        dwellSelect.addEventListener("change", () => {
-            const ms = Number(dwellSelect.value);
-            if (ms > 0) simpleDwellDraft[item.id] = ms;
-            else delete simpleDwellDraft[item.id];
-            dwellSelect.classList.toggle("is-custom", ms > 0);
-        });
-        actions.appendChild(dwellSelect);
+    const { cols, rows } = getDraftGridSize();
+    const pageSize = cols * rows;
+    const count = simpleLayoutDraft.length;
+    const pageCount = Math.max(1, Math.ceil(count / pageSize));
+    // 最終ページが埋まっていたら、ドロップで次のページを作れるよう空ページを1つ足す
+    const hasSparePage = count > 0 && count % pageSize === 0;
+    const showRest = simpleShowRestInput ? simpleShowRestInput.checked : simpleConfig.showRest;
 
-        if (item.custom) {
-            addAction("削除", "この任意パネルを削除", false, () => {
-                simpleCustomDraft = simpleCustomDraft.filter(p => p.id !== item.id);
-                simpleEditorDraft = simpleEditorDraft.filter(d => d.id !== item.id);
-                delete simpleDwellDraft[item.id];
+    if (simplePanelSummary) simplePanelSummary.textContent = `表示中 ${count} 枚 ・ ${pageCount} ページ`;
+
+    layoutPagesContainer.innerHTML = "";
+    // 実画面と同じ縦横比で見せる（下の操作バーぶんを除く）
+    const aspect = `${window.innerWidth} / ${Math.round(window.innerHeight * 0.8)}`;
+
+    for (let page = 0; page < pageCount + (hasSparePage ? 1 : 0); page++) {
+        const isSpare = page >= pageCount;
+        const pageEl = document.createElement("div");
+        pageEl.className = "layout-page" + (isSpare ? " is-spare" : "");
+
+        const label = document.createElement("div");
+        label.className = "layout-page-label";
+        label.textContent = isSpare ? `${page + 1}ページ目（ここへドロップで追加）` : `${page + 1}ページ目`;
+        pageEl.appendChild(label);
+
+        const grid = document.createElement("div");
+        grid.className = "layout-grid";
+        grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+        grid.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
+        grid.style.aspectRatio = aspect;
+
+        for (let slot = 0; slot < pageSize; slot++) {
+            const index = page * pageSize + slot;
+            const id = simpleLayoutDraft[index];
+            const item = id ? byId.get(id) : null;
+            if (!item) {
+                const empty = document.createElement("div");
+                empty.className = "layout-tile is-empty";
+                bindLayoutDrop(empty, dragId => moveLayoutPanel(dragId, simpleLayoutDraft.length));
+                grid.appendChild(empty);
+                continue;
+            }
+
+            const tile = document.createElement("div");
+            tile.className = "layout-tile" + (id === simpleSelectedTileId ? " selected" : "");
+            tile.title = `${item.name}（ドラッグで移動・クリックで詳細）`;
+            tile.appendChild(createLayoutThumb(item));
+            const name = document.createElement("div");
+            name.className = "layout-tile-name";
+            name.textContent = item.name;
+            tile.appendChild(name);
+            if (simpleDwellDraft[id]) {
+                const badge = document.createElement("span");
+                badge.className = "layout-tile-dwell";
+                badge.textContent = `⏱${(simpleDwellDraft[id] / 1000).toFixed(1)}`;
+                tile.appendChild(badge);
+            }
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.className = "layout-tile-remove";
+            remove.title = "画面から外す";
+            remove.textContent = "✕";
+            remove.addEventListener("click", (e) => {
+                e.stopPropagation();
+                removeLayoutPanel(id);
+            });
+            tile.appendChild(remove);
+            tile.addEventListener("click", () => {
+                simpleSelectedTileId = simpleSelectedTileId === id ? null : id;
                 renderSimplePanelEditor();
             });
+            bindLayoutDrag(tile, id);
+            bindLayoutDrop(tile, dragId => moveLayoutPanel(dragId, index));
+            grid.appendChild(tile);
         }
-        row.appendChild(actions);
+        pageEl.appendChild(grid);
 
-        simplePanelList.appendChild(row);
+        // 実画面下部の操作バー（見た目の参考）
+        const bar = document.createElement("div");
+        bar.className = "layout-bar";
+        const barItems = [];
+        if (pageCount > 1) barItems.push("◀ 前へ", `${Math.min(page, pageCount - 1) + 1} / ${pageCount}`, "次へ ▶");
+        if (showRest) barItems.push("⏸️ 休憩");
+        barItems.forEach(text => {
+            const span = document.createElement("span");
+            span.textContent = text;
+            bar.appendChild(span);
+        });
+        if (barItems.length > 0 && !isSpare) pageEl.appendChild(bar);
+
+        layoutPagesContainer.appendChild(pageEl);
+    }
+
+    renderLayoutDetail(byId);
+    renderSimplePalette(byId);
+}
+
+function renderLayoutDetail(byId) {
+    if (!layoutDetailContainer) return;
+    layoutDetailContainer.innerHTML = "";
+    const id = simpleSelectedTileId;
+    const item = id ? byId.get(id) : null;
+    const index = id ? simpleLayoutDraft.indexOf(id) : -1;
+    if (!item || index === -1) {
+        layoutDetailContainer.classList.add("is-empty");
+        layoutDetailContainer.textContent = "タイルをクリックすると、ここで滞留時間などを設定できます。";
+        return;
+    }
+    layoutDetailContainer.classList.remove("is-empty");
+
+    const { cols, rows } = getDraftGridSize();
+    const pageSize = cols * rows;
+    layoutDetailContainer.appendChild(createLayoutThumb(item, "simple-editor-thumb"));
+
+    const text = document.createElement("div");
+    text.className = "simple-editor-text";
+    const name = document.createElement("strong");
+    name.textContent = item.name;
+    const badge = document.createElement("span");
+    badge.className = "simple-editor-group";
+    badge.textContent = getSimplePanelGroup(item);
+    name.appendChild(badge);
+    const info = document.createElement("small");
+    info.textContent = `${Math.floor(index / pageSize) + 1}ページ目・${(index % pageSize) + 1}番目 ／ 「${buildSimpleSentence(item)}」`;
+    text.append(name, info);
+    layoutDetailContainer.appendChild(text);
+
+    const actions = document.createElement("div");
+    actions.className = "simple-editor-actions";
+    const dwellSelect = document.createElement("select");
+    dwellSelect.className = "simple-editor-dwell";
+    dwellSelect.title = "このパネルの滞留時間";
+    dwellSelect.add(new Option("滞留 既定", ""));
+    PANEL_DWELL_CHOICES.forEach(ms => dwellSelect.add(new Option(`滞留 ${(ms / 1000).toFixed(1)}秒`, String(ms))));
+    dwellSelect.value = simpleDwellDraft[id] ? String(simpleDwellDraft[id]) : "";
+    dwellSelect.classList.toggle("is-custom", dwellSelect.value !== "");
+    dwellSelect.addEventListener("change", () => {
+        const ms = Number(dwellSelect.value);
+        if (ms > 0) simpleDwellDraft[id] = ms;
+        else delete simpleDwellDraft[id];
+        renderSimplePanelEditor();
     });
+    actions.appendChild(dwellSelect);
+
+    const addAction = (label, title, disabled, handler, extraClass = "secondary") => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = `ctrl-btn ${extraClass}`;
+        btn.textContent = label;
+        btn.title = title;
+        btn.disabled = disabled;
+        btn.addEventListener("click", handler);
+        actions.appendChild(btn);
+    };
+    addAction("◀", "1つ前へ", index === 0, () => moveLayoutPanel(id, index - 1));
+    addAction("▶", "1つ後ろへ", index === simpleLayoutDraft.length - 1, () => moveLayoutPanel(id, index + 2));
+    addAction("外す", "画面から外す", false, () => removeLayoutPanel(id));
+    if (item.custom) {
+        addAction("削除", "この任意パネルを削除", false, () => {
+            simpleCustomDraft = simpleCustomDraft.filter(p => p.id !== id);
+            delete simpleDwellDraft[id];
+            removeLayoutPanel(id);
+        });
+    }
+    layoutDetailContainer.appendChild(actions);
+}
+
+// 画面に出していないパネルの一覧。ドラッグかクリックで画面へ追加
+function renderSimplePalette(byId) {
+    if (!simplePanelList) return;
+    const used = new Set(simpleLayoutDraft);
+    const unused = Array.from(byId.values()).filter(item => !used.has(item.id));
+
+    if (simplePanelFilter) {
+        const groups = [];
+        unused.forEach(item => {
+            const group = getSimplePanelGroup(item);
+            if (!groups.includes(group)) groups.push(group);
+        });
+        if (simplePaletteFilter !== SIMPLE_FILTER_ALL && !groups.includes(simplePaletteFilter)) simplePaletteFilter = SIMPLE_FILTER_ALL;
+        simplePanelFilter.innerHTML = "";
+        [{ key: SIMPLE_FILTER_ALL, label: "すべて" }, ...groups.map(g => ({ key: g, label: g }))].forEach(({ key, label }) => {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "filter-chip" + (key === simplePaletteFilter ? " active" : "");
+            const count = key === SIMPLE_FILTER_ALL ? unused.length : unused.filter(i => getSimplePanelGroup(i) === key).length;
+            chip.append(label, Object.assign(document.createElement("span"), { className: "filter-chip-count", textContent: String(count) }));
+            chip.addEventListener("click", () => {
+                simplePaletteFilter = key;
+                renderSimplePanelEditor();
+            });
+            simplePanelFilter.appendChild(chip);
+        });
+    }
+
+    simplePanelList.innerHTML = "";
+    const visible = unused.filter(item => simplePaletteFilter === SIMPLE_FILTER_ALL || getSimplePanelGroup(item) === simplePaletteFilter);
+    visible.forEach((item) => {
+        const el = document.createElement("div");
+        el.className = "palette-item";
+        el.title = `「${buildSimpleSentence(item)}」（ドラッグで配置・クリックで末尾に追加）`;
+        el.appendChild(createLayoutThumb(item));
+        const name = document.createElement("div");
+        name.className = "layout-tile-name";
+        name.textContent = item.name;
+        el.appendChild(name);
+        el.addEventListener("click", () => moveLayoutPanel(item.id, simpleLayoutDraft.length));
+        bindLayoutDrag(el, item.id);
+        simplePanelList.appendChild(el);
+    });
+    if (visible.length === 0) {
+        const note = document.createElement("p");
+        note.className = "settings-help";
+        note.textContent = "すべて画面に配置済みです。";
+        simplePanelList.appendChild(note);
+    }
 }
 
 let simpleCustomImageData = "";
@@ -2285,34 +2607,154 @@ function addSimpleCustomPanel() {
     else if (emoji) panel.emoji = emoji;
 
     simpleCustomDraft.push(panel);
-    // 追加したパネルは表示中の末尾に入れる
-    const firstDisabled = simpleEditorDraft.findIndex(d => !d.enabled);
-    simpleEditorDraft.splice(firstDisabled === -1 ? simpleEditorDraft.length : firstDisabled, 0, { id: panel.id, enabled: true });
-    // 追加結果が一覧で見えるよう「任意」に切り替える
-    simpleEditorFilter = SIMPLE_GROUP_CUSTOM;
     resetSimpleCustomForm();
-    renderSimplePanelEditor();
+    // 追加したパネルは画面の末尾に置く
+    moveLayoutPanel(panel.id, simpleLayoutDraft.length);
 }
 
-// 今のフィルタで見えている分だけまとめて切り替える
-function setAllSimplePanelsEnabled(enabled) {
-    const byId = new Map(getSimpleCatalog(simpleCustomDraft).map(p => [p.id, p]));
-    simpleEditorDraft
-        .filter(d => byId.has(d.id) && matchesSimpleFilter(byId.get(d.id), d))
-        .forEach(d => { d.enabled = enabled; });
-    // 「表示中が先頭に連続」を保つ
-    simpleEditorDraft = [...simpleEditorDraft.filter(d => d.enabled), ...simpleEditorDraft.filter(d => !d.enabled)];
+function clearSimpleLayout() {
+    simpleLayoutDraft = [];
+    simpleSelectedTileId = null;
     renderSimplePanelEditor();
 }
 
 function resetSimplePanelSelection() {
-    const baseIds = new Set(getSimpleBasePanels().map(p => p.id));
-    const catalogIds = getSimpleCatalog(simpleCustomDraft).map(p => p.id);
-    simpleEditorDraft = [
-        ...catalogIds.filter(id => baseIds.has(id)).map(id => ({ id, enabled: true })),
-        ...catalogIds.filter(id => !baseIds.has(id)).map(id => ({ id, enabled: false }))
-    ];
+    simpleLayoutDraft = getSimpleBasePanels().map(p => p.id);
+    simpleSelectedTileId = null;
     renderSimplePanelEditor();
+}
+
+// ---------------------------------------------------------
+// 設定画面: 文づくりの語句
+// ---------------------------------------------------------
+const COMPOSE_TYPE_LABELS = { noun: "どこ・だれ", adv: "程度・時", pred: "様子・動作" };
+let composeHiddenDraft = new Set();
+let composeCustomDraft = [];
+let composeEditorFilter = COMPOSE_CATEGORIES[0].key;
+
+function openComposeEditor() {
+    composeHiddenDraft = new Set(composeConfig.hiddenIds);
+    composeCustomDraft = composeCustom.map(w => ({ ...w }));
+    composeEditorFilter = COMPOSE_CATEGORIES[0].key;
+    if (composeAutoAdvanceInput) composeAutoAdvanceInput.checked = composeConfig.autoAdvance;
+    resetComposeCustomForm();
+    renderComposeEditor();
+}
+
+function renderComposeEditor() {
+    if (!composeWordList) return;
+
+    if (composeWordFilter) {
+        composeWordFilter.innerHTML = "";
+        COMPOSE_CATEGORIES.forEach((category) => {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "filter-chip" + (category.key === composeEditorFilter ? " active" : "");
+            const count = getComposeCatalog(composeCustomDraft).filter(w => w.cat === category.key).length;
+            chip.append(`${category.icon} ${category.label}`, Object.assign(document.createElement("span"), { className: "filter-chip-count", textContent: String(count) }));
+            chip.addEventListener("click", () => {
+                composeEditorFilter = category.key;
+                renderComposeEditor();
+            });
+            composeWordFilter.appendChild(chip);
+        });
+    }
+
+    composeWordList.innerHTML = "";
+    getComposeCatalog(composeCustomDraft).filter(w => w.cat === composeEditorFilter).forEach((word) => {
+        const shown = !composeHiddenDraft.has(word.id);
+        const el = document.createElement("label");
+        el.className = "palette-item compose-editor-item" + (shown ? "" : " is-disabled");
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = shown;
+        check.addEventListener("change", () => {
+            if (check.checked) composeHiddenDraft.delete(word.id);
+            else composeHiddenDraft.add(word.id);
+            renderComposeEditor();
+        });
+        el.appendChild(check);
+        el.appendChild(createLayoutThumb(word));
+        const name = document.createElement("div");
+        name.className = "layout-tile-name";
+        name.textContent = word.name;
+        el.appendChild(name);
+        const meta = document.createElement("small");
+        meta.className = "compose-editor-meta";
+        meta.textContent = word.type === "pred" ? `〜${word.particle}${word.text}` : COMPOSE_TYPE_LABELS[word.type];
+        el.appendChild(meta);
+        if (word.custom) {
+            const del = document.createElement("button");
+            del.type = "button";
+            del.className = "layout-tile-remove";
+            del.title = "この語句を削除";
+            del.textContent = "✕";
+            del.addEventListener("click", (e) => {
+                e.preventDefault();
+                composeCustomDraft = composeCustomDraft.filter(w => w.id !== word.id);
+                composeHiddenDraft.delete(word.id);
+                renderComposeEditor();
+            });
+            el.appendChild(del);
+        }
+        composeWordList.appendChild(el);
+    });
+
+    syncComposeCustomFormFields();
+}
+
+function resetComposeCustomForm() {
+    if (composeCustomNameInput) composeCustomNameInput.value = "";
+    if (composeCustomEmojiInput) composeCustomEmojiInput.value = "";
+    if (composeCustomTextInput) composeCustomTextInput.value = "";
+}
+
+// 「様子・動作」のときだけ発話と助詞を入力する
+function syncComposeCustomFormFields() {
+    const isPred = composeCustomTypeSelect?.value === "pred";
+    document.querySelectorAll(".compose-pred-only").forEach(el => { el.style.display = isPred ? "" : "none"; });
+}
+
+function addComposeCustomWord() {
+    const name = composeCustomNameInput?.value.trim() || "";
+    if (!name) {
+        alert("言葉を入力してください。");
+        return;
+    }
+    const type = composeCustomTypeSelect?.value || "noun";
+    const word = {
+        id: `wc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        cat: composeEditorFilter,
+        type,
+        name
+    };
+    const emoji = composeCustomEmojiInput?.value.trim() || "";
+    if (emoji) word.emoji = emoji;
+    if (type === "pred") {
+        word.text = composeCustomTextInput?.value.trim() || `${name}です。`;
+        word.particle = composeCustomParticleSelect?.value || "が";
+    }
+    composeCustomDraft.push(word);
+    resetComposeCustomForm();
+    renderComposeEditor();
+}
+
+function saveComposeEditor() {
+    const nextConfig = {
+        hiddenIds: Array.from(composeHiddenDraft),
+        autoAdvance: composeAutoAdvanceInput ? composeAutoAdvanceInput.checked : composeConfig.autoAdvance
+    };
+    try {
+        localStorage.setItem(COMPOSE_CUSTOM_KEY, JSON.stringify(composeCustomDraft));
+        localStorage.setItem(COMPOSE_CONFIG_KEY, JSON.stringify(nextConfig));
+    } catch (error) {
+        console.error("compose save failed:", error);
+        alert("文づくりの設定を保存できませんでした。");
+        return false;
+    }
+    composeCustom = composeCustomDraft;
+    composeConfig = nextConfig;
+    return true;
 }
 
 // ---------------------------------------------------------
@@ -2434,10 +2876,9 @@ function saveQuestionEditor() {
 function saveSimplePanelEditor() {
     const nextConfig = {
         gridSize: SIMPLE_GRID_SIZES[simpleGridSizeSelect?.value] ? simpleGridSizeSelect.value : simpleConfig.gridSize,
-        panelIds: simpleEditorDraft.filter(d => d.enabled).map(d => d.id),
+        panelIds: [...simpleLayoutDraft],
         showRest: simpleShowRestInput ? simpleShowRestInput.checked : simpleConfig.showRest,
         confirmSound: simpleConfirmSoundInput ? simpleConfirmSoundInput.checked : simpleConfig.confirmSound,
-        composeMode: simpleComposeInput ? simpleComposeInput.checked : simpleConfig.composeMode,
         dwellOverrides: sanitizeDwellOverrides(simpleDwellDraft)
     };
     try {
@@ -2452,7 +2893,6 @@ function saveSimplePanelEditor() {
     simpleConfig = nextConfig;
     // 休憩パネルを消したときに休憩中のまま戻れなくならないようにする
     if (!simpleConfig.showRest) isSimplePaused = false;
-    if (!simpleConfig.composeMode) messageParts = [];
     return true;
 }
 
@@ -2850,12 +3290,17 @@ async function predictWebcam() {
     if (!hasFace && calibrationWizard.isActive()) calibrationWizard.onNoFace();
 
     checkPointerCollision();
-    updateDwellSelection(hasFace);
-    if (hasFace) {
+    // 設定画面を開いている間は確定・段階移動・自動復帰をすべて止める
+    const isSuspended = isSettingsOpen();
+    document.body.classList.toggle("settings-open", isSuspended);
+    updateDwellSelection(hasFace && !isSuspended);
+    if (hasFace && !isSuspended) {
         updateVerticalStageTransition();
     }
-    checkSymptomIdleReset();
-    checkQuestionTimeout();
+    if (!isSuspended) {
+        checkSymptomIdleReset();
+        checkQuestionTimeout();
+    }
     window.requestAnimationFrame(predictWebcam);
 }
 
@@ -3333,7 +3778,7 @@ function showGestureFeedback() {
 }
 
 function triggerClick() {
-    if (calibrationWizard.isActive()) return false;
+    if (calibrationWizard.isActive() || isSettingsOpen()) return false;
     if (isConfirmInProgress) {
         logClickDebug("click_blocked_confirm_in_progress");
         return false;
@@ -3800,7 +4245,17 @@ const modeSelect = radioGroup("app-mode");
 const dwellTimeSelect = radioGroup("dwell-time");
 const simpleGridSizeSelect = radioGroup("simple-grid-size");
 const simplePanelFilter = document.getElementById("simple-panel-filter");
-const simpleComposeInput = document.getElementById("simple-compose-input");
+const simpleTabsContainer = document.getElementById("simple-tabs");
+const layoutPagesContainer = document.getElementById("layout-pages");
+const layoutDetailContainer = document.getElementById("layout-detail");
+const composeWordList = document.getElementById("compose-word-list");
+const composeWordFilter = document.getElementById("compose-word-filter");
+const composeAutoAdvanceInput = document.getElementById("compose-auto-advance-input");
+const composeCustomTypeSelect = document.getElementById("compose-custom-type-select");
+const composeCustomNameInput = document.getElementById("compose-custom-name-input");
+const composeCustomEmojiInput = document.getElementById("compose-custom-emoji-input");
+const composeCustomTextInput = document.getElementById("compose-custom-text-input");
+const composeCustomParticleSelect = document.getElementById("compose-custom-particle-select");
 const questionButtonsContainer = document.getElementById("question-buttons");
 const questionEndBtn = document.getElementById("question-end-btn");
 const questionEditorList = document.getElementById("question-editor-list");
@@ -4027,6 +4482,7 @@ settingsBtn.addEventListener("click", () => {
     if (dwellTimeSelect) dwellTimeSelect.value = String(dwellTimeMs);
     openSimplePanelEditor();
     openQuestionEditor();
+    openComposeEditor();
     if (mouseLeftInput) mouseLeftInput.value = mouseClickSpeech.left;
     if (mouseMiddleInput) mouseMiddleInput.value = mouseClickSpeech.middle;
     if (mouseRightInput) mouseRightInput.value = mouseClickSpeech.right;
@@ -4053,6 +4509,7 @@ if (apiKeyRevealBtn) {
 saveSettingsBtn.addEventListener("click", () => {
     // 画像を含み容量超過しやすいパネル設定を後にして、部分保存になりにくくする
     if (!saveQuestionEditor()) return;
+    if (!saveComposeEditor()) return;
     if (!saveSimplePanelEditor()) return;
 
     const newKey = apiKeyInput.value.trim();
@@ -4098,9 +4555,13 @@ if (simpleCustomAddBtn) simpleCustomAddBtn.addEventListener("click", addSimpleCu
 document.getElementById("question-custom-add-btn")?.addEventListener("click", addCustomQuestion);
 if (questionEndBtn) questionEndBtn.addEventListener("click", endQuestion);
 renderQuestionButtons();
-document.getElementById("simple-enable-all-btn")?.addEventListener("click", () => setAllSimplePanelsEnabled(true));
-document.getElementById("simple-disable-all-btn")?.addEventListener("click", () => setAllSimplePanelsEnabled(false));
+document.getElementById("simple-clear-layout-btn")?.addEventListener("click", clearSimpleLayout);
 document.getElementById("simple-reset-panels-btn")?.addEventListener("click", resetSimplePanelSelection);
+if (simpleShowRestInput) simpleShowRestInput.addEventListener("change", renderSimplePanelEditor);
+// 画面から外すドロップ先: 「追加できるパネル」の一覧
+if (simplePanelList) bindLayoutDrop(simplePanelList, id => removeLayoutPanel(id));
+document.getElementById("compose-custom-add-btn")?.addEventListener("click", addComposeCustomWord);
+if (composeCustomTypeSelect) composeCustomTypeSelect.addEventListener("change", syncComposeCustomFormFields);
 
 if (simpleCustomImageInput) {
     simpleCustomImageInput.addEventListener("change", async () => {

@@ -1845,14 +1845,6 @@ header {
     font-size: 0.85rem;
 }
 
-#simple-panel-list {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-    max-height: 46vh;
-    overflow-y: auto;
-    padding-right: 0.2rem;
-}
 
 .simple-editor-row {
     display: flex;
@@ -2194,4 +2186,393 @@ header {
 /* 右上の⚙と重ならないよう右側に余白を取る */
 #simple-message {
     padding-right: 64px;
+}
+
+/* =========================================================
+   設定を開いている間はポインタと滞留表示を隠す（機能も停止中）
+   ========================================================= */
+body.settings-open #pointer,
+body.settings-open #dwell-indicator {
+    display: none;
+}
+
+/* =========================================================
+   文づくりモード
+   ========================================================= */
+#simple-tabs {
+    flex: 0 0 clamp(52px, 9vh, 80px);
+    display: flex;
+    gap: 0.75rem;
+}
+
+#simple-tabs .h-btn.simple-ctrl.simple-tab {
+    flex: 1 1 0;
+    font-size: clamp(1.3rem, 2.4vw, 2.2rem);
+    padding: 0.2rem 0.6rem;
+    background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+    border-color: rgba(100, 116, 139, 0.35);
+}
+
+#simple-tabs .h-btn.simple-ctrl.simple-tab.active {
+    background: linear-gradient(180deg, #334155 0%, #1f2933 100%);
+    border-color: #1f2933;
+    color: #fff;
+}
+
+/* 言葉の種類ごとに色分け（名詞=青 / 程度・時=黄 / 様子・動作=赤） */
+#app[data-compose="1"] .simple-grid .h-btn.compose-word--noun {
+    background: linear-gradient(180deg, #ffffff 0%, #e8f1fb 100%);
+    border-color: rgba(69, 123, 157, 0.4);
+}
+
+#app[data-compose="1"] .simple-grid .h-btn.compose-word--adv {
+    background: linear-gradient(180deg, #ffffff 0%, #fff6d9 100%);
+    border-color: rgba(214, 158, 46, 0.45);
+}
+
+#app[data-compose="1"] .simple-grid .h-btn.compose-word--pred {
+    background: linear-gradient(180deg, #ffffff 0%, #ffecef 100%);
+    border-color: rgba(230, 57, 70, 0.35);
+}
+
+#app[data-compose="1"] .simple-grid .h-btn {
+    font-size: clamp(1.8rem, 3.8vw, 3.4rem);
+}
+
+#app[data-compose="1"] .simple-grid .h-btn-emoji {
+    font-size: 1.3em;
+}
+
+#app[data-compose="1"] #simple-message {
+    flex-basis: clamp(72px, 13vh, 116px);
+}
+
+.simple-message-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.simple-message-chips {
+    display: flex;
+    gap: 0.5rem;
+    overflow: hidden;
+}
+
+.simple-message-preview {
+    font-size: clamp(1rem, 2vw, 1.6rem);
+    font-weight: 700;
+    color: #7f5539;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* =========================================================
+   設定: 画面配置エディタ
+   ========================================================= */
+.layout-pages {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1rem;
+}
+
+.layout-page {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    padding: 0.6rem;
+    border-radius: 0.9rem;
+    background: #eef2f5;
+}
+
+.layout-page.is-spare {
+    background: repeating-linear-gradient(45deg, #f6f8fa 0 10px, #eef2f5 10px 20px);
+}
+
+.layout-page-label {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: var(--text-dim);
+}
+
+.layout-grid {
+    display: grid;
+    gap: 4px;
+    width: 100%;
+}
+
+.layout-tile {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 3px;
+    border-radius: 0.45rem;
+    border: 2px solid #d0d7de;
+    background: #fff;
+    cursor: grab;
+    overflow: hidden;
+    user-select: none;
+    transition: border-color 0.12s, box-shadow 0.12s, opacity 0.12s;
+}
+
+.layout-tile:hover {
+    border-color: #afb8c1;
+}
+
+.layout-tile.selected {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 2px rgba(230, 57, 70, 0.3);
+}
+
+.layout-tile.dragging,
+.palette-item.dragging {
+    opacity: 0.35;
+}
+
+.layout-tile.is-empty {
+    border-style: dashed;
+    background: rgba(255, 255, 255, 0.5);
+    cursor: default;
+}
+
+.layout-tile.drop-target,
+.layout-palette.drop-target {
+    border-color: var(--primary);
+    box-shadow: inset 4px 0 0 var(--primary);
+}
+
+.layout-thumb {
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: clamp(1rem, 2.2vw, 1.8rem);
+    line-height: 1;
+}
+
+.layout-thumb img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+}
+
+.layout-thumb.is-text {
+    display: none;
+}
+
+.layout-tile-name {
+    flex: 0 0 auto;
+    max-width: 100%;
+    font-size: 0.72rem;
+    font-weight: 700;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.layout-thumb.is-text + .layout-tile-name {
+    font-size: 0.85rem;
+    white-space: normal;
+    text-align: center;
+}
+
+.layout-tile-dwell {
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    padding: 0 0.3rem;
+    border-radius: 999px;
+    background: var(--primary);
+    color: #fff;
+    font-size: 0.62rem;
+    font-weight: 700;
+}
+
+.layout-tile-remove {
+    position: absolute;
+    right: 2px;
+    top: 2px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(15, 23, 42, 0.65);
+    color: #fff;
+    font-size: 0.7rem;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s;
+}
+
+.layout-tile:hover .layout-tile-remove,
+.layout-tile.selected .layout-tile-remove,
+.palette-item .layout-tile-remove {
+    opacity: 1;
+}
+
+.layout-bar {
+    display: flex;
+    justify-content: center;
+    gap: 4px;
+}
+
+.layout-bar span {
+    flex: 1 1 0;
+    max-width: 40%;
+    padding: 2px 4px;
+    border-radius: 0.4rem;
+    background: #dbe4ee;
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-align: center;
+    color: #475569;
+}
+
+.layout-detail {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.6rem 0.8rem;
+    border-radius: 0.8rem;
+    border: 1px solid #eaeef2;
+    background: #f6f8fa;
+}
+
+.layout-detail.is-empty {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+}
+
+/* 追加できるパネル / 文づくりの言葉: 小さなタイルを並べる（スクロールは設定画面全体の1本だけ） */
+.layout-palette {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 0.45rem;
+    min-height: 4rem;
+    padding: 0.4rem;
+    border-radius: 0.8rem;
+    border: 2px dashed transparent;
+}
+
+.palette-item {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    height: 84px;
+    padding: 4px;
+    border-radius: 0.6rem;
+    border: 1px solid #d0d7de;
+    background: #fff;
+    cursor: grab;
+    user-select: none;
+}
+
+.palette-item:hover {
+    border-color: var(--primary);
+}
+
+.palette-item.is-disabled {
+    opacity: 0.45;
+}
+
+.compose-editor-item {
+    cursor: pointer;
+    height: 100px;
+}
+
+.compose-editor-item input[type="checkbox"] {
+    position: absolute;
+    left: 4px;
+    top: 4px;
+    accent-color: var(--primary);
+}
+
+.compose-editor-meta {
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+.compose-custom-form {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.7rem;
+    align-items: end;
+}
+
+.field--wide2 {
+    grid-column: span 2;
+}
+
+#compose-custom-add-btn {
+    grid-column: 1 / -1;
+    justify-self: end;
+}
+
+/* 配置プレビュー（左）と追加できるパネル（右・固定表示）を横並びにして、ドラッグ中にスクロールしなくて済むようにする */
+.layout-editor {
+    display: grid;
+    grid-template-columns: minmax(0, 1.5fr) minmax(240px, 1fr);
+    gap: 1rem;
+    align-items: start;
+}
+
+.layout-editor .layout-pages {
+    grid-template-columns: 1fr;
+}
+
+.layout-palette-section {
+    position: sticky;
+    top: 0;
+    max-height: calc(min(720px, 100vh - 2rem) - 180px);
+    overflow-y: auto;
+}
+
+.layout-palette-section .layout-palette {
+    grid-template-columns: repeat(auto-fill, minmax(78px, 1fr));
+}
+
+.layout-palette-section .palette-item {
+    height: 76px;
+}
+
+@media (max-width: 860px) {
+    .layout-editor {
+        grid-template-columns: 1fr;
+    }
+
+    .layout-palette-section {
+        position: static;
+        max-height: none;
+    }
+}
+
+.compose-editor-item {
+    height: auto;
+    min-height: 92px;
+    justify-content: center;
+}
+
+.compose-editor-item .layout-thumb {
+    flex: 0 0 40px;
+}
+
+.compose-editor-item .layout-thumb.is-text {
+    display: none;
 }
