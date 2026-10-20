@@ -29,6 +29,7 @@ FacePointerは、顔の動きだけで操作できるコミュニケーション
 - `main` へのpushで `.github/workflows/pages.yml` が `dist/` とMediaPipeモデルをGitHub Pagesへ自動デプロイします（Windowsビルドとは別ジョブで並行実行）。
 - 初回のみ、リポジトリの Settings → Pages → Build and deployment の Source を「GitHub Actions」にしてください。
 - 設定・学習内容・APIキーはブラウザごとに保存されます（デスクトップ版とは共有しません）。
+- 介助者メニューの「⛶ 全画面」で全画面表示、もう一度押す（または Esc）で解除。
 
 ### 開発者 (ビルド方法)
 

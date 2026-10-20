@@ -5099,6 +5099,32 @@ audioCacheBtn.addEventListener("click", () => {
     }
 });
 
+// 全画面表示の切り替え（ブラウザ版向け。Escでも解除される）
+const fullscreenBtn = document.getElementById("fullscreen-btn");
+
+function updateFullscreenButton() {
+    if (!fullscreenBtn) return;
+    const label = fullscreenBtn.querySelector(".fullscreen-btn-label");
+    if (label) label.textContent = document.fullscreenElement ? "全画面を解除" : "全画面";
+}
+
+if (fullscreenBtn) {
+    if (!document.fullscreenEnabled) {
+        fullscreenBtn.style.display = "none";
+    } else {
+        fullscreenBtn.addEventListener("click", async () => {
+            try {
+                if (document.fullscreenElement) await document.exitFullscreen();
+                else await document.documentElement.requestFullscreen();
+            } catch (error) {
+                console.warn("fullscreen toggle failed:", error);
+            }
+        });
+        document.addEventListener("fullscreenchange", updateFullscreenButton);
+        updateFullscreenButton();
+    }
+}
+
 const settingsBtn = document.getElementById("settings-btn");
 const settingsModal = document.getElementById("settings-modal");
 const apiKeyInput = document.getElementById("api-key-input");
