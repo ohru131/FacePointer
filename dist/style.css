@@ -938,6 +938,33 @@ header {
     }
 }
 
+.mouse-speech-row {
+    display: flex;
+    gap: 0.6rem;
+}
+
+.mouse-speech-row input {
+    flex: 1;
+    min-width: 0;
+}
+
+.tts-preview-btn {
+    flex-shrink: 0;
+    width: 3rem;
+    padding: 0;
+    font-size: 1.2rem;
+}
+
+.tts-preview-btn.is-loading {
+    opacity: 0.5;
+    animation: tts-preview-pulse 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes tts-preview-pulse {
+    from { transform: scale(1); }
+    to { transform: scale(0.9); }
+}
+
 #mouse-click-feedback {
     position: fixed;
     top: 18px;
@@ -2614,4 +2641,25 @@ body.settings-open #dwell-indicator {
 #app[data-compose="1"] .simple-grid .h-btn.compose-word--phrase .h-btn-text {
     white-space: normal;
     line-height: 1.25;
+}
+
+.tts-model-row {
+    display: flex;
+    gap: 0.6rem;
+}
+
+.tts-model-row select,
+.tts-model-row input {
+    flex: 1;
+    min-width: 0;
+}
+
+.tts-model-row button {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.mouse-speech-row .field {
+    flex: 1;
+    min-width: 0;
 }

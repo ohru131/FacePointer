@@ -432,13 +432,32 @@
                             </section>
 
                             <section class="settings-section">
+                                <h4><label for="tts-model-select">TTSモデル</label></h4>
+                                <div class="tts-model-row">
+                                    <select id="tts-model-select"></select>
+                                    <button id="tts-model-fetch-btn" class="ctrl-btn secondary" type="button">モデル一覧を取得</button>
+                                </div>
+                                <small id="tts-model-status"></small>
+                                <p class="settings-help">モデル変更後は「音声データを更新」で再生成してください。</p>
+                                <h4><label for="gemini-voice-select">Gemini 話者（Geminiモデル選択時）</label></h4>
+                                <select id="gemini-voice-select"></select>
+                                <h4><label for="gemini-style-input">Gemini 口調指示</label></h4>
+                                <div class="tts-model-row">
+                                    <input type="text" id="gemini-style-input" placeholder="例: 明るく、はきはきと読み上げてください">
+                                    <button id="gemini-style-reset-btn" class="ctrl-btn secondary" type="button">既定に戻す</button>
+                                </div>
+                                <p class="settings-help">空欄なら口調指示なし。変更後は「音声データを更新」で再生成してください。</p>
+                            </section>
+
+                            <section class="settings-section">
                                 <h4>マウスクリックで話す文言</h4>
                                 <div class="mouse-speech-grid">
-                                    <label class="field field--row"><span>左クリック</span><input type="text" id="mouse-left-input" placeholder="左クリックの文言"></label>
-                                    <label class="field field--row"><span>中クリック</span><input type="text" id="mouse-middle-input" placeholder="真ん中クリックの文言"></label>
-                                    <label class="field field--row"><span>右クリック</span><input type="text" id="mouse-right-input" placeholder="右クリックの文言"></label>
+                                    <div class="mouse-speech-row"><label class="field field--row"><span>左クリック</span><input type="text" id="mouse-left-input" placeholder="左クリックの文言"></label><button class="ctrl-btn secondary tts-preview-btn" type="button" data-target="mouse-left-input" title="選択中のTTS設定で試聴">🔊</button></div>
+                                    <div class="mouse-speech-row"><label class="field field--row"><span>中クリック</span><input type="text" id="mouse-middle-input" placeholder="真ん中クリックの文言"></label><button class="ctrl-btn secondary tts-preview-btn" type="button" data-target="mouse-middle-input" title="選択中のTTS設定で試聴">🔊</button></div>
+                                    <div class="mouse-speech-row"><label class="field field--row"><span>右クリック</span><input type="text" id="mouse-right-input" placeholder="右クリックの文言"></label><button class="ctrl-btn secondary tts-preview-btn" type="button" data-target="mouse-right-input" title="選択中のTTS設定で試聴">🔊</button></div>
                                 </div>
-                                <p class="settings-help">介助者がマウスで即時発話させるためのショートカット。</p>
+                                <small id="tts-preview-status" aria-live="polite"></small>
+                                <p class="settings-help">介助者がマウスで即時発話させるためのショートカット。🔊 で保存前のTTS設定を試聴できます。</p>
                             </section>
                         </div>
                     </div>
