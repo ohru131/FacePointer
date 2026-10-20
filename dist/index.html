@@ -45,7 +45,7 @@
             <div id="simple-panel">
                 <!-- 質問文 / つなげた文の表示 -->
                 <div id="simple-message" aria-live="polite" style="display:none;"></div>
-                <!-- 文づくりモードの分類タブ -->
+                <!-- お話モードのタブ（お話・相づち・よく話す・相手） -->
                 <div id="simple-tabs" style="display:none;"></div>
                 <div id="simple-grid" class="simple-grid"></div>
                 <div id="simple-bar"></div>
@@ -162,7 +162,7 @@
                     <nav class="settings-tabs" aria-label="設定の分類">
                         <button class="settings-tab-btn active" type="button" data-tab="basic-tab"><span>🧭</span>操作</button>
                         <button class="settings-tab-btn" type="button" data-tab="simple-tab"><span>🔲</span>シンプルモード</button>
-                        <button class="settings-tab-btn" type="button" data-tab="compose-tab"><span>✍️</span>文づくり</button>
+                        <button class="settings-tab-btn" type="button" data-tab="talk-tab"><span>💬</span>お話</button>
                         <button class="settings-tab-btn" type="button" data-tab="question-tab"><span>❓</span>質問</button>
                         <button class="settings-tab-btn" type="button" data-tab="voice-tab"><span>🔊</span>音声</button>
                     </nav>
@@ -186,10 +186,10 @@
                                         <span class="choice-card-desc">パネルを選ぶだけで発話。止まる（滞留）か口を開けて確定。</span>
                                     </label>
                                     <label class="choice-card">
-                                        <input type="radio" name="app-mode" value="compose">
-                                        <span class="choice-card-icon">✍️</span>
-                                        <span class="choice-card-title">文づくりモード</span>
-                                        <span class="choice-card-desc">「どこ・だれ・どうした・してほしい」から言葉を選んで文を作り、「話す」で発話。</span>
+                                        <input type="radio" name="app-mode" value="talk">
+                                        <span class="choice-card-icon">💬</span>
+                                        <span class="choice-card-title">お話モード</span>
+                                        <span class="choice-card-desc">話題 → 内容…と2〜4回選んで会話の文を話す。相づち・よく話す文も1回で。</span>
                                     </label>
                                 </div>
                             </section>
@@ -301,84 +301,49 @@
                             </section>
                         </div>
 
-                        <!-- Compose Tab -->
-                        <div id="compose-tab" class="settings-tab-content">
+                        <!-- Talk Tab -->
+                        <div id="talk-tab" class="settings-tab-content">
                             <section class="settings-section">
-                                <h4>文づくりモード</h4>
-                                <p class="settings-help">言葉を選ぶと助詞を補って文にします。例: 頭 → とても → 痛い ＝「頭がとても痛いです。」、お母さん → 会いたい ＝「お母さんに会いたいです。」。続けて選べば複数の文になります。</p>
-                                <label class="toggle-row">
-                                    <input type="checkbox" id="compose-smart-suggest-input">
-                                    <span class="toggle-switch" aria-hidden="true"></span>
-                                    <span>✨おすすめを出す<small>選ぶたびに「おすすめ」タブへ戻り、次に合う言葉を出す（部位→痛い・さすって、人→会いたい・呼んで）。文が空のときは、よく話す文も出す</small></span>
-                                </label>
-                                <label class="toggle-row">
-                                    <input type="checkbox" id="compose-auto-speak-input">
-                                    <span class="toggle-switch" aria-hidden="true"></span>
-                                    <span>1文できたら自動で話す<small>「痛い」「呼んで」など文末の言葉を選んだら、すぐ発話して次の文へ</small></span>
-                                </label>
-                                <label class="toggle-row">
-                                    <input type="checkbox" id="compose-auto-advance-input">
-                                    <span class="toggle-switch" aria-hidden="true"></span>
-                                    <span>次のタブへ自動で進む（おすすめOFF時）<small>「どこ」を選んだら「どうした」、「だれ」を選んだら「してほしい」へ</small></span>
-                                </label>
-                                <label class="toggle-row">
-                                    <input type="checkbox" id="compose-mouth-speaks-input">
-                                    <span class="toggle-switch" aria-hidden="true"></span>
-                                    <span>口を開けたら文を話す<small>文が1語以上あるとき、口を開けるとどこを見ていても組み立てた文を発話。言葉の選択は滞留で行う（滞留OFFだと2語目以降を口で選べないので、その場合はOFF）</small></span>
-                                </label>
+                                <h4>お話モード</h4>
+                                <p class="settings-help">用意した会話を「話題 → 内容 → …」と2〜4回選んで話します。どの段でも「🔊 これで話す」で確定でき、続きのない言葉を選ぶとそのまま話します。上のタブの「👤 相手」で来ている人を選ぶと、「お母さん、〜」のように呼びかけが入り、その人向けの話題も出ます（選ばなければ呼びかけなし）。</p>
                             </section>
 
                             <section class="settings-section">
-                                <h4>学習</h4>
+                                <h4>よく話す</h4>
                                 <label class="toggle-row">
-                                    <input type="checkbox" id="compose-learn-input">
+                                    <input type="checkbox" id="talk-learn-input">
                                     <span class="toggle-switch" aria-hidden="true"></span>
-                                    <span>使い方を学習する<small>話した文から、言葉のつながりとよく話す文を覚え、おすすめの順番に使う（この端末内だけに保存）</small></span>
+                                    <span>話した文を記録する<small>「⭐ よく話す」タブに回数の多い順で出す（この端末内だけに保存）</small></span>
                                 </label>
                                 <div class="settings-section-head">
-                                    <span id="compose-history-summary" class="settings-help"></span>
-                                    <button id="compose-history-clear-btn" class="ctrl-btn secondary" type="button">学習を消去</button>
+                                    <span id="talk-history-summary" class="settings-help"></span>
+                                    <button id="talk-history-clear-btn" class="ctrl-btn secondary" type="button">記録を消去</button>
                                 </div>
                             </section>
 
                             <section class="settings-section">
                                 <h4>表示する言葉</h4>
-                                <div id="compose-word-filter" class="filter-chips"></div>
-                                <div id="compose-word-list" class="layout-palette"></div>
+                                <p class="settings-help">チェックを外すと、その言葉とその先の言葉が出なくなります（話したくない話題を外す）。</p>
+                                <div id="talk-word-filter" class="filter-chips"></div>
+                                <div id="talk-word-list" class="talk-editor-list"></div>
                             </section>
 
                             <section class="settings-section">
-                                <h4>言葉を追加（選択中のタブへ）</h4>
-                                <div class="compose-custom-form">
+                                <h4>文を追加（「✏️ 自分の言葉」の話題に並ぶ）</h4>
+                                <div class="talk-custom-form">
                                     <label class="field">
-                                        <span>種類</span>
-                                        <select id="compose-custom-type-select">
-                                            <option value="noun">どこ・だれ（名詞）</option>
-                                            <option value="adv">程度・時（とても・今すぐ など）</option>
-                                            <option value="pred">様子・動作（痛い・呼んで など）</option>
-                                        </select>
-                                    </label>
-                                    <label class="field">
-                                        <span>言葉 <em>必須</em></span>
-                                        <input type="text" id="compose-custom-name-input" placeholder="例: ひざ / 吸引して" maxlength="12">
+                                        <span>パネルの言葉 <em>必須</em></span>
+                                        <input type="text" id="talk-custom-label-input" placeholder="例: 推しの話" maxlength="12">
                                     </label>
                                     <label class="field">
                                         <span>絵文字</span>
-                                        <input type="text" id="compose-custom-emoji-input" placeholder="🦵" maxlength="8">
+                                        <input type="text" id="talk-custom-emoji-input" placeholder="⚔️" maxlength="8">
                                     </label>
-                                    <label class="field compose-pred-only">
-                                        <span>前に付ける助詞</span>
-                                        <select id="compose-custom-particle-select">
-                                            <option value="が">が（頭が〜）</option>
-                                            <option value="を">を（頭を〜）</option>
-                                            <option value="に">に（お母さんに〜）</option>
-                                        </select>
+                                    <label class="field field--wide2">
+                                        <span>読み上げる文（先頭に {呼}、 と書くと相手の呼び名が入る）</span>
+                                        <input type="text" id="talk-custom-say-input" placeholder="例: {呼}、推しの話を聞いてくれる？" maxlength="80">
                                     </label>
-                                    <label class="field compose-pred-only field--wide2">
-                                        <span>読み上げる言い方</span>
-                                        <input type="text" id="compose-custom-text-input" placeholder="例: 吸引してください。" maxlength="40">
-                                    </label>
-                                    <button id="compose-custom-add-btn" class="ctrl-btn primary" type="button">＋ 追加</button>
+                                    <button id="talk-custom-add-btn" class="ctrl-btn primary" type="button">＋ 追加</button>
                                 </div>
                             </section>
                         </div>

@@ -2224,7 +2224,7 @@ body.settings-open #dwell-indicator {
 }
 
 /* =========================================================
-   文づくりモード
+   お話モード
    ========================================================= */
 #simple-tabs {
     flex: 0 0 clamp(52px, 9vh, 80px);
@@ -2246,39 +2246,51 @@ body.settings-open #dwell-indicator {
     color: #fff;
 }
 
-/* 言葉の種類ごとに色分け（名詞=青 / 程度・時=黄 / 様子・動作=赤） */
-#app[data-compose="1"] .simple-grid .h-btn.compose-word--noun {
+/* お話モード: 続きのある言葉=青 / そのまま話す言葉=赤 / 「これで話す」=橙 / 相づち=緑 */
+#app[data-talk="1"] .simple-grid .h-btn.talk-panel--branch {
     background: linear-gradient(180deg, #ffffff 0%, #e8f1fb 100%);
     border-color: rgba(69, 123, 157, 0.4);
 }
 
-#app[data-compose="1"] .simple-grid .h-btn.compose-word--adv {
-    background: linear-gradient(180deg, #ffffff 0%, #fff6d9 100%);
-    border-color: rgba(214, 158, 46, 0.45);
-}
-
-#app[data-compose="1"] .simple-grid .h-btn.compose-word--pred {
+#app[data-talk="1"] .simple-grid .h-btn.talk-panel--leaf {
     background: linear-gradient(180deg, #ffffff 0%, #ffecef 100%);
     border-color: rgba(230, 57, 70, 0.35);
 }
 
-#app[data-compose="1"] .simple-grid .h-btn {
+#app[data-talk="1"] .simple-grid .h-btn.talk-panel--say {
+    background: linear-gradient(180deg, #f4a261 0%, #e76f51 100%);
+    border-color: #e76f51;
+    color: #fff;
+}
+
+#app[data-talk="1"] .simple-grid .h-btn.talk-panel--aizuchi {
+    background: linear-gradient(180deg, #ffffff 0%, #e6f6ea 100%);
+    border-color: rgba(42, 157, 143, 0.45);
+}
+
+#app[data-talk="1"] .simple-grid .h-btn.talk-panel--partner.is-selected {
+    background: linear-gradient(180deg, #334155 0%, #1f2933 100%);
+    border-color: #1f2933;
+    color: #fff;
+}
+
+#app[data-talk="1"] .simple-grid .h-btn {
     font-size: clamp(1.5rem, 3.2vw, 3rem);
 }
 
-/* 文づくりは上部に文・タブがあり行が低いので、絵文字・アイコンは縮められるようにして文字を優先 */
-#app[data-compose="1"] .simple-grid .h-btn-emoji {
+/* お話モードは上部に文・タブがあり行が低いので、絵文字・アイコンは縮められるようにして文字を優先 */
+#app[data-talk="1"] .simple-grid .h-btn-emoji {
     font-size: 1.1em;
     flex: 0 1 auto;
     min-height: 0;
     overflow: hidden;
 }
 
-#app[data-compose="1"] .simple-grid .h-btn-icon {
+#app[data-talk="1"] .simple-grid .h-btn-icon {
     height: 48%;
 }
 
-#app[data-compose="1"] #simple-message {
+#app[data-talk="1"] #simple-message {
     flex-basis: clamp(72px, 13vh, 116px);
 }
 
@@ -2523,28 +2535,57 @@ body.settings-open #dwell-indicator {
     opacity: 0.45;
 }
 
-.compose-editor-item {
-    cursor: pointer;
-    height: 100px;
+.talk-editor-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 360px;
+    overflow-y: auto;
 }
 
-.compose-editor-item input[type="checkbox"] {
-    position: absolute;
-    left: 4px;
-    top: 4px;
+.talk-editor-row {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.3rem 0.5rem 0.3rem calc(0.5rem + var(--depth, 0) * 1.4rem);
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.talk-editor-row:hover {
+    background: rgba(100, 116, 139, 0.08);
+}
+
+.talk-editor-row.is-disabled {
+    opacity: 0.45;
+}
+
+.talk-editor-row input[type="checkbox"] {
     accent-color: var(--primary);
 }
 
-.compose-editor-meta {
-    font-size: 0.65rem;
+.talk-editor-name {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.talk-editor-say {
+    flex: 1;
+    min-width: 0;
     color: var(--text-dim);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 100%;
 }
 
-.compose-custom-form {
+.talk-editor-remove {
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    cursor: pointer;
+}
+
+.talk-custom-form {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 0.7rem;
@@ -2555,7 +2596,7 @@ body.settings-open #dwell-indicator {
     grid-column: span 2;
 }
 
-#compose-custom-add-btn {
+#talk-custom-add-btn {
     grid-column: 1 / -1;
     justify-self: end;
 }
@@ -2598,47 +2639,35 @@ body.settings-open #dwell-indicator {
     }
 }
 
-.compose-editor-item {
-    height: auto;
-    min-height: 92px;
-    justify-content: center;
-}
-
-.compose-editor-item .layout-thumb {
-    flex: 0 0 40px;
-}
-
-.compose-editor-item .layout-thumb.is-text {
-    display: none;
-}
-
-.simple-message-hint {
-    margin-left: 0.6rem;
-    font-size: 0.75em;
-    font-weight: 400;
-    color: var(--text-dim);
-}
-
-/* ✨おすすめタブ */
-#simple-tabs .h-btn.simple-ctrl.simple-tab.simple-tab--suggest {
+/* 選んだ相手のタブ */
+#simple-tabs .h-btn.simple-ctrl.simple-tab.simple-tab--partner {
     background: linear-gradient(180deg, #fff8e1 0%, #ffe9a8 100%);
     border-color: rgba(214, 158, 46, 0.55);
 }
 
-#simple-tabs .h-btn.simple-ctrl.simple-tab.simple-tab--suggest.active {
+#simple-tabs .h-btn.simple-ctrl.simple-tab.simple-tab--partner.active {
     background: linear-gradient(180deg, #f4a261 0%, #e76f51 100%);
     border-color: #e76f51;
     color: #fff;
 }
 
+.simple-message-chip--partner {
+    background: #fff4d6;
+}
+
+.simple-message-preview.is-placeholder {
+    font-weight: 400;
+    color: var(--text-dim);
+}
+
 /* よく話す文（そのまま発話する候補） */
-#app[data-compose="1"] .simple-grid .h-btn.compose-word--phrase {
+#app[data-talk="1"] .simple-grid .h-btn.talk-panel--phrase {
     background: linear-gradient(180deg, #ffffff 0%, #fff4d6 100%);
     border-color: rgba(244, 162, 97, 0.6);
     font-size: clamp(1rem, 1.9vw, 1.7rem);
 }
 
-#app[data-compose="1"] .simple-grid .h-btn.compose-word--phrase .h-btn-text {
+#app[data-talk="1"] .simple-grid .h-btn.talk-panel--phrase .h-btn-text {
     white-space: normal;
     line-height: 1.25;
 }

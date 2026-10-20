@@ -1,4 +1,5 @@
 import vision from "./mediapipe/vision_bundle.mjs";
+import { TALK_TREE } from "./talk-data.js";
 const { FaceLandmarker, FilesetResolver, DrawingUtils } = vision;
 
 const video = document.getElementById("webcam");
@@ -130,12 +131,14 @@ const SYMPTOM_IDLE_RESET_MS = 30000;
 
 const SYMPTOM_FLOW_DIRECT = "direct";
 
-// 操作モード: 2段階の症状モード / パネルを選ぶだけのシンプルモード
+// 操作モード: 2段階の症状モード / パネルを選ぶだけのシンプルモード / 会話を選んでいくお話モード
 const APP_MODE_KEY = "app_mode";
 const APP_MODE_SYMPTOM = "symptom";
 const APP_MODE_SIMPLE = "simple";
-const APP_MODE_COMPOSE = "compose";
-const APP_MODES = [APP_MODE_SYMPTOM, APP_MODE_SIMPLE, APP_MODE_COMPOSE];
+const APP_MODE_TALK = "talk";
+const APP_MODES = [APP_MODE_SYMPTOM, APP_MODE_SIMPLE, APP_MODE_TALK];
+// 旧「文づくりモード」はお話モードに置き換えた
+const APP_MODE_LEGACY = { compose: APP_MODE_TALK };
 const SIMPLE_ROW_ID = "s";
 const SIMPLE_CONFIRM_DISPLAY_MS = 2200;
 // 滞留(dwell)選択: 同じパネル上でしばらく動かなければ確定する
@@ -235,7 +238,12 @@ let jawOpenThreshold = readStoredNumber(JAW_OPEN_THRESHOLD_KEY, JAW_OPEN_THRESHO
 let noseGain = readStoredNumber(NOSE_GAIN_KEY, NOSE_GAIN_DEFAULT, 0, NOSE_GAIN_MAX);
 let yawGain = readStoredNumber(YAW_GAIN_KEY, YAW_GAIN_DEFAULT, 0, YAW_GAIN_MAX);
 let iconStyle = localStorage.getItem(ICON_STYLE_KEY) || ICON_STYLE_DEFAULT;
-let appMode = APP_MODES.includes(localStorage.getItem(APP_MODE_KEY)) ? localStorage.getItem(APP_MODE_KEY) : APP_MODE_SYMPTOM;
+function loadAppMode() {
+    const stored = localStorage.getItem(APP_MODE_KEY);
+    const mode = APP_MODE_LEGACY[stored] || stored;
+    return APP_MODES.includes(mode) ? mode : APP_MODE_SYMPTOM;
+}
+let appMode = loadAppMode();
 let dwellTimeMs = readStoredNumber(DWELL_TIME_KEY, DWELL_TIME_DEFAULT_MS, 0, DWELL_TIME_MAX_MS); // 0 = 滞留確定OFF
 
 // Dwell state
@@ -250,13 +258,13 @@ let dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
 // 介助者が出した質問への回答中（モードに関係なくパネル選択画面になる）
 let activeQuestion = null;
 
-// パネルを縦横に選ぶ画面（シンプル・文づくり・質問への回答）かどうか
+// パネルを縦横に選ぶ画面（シンプル・お話・質問への回答）かどうか
 function isSimpleMode() {
     return appMode !== APP_MODE_SYMPTOM || activeQuestion !== null;
 }
 
-function isComposeScreen() {
-    return appMode === APP_MODE_COMPOSE && activeQuestion === null;
+function isTalkScreen() {
+    return appMode === APP_MODE_TALK && activeQuestion === null;
 }
 
 // 設定画面を開いている間は、確定・発話などの機能を止める
@@ -966,7 +974,7 @@ async function startCamera() {
 
 function fitButtonText(btn, label) {
     // よく話す文の候補は長いので折り返して表示する
-    if (btn.classList.contains("compose-word--phrase")) {
+    if (btn.classList.contains("talk-panel--phrase")) {
         label.style.whiteSpace = "normal";
         label.style.fontSize = "";
         return;
@@ -1232,11 +1240,9 @@ const SIMPLE_CTRL_PREV = "ctrl-prev";
 const SIMPLE_CTRL_NEXT = "ctrl-next";
 const SIMPLE_CTRL_REST = "ctrl-rest";
 const SIMPLE_CTRL_CANCEL = "ctrl-cancel";
-const SIMPLE_CTRL_SPEAK = "ctrl-speak";
 const SIMPLE_CTRL_BACKSPACE = "ctrl-backspace";
 const SIMPLE_CTRL_CLEAR = "ctrl-clear";
 // 文をつなげる: ためられるパネルの上限（長すぎると聞き取りにくい）
-const MESSAGE_MAX_PARTS = 6;
 // パネルごとの滞留時間の選択肢(ms)
 const PANEL_DWELL_CHOICES = [800, 1000, 1500, 2000, 3000, 5000];
 // 休憩中に再開するときは誤操作を避けるため長めに滞留させる
@@ -1369,7 +1375,6 @@ let simpleCustomPanels = loadSimpleCustomPanels();
 let simpleConfig = loadSimpleConfig();
 let simplePage = 0;
 let isSimplePaused = false;
-let messageParts = [];        // 文をつなげる: ためたパネル
 let activeQuestionStartedAt = 0;
 let pageBeforeQuestion = 0;
 
@@ -1427,359 +1432,254 @@ function createSimpleButton(id, label, options = {}) {
 }
 
 // =========================================================
-// 文づくりモード
-// 「どこ / だれ / どうした / してほしい」から語句を選ぶと、助詞を補って文にする
-//   例: 頭 + とても + 痛い → 「頭がとても痛いです。」 / お母さん + 会いたい → 「お母さんに会いたいです。」
-// type: noun(名詞) / adv(程度・時) / pred(様子・動作。particle は直前の名詞に付ける助詞)
+// お話モード
+// 事前に用意した会話の木（talk-data.js）を「話題 → 内容 → …」と最大4段たどって1文を選ぶ。
+// どの段でも「これで話す」で確定でき、続きのない言葉まで進んだらそのまま話す。
+// 相手（来ている人）を選んでおくと、文頭の「{呼}、」に呼び名が入り、その人向けの話題も出る。
+// 「相づち」は相手の話に1回で反応する短い言葉、「よく話す」は話した文の履歴。
 // =========================================================
-const COMPOSE_CONFIG_KEY = "compose_config_v1";
-const COMPOSE_CUSTOM_KEY = "compose_custom_v1";
-const COMPOSE_TAB_PREFIX = "ctrl-tab-";
-// next: その分類の語句を選んだら自動で切り替えるタブ
-const COMPOSE_CATEGORIES = [
-    { key: "where", label: "どこ", icon: "📍", next: "state" },
-    { key: "who", label: "だれ", icon: "👤", next: "request" },
-    { key: "state", label: "どうした", icon: "💭", next: null },
-    { key: "request", label: "してほしい", icon: "🙏", next: null }
-];
-const COMPOSE_PRESET_WORDS = [
-    { id: "w-head", cat: "where", type: "noun", name: "頭", icon: "media/body-head.png" },
-    { id: "w-neck", cat: "where", type: "noun", name: "首" },
-    { id: "w-shoulder", cat: "where", type: "noun", name: "肩" },
-    { id: "w-chest", cat: "where", type: "noun", name: "胸" },
-    { id: "w-belly", cat: "where", type: "noun", name: "お腹" },
-    { id: "w-back", cat: "where", type: "noun", name: "背中" },
-    { id: "w-waist", cat: "where", type: "noun", name: "腰" },
-    { id: "w-hand", cat: "where", type: "noun", name: "手", icon: "media/body-hand.png" },
-    { id: "w-leg", cat: "where", type: "noun", name: "足", icon: "media/body-leg.png" },
-    { id: "w-throat", cat: "where", type: "noun", name: "のど" },
-    { id: "w-trach", cat: "where", type: "noun", name: "気切" },
-    { id: "w-hip", cat: "where", type: "noun", name: "おしり" },
-    { id: "w-eye", cat: "where", type: "noun", name: "目" },
-    { id: "w-mouth", cat: "where", type: "noun", name: "口" },
-    { id: "w-body", cat: "where", type: "noun", name: "体", icon: "media/body-body.png" },
-    { id: "w-mother", cat: "who", type: "noun", name: "お母さん", emoji: "👩" },
-    { id: "w-father", cat: "who", type: "noun", name: "お父さん", emoji: "👨" },
-    { id: "w-sister", cat: "who", type: "noun", name: "お姉ちゃん", emoji: "👱‍♀️" },
-    { id: "w-brother", cat: "who", type: "noun", name: "お兄ちゃん", emoji: "🧑" },
-    { id: "w-nurse", cat: "who", type: "noun", name: "看護師さん", emoji: "👩‍⚕️" },
-    { id: "w-doctor", cat: "who", type: "noun", name: "先生", emoji: "🩺" },
-    { id: "w-family", cat: "who", type: "noun", name: "家族", emoji: "🏠" },
-    { id: "w-friend", cat: "who", type: "noun", name: "友だち", emoji: "👭" },
-    { id: "w-little", cat: "state", type: "adv", name: "少し", emoji: "🤏" },
-    { id: "w-very", cat: "state", type: "adv", name: "とても", emoji: "‼️" },
-    { id: "w-always", cat: "state", type: "adv", name: "ずっと", emoji: "⏳" },
-    { id: "w-since", cat: "state", type: "adv", name: "さっきから", emoji: "🕐" },
-    { id: "w-pain", cat: "state", type: "pred", name: "痛い", text: "痛いです。", particle: "が", icon: "media/symptom-pain.png" },
-    { id: "w-itch", cat: "state", type: "pred", name: "かゆい", text: "かゆいです。", particle: "が", icon: "media/symptom-itch.png" },
-    { id: "w-numb", cat: "state", type: "pred", name: "しびれる", text: "しびれます。", particle: "が", emoji: "⚡" },
-    { id: "w-hard", cat: "state", type: "pred", name: "苦しい", text: "苦しいです。", particle: "が", emoji: "😮‍💨" },
-    { id: "w-heavy", cat: "state", type: "pred", name: "重い", text: "重いです。", particle: "が", emoji: "🪨" },
-    { id: "w-hot", cat: "state", type: "pred", name: "熱い", text: "熱いです。", particle: "が", icon: "media/symptom-hot.png" },
-    { id: "w-cold", cat: "state", type: "pred", name: "冷たい", text: "冷たいです。", particle: "が", icon: "media/symptom-cold.png" },
-    { id: "w-sick", cat: "state", type: "pred", name: "気持ち悪い", text: "気持ち悪いです。", particle: "が", icon: "media/symptom-feel.png" },
-    { id: "w-now", cat: "request", type: "adv", name: "今すぐ", emoji: "⚡" },
-    { id: "w-later", cat: "request", type: "adv", name: "あとで", emoji: "⏰" },
-    { id: "w-rub", cat: "request", type: "pred", name: "さすって", text: "さすってください。", particle: "を", emoji: "🤲" },
-    { id: "w-scratch", cat: "request", type: "pred", name: "かいて", text: "かいてください。", particle: "を", emoji: "💅" },
-    { id: "w-cool", cat: "request", type: "pred", name: "冷やして", text: "冷やしてください。", particle: "を", emoji: "🧊" },
-    { id: "w-warm", cat: "request", type: "pred", name: "温めて", text: "温めてください。", particle: "を", emoji: "♨️" },
-    { id: "w-look", cat: "request", type: "pred", name: "見て", text: "見てください。", particle: "を", emoji: "👀" },
-    { id: "w-move", cat: "request", type: "pred", name: "動かして", text: "動かしてください。", particle: "を", emoji: "🔄" },
-    { id: "w-call", cat: "request", type: "pred", name: "呼んで", text: "呼んでください。", particle: "を", emoji: "🔔", fits: ["person"] },
-    { id: "w-meet", cat: "request", type: "pred", name: "会いたい", text: "会いたいです。", particle: "に", emoji: "🤝" },
-    { id: "w-phone", cat: "request", type: "pred", name: "電話して", text: "電話してください。", particle: "に", emoji: "📞" },
-    { id: "w-come", cat: "request", type: "pred", name: "来てほしい", text: "来てほしいです。", particle: "に", emoji: "🚶" }
+const TALK_CONFIG_KEY = "talk_config_v1";
+const TALK_CUSTOM_KEY = "talk_custom_v1";
+const TALK_HISTORY_KEY = "talk_history_v1";
+const TALK_TAB_PREFIX = "ctrl-tab-";
+const TALK_TAB_TREE = "tree";
+const TALK_TAB_AIZUCHI = "aizuchi";
+const TALK_TAB_FAVORITE = "favorite";
+const TALK_TAB_PARTNER = "partner";
+const TALK_SAY_ID = "talk-say";
+const TALK_CUSTOM_TOPIC_ID = "custom";
+const TALK_FAVORITE_LIMIT = 12;
+const TALK_HISTORY_SENTENCE_LIMIT = 40;
+const TALK_CALL_PLACEHOLDER = /^\{呼\}、/;
+
+const TALK_PARTNERS = [
+    { id: "father", name: "お父さん", emoji: "👨" },
+    { id: "mother", name: "お母さん", emoji: "👩" },
+    { id: "sister", name: "お姉ちゃん", emoji: "👱‍♀️" },
+    { id: "brother", name: "お兄ちゃん", emoji: "🧑" },
+    { id: "nurse", name: "看護師さん", emoji: "👩‍⚕️" },
+    { id: "", name: "決めない", emoji: "👥" }
 ];
 
-function loadComposeCustom() {
+const TALK_AIZUCHI = [
+    { id: "a-uun", name: "うんうん", emoji: "😌", sentence: "うんうん。" },
+    { id: "a-hee", name: "へえ！", emoji: "😮", sentence: "へえ！" },
+    { id: "a-sorede", name: "それで？", emoji: "👂", sentence: "それで？" },
+    { id: "a-wakaru", name: "わかる！", emoji: "🙆‍♀️", sentence: "わかる！" },
+    { id: "a-ee", name: "えー！", emoji: "😲", sentence: "えー！" },
+    { id: "a-laugh", name: "あはは", emoji: "😆", sentence: "あはは！" },
+    { id: "a-sugoi", name: "すごい！", emoji: "👏", sentence: "すごい！" },
+    { id: "a-honto", name: "ほんとに？", emoji: "🤔", sentence: "ほんとに？" },
+    { id: "a-naruhodo", name: "なるほど", emoji: "💡", sentence: "なるほどね。" },
+    { id: "a-iine", name: "いいね！", emoji: "👍", sentence: "いいね！" },
+    { id: "a-yokatta", name: "よかったね", emoji: "😊", sentence: "よかったね。" },
+    { id: "a-taihen", name: "大変だったね", emoji: "🥲", sentence: "大変だったね。" },
+    { id: "a-motto", name: "もっと聞かせて", emoji: "✨", sentence: "もっと聞かせて。" },
+    { id: "a-matte", name: "ちょっと待って", emoji: "✋", sentence: "ちょっと待って。" },
+    { id: "a-again", name: "もう一回", emoji: "🔁", sentence: "もう一回言って。" },
+    { id: "a-wakaranai", name: "わからない", emoji: "❓", sentence: "ちょっとわからない。" }
+];
+
+function loadTalkConfig() {
     try {
-        const parsed = JSON.parse(localStorage.getItem(COMPOSE_CUSTOM_KEY) || "[]");
+        const parsed = JSON.parse(localStorage.getItem(TALK_CONFIG_KEY) || "null");
+        return {
+            hiddenIds: Array.isArray(parsed?.hiddenIds) ? parsed.hiddenIds.filter(id => typeof id === "string") : [],
+            learn: parsed?.learn !== false
+        };
+    } catch {
+        return { hiddenIds: [], learn: true };
+    }
+}
+
+// 介助者が追加した文。「自分の言葉」の話題に並ぶ
+function loadTalkCustom() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(TALK_CUSTOM_KEY) || "[]");
         if (!Array.isArray(parsed)) return [];
-        return parsed.filter(w => w && typeof w.id === "string" && typeof w.name === "string"
-            && COMPOSE_CATEGORIES.some(c => c.key === w.cat) && ["noun", "adv", "pred"].includes(w.type));
+        return parsed.filter(n => n && typeof n.id === "string" && typeof n.label === "string" && typeof n.say === "string");
     } catch {
         return [];
     }
 }
 
-function loadComposeConfig() {
+function loadTalkHistory() {
     try {
-        const parsed = JSON.parse(localStorage.getItem(COMPOSE_CONFIG_KEY) || "null");
-        return {
-            hiddenIds: Array.isArray(parsed?.hiddenIds) ? parsed.hiddenIds.filter(id => typeof id === "string") : [],
-            autoAdvance: parsed?.autoAdvance !== false,
-            mouthSpeaks: parsed?.mouthSpeaks !== false,
-            smartSuggest: parsed?.smartSuggest !== false,
-            autoSpeak: parsed?.autoSpeak === true,
-            learn: parsed?.learn !== false
-        };
+        const parsed = JSON.parse(localStorage.getItem(TALK_HISTORY_KEY) || "null");
+        return { sentences: parsed?.sentences && typeof parsed.sentences === "object" ? parsed.sentences : {} };
     } catch {
-        return { hiddenIds: [], autoAdvance: true, mouthSpeaks: true, smartSuggest: true, autoSpeak: false, learn: true };
+        return { sentences: {} };
     }
 }
 
-let composeCustom = loadComposeCustom();
-let composeConfig = loadComposeConfig();
+let talkConfig = loadTalkConfig();
+let talkCustom = loadTalkCustom();
+let talkHistory = loadTalkHistory();
+let talkTab = TALK_TAB_TREE;
+let talkPath = [];          // たどった木のノード（話題 → 内容 → …）
+let talkPartnerId = "";     // 来ている人。呼び名と話題の絞り込みに使う
 
-// ---------------------------------------------------------
-// 文づくりの「おすすめ」
-// 直前に選んだ言葉に合う候補（部位なら「痛い・さすって」、人なら「会いたい・呼んで」）を、
-// これまでの使い方（言葉のつながり・よく話す文）から順位付けして出す
-// ---------------------------------------------------------
-const COMPOSE_SUGGEST_TAB = "suggest";
-const COMPOSE_SUGGEST_CATEGORY = { key: COMPOSE_SUGGEST_TAB, label: "おすすめ", icon: "✨" };
-const COMPOSE_HISTORY_KEY = "compose_history_v1";
-const COMPOSE_START_ID = "^";
-const COMPOSE_PHRASE_PREFIX = "phrase-";
-const COMPOSE_HISTORY_SENTENCE_LIMIT = 40;
-const COMPOSE_SUGGEST_PHRASES = 4;
-const COMPOSE_SUGGEST_LIMIT = 20;
-const COMPOSE_SUGGEST_ADV_AFTER = 6;
-const COMPOSE_SUGGEST_ADV_MAX = 2;
-// 履歴がないときの書き出し候補（よく使いそうな順）
-const COMPOSE_DEFAULT_STARTERS = ["w-head", "w-belly", "w-back", "w-leg", "w-hand", "w-throat", "w-nurse", "w-mother"];
-
-function loadComposeHistory() {
-    try {
-        const parsed = JSON.parse(localStorage.getItem(COMPOSE_HISTORY_KEY) || "null");
-        return {
-            pairs: parsed?.pairs && typeof parsed.pairs === "object" ? parsed.pairs : {},
-            sentences: parsed?.sentences && typeof parsed.sentences === "object" ? parsed.sentences : {}
-        };
-    } catch {
-        return { pairs: {}, sentences: {} };
-    }
+function getTalkTree(custom = talkCustom) {
+    if (custom.length === 0) return TALK_TREE;
+    return [...TALK_TREE, { id: TALK_CUSTOM_TOPIC_ID, label: "自分の言葉", emoji: "✏️", children: custom }];
 }
 
-let composeHistory = loadComposeHistory();
-let composeTab = composeConfig.smartSuggest ? COMPOSE_SUGGEST_TAB : COMPOSE_CATEGORIES[0].key;
-
-function getComposeTabs() {
-    return composeConfig.smartSuggest ? [COMPOSE_SUGGEST_CATEGORY, ...COMPOSE_CATEGORIES] : COMPOSE_CATEGORIES;
+function getTalkPartner() {
+    return TALK_PARTNERS.find(p => p.id && p.id === talkPartnerId) || null;
 }
 
-function getComposeHomeTab() {
-    return composeConfig.smartSuggest ? COMPOSE_SUGGEST_TAB : COMPOSE_CATEGORIES[0].key;
+function getTalkTimeOfDay(date = new Date()) {
+    const hour = date.getHours();
+    if (hour >= 4 && hour < 11) return "morning";
+    if (hour >= 11 && hour < 17) return "day";
+    return "evening";
 }
 
-// 名詞の種類: 部位(body) / 人(person)
-function getNounKind(word) {
-    return word.cat === "who" ? "person" : "body";
+// 非表示にした言葉・相手や時間帯に合わない言葉は出さない
+function isTalkNodeVisible(node) {
+    if (talkConfig.hiddenIds.includes(node.id)) return false;
+    if (Array.isArray(node.for) && talkPartnerId && !node.for.includes(talkPartnerId)) return false;
+    if (node.time && node.time !== getTalkTimeOfDay()) return false;
+    return true;
 }
 
-// その様子・動作の言葉が、どの種類の名詞に付けられるか
-function getPredFits(word) {
-    if (Array.isArray(word.fits)) return word.fits;
-    if (word.cat === "state") return ["body"];
-    return word.particle === "に" ? ["person"] : ["body"];
+function getTalkChildren(node) {
+    const children = node ? (node.children || []) : getTalkTree();
+    return children.filter(isTalkNodeVisible);
 }
 
-function getPairCount(fromId, toId) {
-    return composeHistory.pairs[`${fromId}>${toId}`] || 0;
+// 文頭の「{呼}、」を相手の呼び名にする（相手を決めていなければ省く）
+function resolveTalkSentence(say) {
+    const partner = getTalkPartner();
+    return say.replace(TALK_CALL_PLACEHOLDER, partner ? `${partner.name}、` : "").replaceAll("{呼}", partner ? partner.name : "");
 }
 
-// 履歴の多い順。同点なら元の並び順
-function rankComposeWords(words, scoreOf) {
-    return words
-        .map((word, index) => ({ word, index, score: scoreOf(word) }))
-        .sort((a, b) => (b.score - a.score) || (a.index - b.index))
-        .map(entry => entry.word);
+function getTalkCurrentNode() {
+    return talkPath[talkPath.length - 1] || null;
 }
 
-function getVisibleComposeWords() {
-    const hidden = new Set(composeConfig.hiddenIds);
-    return getComposeCatalog().filter(w => !hidden.has(w.id));
+function getTalkCurrentSentence() {
+    const node = getTalkCurrentNode();
+    return node?.say ? resolveTalkSentence(node.say) : "";
 }
 
-// 最後の述語より後ろ（＝組み立て中の1文）
-function getCurrentClause(parts) {
-    let lastPred = -1;
-    parts.forEach((part, i) => { if (part.type === "pred") lastPred = i; });
-    return parts.slice(lastPred + 1);
-}
-
-function getFrequentPhrases(limit) {
-    return Object.entries(composeHistory.sentences)
+function getFavoriteTalkSentences() {
+    return Object.entries(talkHistory.sentences)
         .sort((a, b) => (b[1].count - a[1].count) || (b[1].at - a[1].at))
-        .slice(0, limit)
-        .map(([sentence], i) => ({ id: `${COMPOSE_PHRASE_PREFIX}${i}`, type: "phrase", name: `⭐ ${sentence}`, sentence }));
+        .slice(0, TALK_FAVORITE_LIMIT)
+        .map(([sentence], i) => ({ id: `talk-fav-${i}`, type: "phrase", name: sentence, sentence }));
 }
 
-function getComposeSuggestions() {
-    const visible = getVisibleComposeWords();
-    const clause = getCurrentClause(messageParts);
-    const last = messageParts[messageParts.length - 1];
-    const prevId = last ? last.id : COMPOSE_START_ID;
-    const clauseNouns = clause.filter(p => p.type === "noun");
-
-    if (clauseNouns.length === 0) {
-        // 文の書き出し: よく話す文（文が空のときだけ）＋よく書き出しに使う言葉
-        const phrases = messageParts.length === 0 ? getFrequentPhrases(COMPOSE_SUGGEST_PHRASES) : [];
-        const nouns = visible.filter(w => w.type === "noun");
-        const starters = rankComposeWords(nouns, (w) => {
-            const defaultRank = COMPOSE_DEFAULT_STARTERS.indexOf(w.id);
-            const fallback = defaultRank === -1 ? 0 : (COMPOSE_DEFAULT_STARTERS.length - defaultRank) * 0.01;
-            return getPairCount(COMPOSE_START_ID, w.id) + getPairCount(prevId, w.id) + fallback;
-        });
-        return [...phrases, ...starters].slice(0, COMPOSE_SUGGEST_LIMIT);
+function getTalkPanels() {
+    if (talkTab === TALK_TAB_AIZUCHI) return TALK_AIZUCHI.map(item => ({ ...item, type: "aizuchi" }));
+    if (talkTab === TALK_TAB_FAVORITE) return getFavoriteTalkSentences();
+    if (talkTab === TALK_TAB_PARTNER) {
+        return TALK_PARTNERS.map(p => ({
+            id: `talk-partner-${p.id || "none"}`,
+            type: "partner",
+            selected: p.id === talkPartnerId,
+            name: p.name,
+            emoji: p.emoji,
+            partnerId: p.id
+        }));
     }
-
-    // 名詞のあと: その名詞に合う様子・動作を、よく続けた順に。程度・時の言葉は1つまで
-    const kinds = new Set(clauseNouns.map(p => p.kind));
-    const preds = visible.filter(w => w.type === "pred" && getPredFits(w).some(kind => kinds.has(kind)));
-    const rankedPreds = rankComposeWords(preds, (w) =>
-        clauseNouns.reduce((sum, noun) => sum + getPairCount(noun.id, w.id), 0) + getPairCount(prevId, w.id));
-    const hasAdv = clause.some(p => p.type === "adv");
-    const advs = hasAdv ? [] : visible.filter(w => w.type === "adv"
-        && (w.cat !== "state" || kinds.has("body")));
-    const rankedAdvs = rankComposeWords(advs, w => getPairCount(prevId, w.id));
-    // 程度・時の言葉は埋もれないよう、上位の候補のすぐ後ろに置く
-    const head = rankedPreds.slice(0, COMPOSE_SUGGEST_ADV_AFTER);
-    return [...head, ...rankedAdvs.slice(0, COMPOSE_SUGGEST_ADV_MAX), ...rankedPreds.slice(COMPOSE_SUGGEST_ADV_AFTER)].slice(0, COMPOSE_SUGGEST_LIMIT);
+    const node = getTalkCurrentNode();
+    const panels = getTalkChildren(node).map(child => ({
+        id: child.id,
+        type: getTalkChildren(child).length > 0 ? "branch" : "leaf",
+        name: child.label,
+        emoji: child.emoji,
+        node: child
+    }));
+    // 途中で確定できるよう、先頭（いつも同じ位置）に「これで話す」を置く
+    if (node?.say) panels.unshift({ id: TALK_SAY_ID, type: "say", name: "🔊 これで話す" });
+    return panels;
 }
 
-// 話した文から、言葉のつながりとよく話す文を覚える
-function recordComposeHistory(parts, sentence) {
-    if (!composeConfig.learn || parts.length === 0) return;
-    const bump = (from, to) => {
-        const key = `${from}>${to}`;
-        composeHistory.pairs[key] = (composeHistory.pairs[key] || 0) + 1;
-    };
-    let clauseNouns = [];
-    parts.forEach((part, i) => {
-        bump(i === 0 ? COMPOSE_START_ID : parts[i - 1].id, part.id);
-        if (part.type === "noun") clauseNouns.push(part.id);
-        if (part.type === "pred") {
-            // 名詞→述語のつながり（間に程度の言葉があっても覚える）
-            clauseNouns.forEach(nounId => { if (nounId !== parts[i - 1]?.id) bump(nounId, part.id); });
-            clauseNouns = [];
-            if (parts[i + 1]) bump(COMPOSE_START_ID, parts[i + 1].id);
-        }
-    });
-    const entry = composeHistory.sentences[sentence] || { count: 0, at: 0 };
-    composeHistory.sentences[sentence] = { count: entry.count + 1, at: Date.now() };
-    // よく話す文は上位だけ残す
-    const kept = Object.entries(composeHistory.sentences)
-        .sort((a, b) => (b[1].count - a[1].count) || (b[1].at - a[1].at))
-        .slice(0, COMPOSE_HISTORY_SENTENCE_LIMIT);
-    composeHistory.sentences = Object.fromEntries(kept);
-    try {
-        localStorage.setItem(COMPOSE_HISTORY_KEY, JSON.stringify(composeHistory));
-    } catch (error) {
-        console.warn("compose history save failed:", error);
-    }
+function getTalkTabs() {
+    const partner = getTalkPartner();
+    return [
+        { key: TALK_TAB_TREE, label: "お話", icon: "💬" },
+        { key: TALK_TAB_AIZUCHI, label: "相づち", icon: "😄" },
+        { key: TALK_TAB_FAVORITE, label: "よく話す", icon: "⭐" },
+        { key: TALK_TAB_PARTNER, label: partner ? partner.name : "相手", icon: partner ? partner.emoji : "👤" }
+    ];
 }
 
-function clearComposeHistory() {
-    composeHistory = { pairs: {}, sentences: {} };
-    localStorage.removeItem(COMPOSE_HISTORY_KEY);
-}
-
-// 組み立てた文を話して、次の文の書き出しへ戻る
-function speakComposedMessage() {
-    const parts = messageParts;
-    const sentence = buildComposedSentence(parts);
-    messageParts = [];
-    recordComposeHistory(parts, sentence);
-    goToComposeTab(getComposeHomeTab());
-    rerenderSimpleMode();
-    void speakSimpleSentence(sentence);
-}
-
-// タブが変わると同じ位置に別の言葉が出るので、一度動くまで滞留しない
-function goToComposeTab(tab) {
-    if (composeTab === tab && simplePage === 0) return;
-    composeTab = tab;
+// 中身が入れ替わるので、一度動くまで滞留しない
+function refreshTalkScreen() {
     simplePage = 0;
     resetDwellProgress();
     dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
 }
 
-function getComposeCatalog(custom = composeCustom) {
-    return [...COMPOSE_PRESET_WORDS, ...custom.map(w => ({ ...w, custom: true }))];
+function goToTalkTab(tab) {
+    if (talkTab === tab && simplePage === 0 && (tab !== TALK_TAB_TREE || talkPath.length === 0)) return;
+    talkTab = tab;
+    if (tab === TALK_TAB_TREE) talkPath = [];
+    refreshTalkScreen();
 }
 
-function getComposeWords(cat) {
-    if (cat === COMPOSE_SUGGEST_TAB) return getComposeSuggestions();
-    return getVisibleComposeWords().filter(w => w.cat === cat);
+function recordTalkHistory(sentence) {
+    if (!talkConfig.learn || !sentence) return;
+    const entry = talkHistory.sentences[sentence] || { count: 0, at: 0 };
+    talkHistory.sentences[sentence] = { count: entry.count + 1, at: Date.now() };
+    // よく話す文は上位だけ残す
+    const kept = Object.entries(talkHistory.sentences)
+        .sort((a, b) => (b[1].count - a[1].count) || (b[1].at - a[1].at))
+        .slice(0, TALK_HISTORY_SENTENCE_LIMIT);
+    talkHistory.sentences = Object.fromEntries(kept);
+    try {
+        localStorage.setItem(TALK_HISTORY_KEY, JSON.stringify(talkHistory));
+    } catch (error) {
+        console.warn("talk history save failed:", error);
+    }
 }
 
-// ためた語句を、助詞を補った文にする
-// 述語ごとに1文: 名詞は「と」でつなぎ述語の助詞を付け、程度・時の言葉は述語の直前へ寄せる
-//   頭 とても 首 痛い → 「頭と首がとても痛いです。」 / 述語がなければ「頭と首。」「とても。」
-function buildComposedSentence(parts) {
-    const sentences = [];
-    let nouns = [];
-    let advs = [];
-    const flush = (pred) => {
-        let text = "";
-        if (nouns.length > 0) text += nouns.join("と") + (pred ? (pred.particle || "が") : (advs.length > 0 ? "、" : ""));
-        text += advs.join("");
-        if (pred) text += pred.text || `${pred.name}。`;
-        if (text) sentences.push(/[。？！?!]$/.test(text) ? text : `${text}。`);
-        nouns = [];
-        advs = [];
-    };
-    parts.forEach((part) => {
-        if (part.type === "noun") nouns.push(part.name);
-        else if (part.type === "adv") advs.push(part.name);
-        else if (part.type === "pred") flush(part);
-        else {
-            flush(null);
-            sentences.push(part.sentence || `${part.name}。`);
-        }
-    });
-    flush(null);
-    return sentences.join("");
+function clearTalkHistory() {
+    talkHistory = { sentences: {} };
+    localStorage.removeItem(TALK_HISTORY_KEY);
 }
 
-function shouldMouthSpeakComposed() {
-    return isComposeScreen() && composeConfig.mouthSpeaks && messageParts.length > 0 && !isSimplePaused;
+// 話したら、お話は最初の話題選びへ戻る（相づち・よく話すは続けて選べるようそのまま）
+function speakTalkSentence(sentence) {
+    if (!sentence) return;
+    recordTalkHistory(sentence);
+    if (talkTab === TALK_TAB_TREE) {
+        talkPath = [];
+        refreshTalkScreen();
+    }
+    rerenderSimpleMode();
+    void speakSimpleSentence(sentence);
 }
 
-function handleComposeWord(word) {
+function handleTalkPanel(item) {
     if (isConfirmInProgress || isSimplePaused) return;
-    lockSimpleKeyAfterConfirm(getSimpleRowKey(word.id));
+    lockSimpleKeyAfterConfirm(getSimpleRowKey(item.id));
 
-    // よく話す文は、選んだらそのまま話す
-    if (word.type === "phrase") {
-        if (composeConfig.learn) {
-            const entry = composeHistory.sentences[word.sentence] || { count: 0, at: 0 };
-            composeHistory.sentences[word.sentence] = { count: entry.count + 1, at: Date.now() };
-            try { localStorage.setItem(COMPOSE_HISTORY_KEY, JSON.stringify(composeHistory)); } catch { /* 容量超過は無視 */ }
-        }
-        goToComposeTab(getComposeHomeTab());
+    if (item.type === "aizuchi" || item.type === "phrase") {
+        speakTalkSentence(item.sentence);
+        return;
+    }
+    if (item.partnerId !== undefined) {
+        talkPartnerId = item.partnerId;
+        playConfirmSound();
+        goToTalkTab(TALK_TAB_TREE);
         rerenderSimpleMode();
-        void speakSimpleSentence(word.sentence);
         return;
     }
-    if (messageParts.length >= MESSAGE_MAX_PARTS) return;
-
-    messageParts.push({
-        id: word.id,
-        name: word.name,
-        type: word.type,
-        text: word.text,
-        particle: word.particle,
-        kind: word.type === "noun" ? getNounKind(word) : undefined
-    });
+    if (item.id === TALK_SAY_ID) {
+        speakTalkSentence(getTalkCurrentSentence());
+        return;
+    }
+    // 続きのない言葉はそのまま話す。続きがあれば1段進む
+    if (item.type === "leaf") {
+        speakTalkSentence(resolveTalkSentence(item.node.say || item.node.label));
+        return;
+    }
+    talkPath.push(item.node);
     playConfirmSound();
-
-    // 文末（様子・動作）を選んだら1文完成。自動発話するか、次の文の書き出しへ戻る
-    if (word.type === "pred" && composeConfig.autoSpeak) {
-        speakComposedMessage();
-        return;
-    }
-    if (composeConfig.smartSuggest) {
-        goToComposeTab(COMPOSE_SUGGEST_TAB);
-        // おすすめは選ぶたびに中身が変わるので、同じタブでも一度動くまで滞留しない
-        resetDwellProgress();
-        dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
-    } else {
-        const category = COMPOSE_CATEGORIES.find(c => c.key === word.cat);
-        if (composeConfig.autoAdvance && category?.next) goToComposeTab(category.next);
-    }
+    refreshTalkScreen();
     rerenderSimpleMode();
 }
 
@@ -1789,8 +1689,8 @@ function getSimpleLayout() {
     let panels;
     if (activeQuestion) {
         panels = activeQuestion.answers;
-    } else if (appMode === APP_MODE_COMPOSE) {
-        panels = getComposeWords(composeTab);
+    } else if (appMode === APP_MODE_TALK) {
+        panels = getTalkPanels();
     } else {
         return { ...userSize, panels: getEnabledSimplePanels() };
     }
@@ -1812,7 +1712,7 @@ function getSimpleLayout() {
 function renderSimpleMessage() {
     if (!simpleMessageContainer) return;
     simpleMessageContainer.innerHTML = "";
-    simpleMessageContainer.classList.remove("is-question", "is-compose");
+    simpleMessageContainer.classList.remove("is-question", "is-talk");
 
     if (activeQuestion) {
         simpleMessageContainer.classList.add("is-question");
@@ -1824,59 +1724,58 @@ function renderSimpleMessage() {
         return;
     }
 
-    if (!isComposeScreen()) {
+    if (!isTalkScreen()) {
         simpleMessageContainer.style.display = "none";
         return;
     }
 
-    simpleMessageContainer.classList.add("is-compose");
+    simpleMessageContainer.classList.add("is-talk");
     simpleMessageContainer.style.display = "";
-    if (messageParts.length === 0) {
-        const placeholder = document.createElement("div");
-        placeholder.className = "simple-message-placeholder";
-        placeholder.textContent = "言葉を選ぶと、ここに文ができます（例: 頭 → とても → 痛い）";
-        simpleMessageContainer.appendChild(placeholder);
-        return;
-    }
+    const partner = getTalkPartner();
     const chips = document.createElement("div");
     chips.className = "simple-message-chips";
-    messageParts.forEach((part) => {
+    const addChip = (label, extraClass = "") => {
         const chip = document.createElement("span");
-        chip.className = "simple-message-chip";
-        chip.textContent = part.name;
+        chip.className = `simple-message-chip ${extraClass}`.trim();
+        chip.textContent = label;
         chips.appendChild(chip);
-    });
+    };
+    if (partner) addChip(`${partner.emoji} ${partner.name}と`, "simple-message-chip--partner");
     const preview = document.createElement("div");
     preview.className = "simple-message-preview";
-    preview.textContent = `🔊 ${buildComposedSentence(messageParts)}`;
-    if (composeConfig.mouthSpeaks) {
-        const hint = document.createElement("span");
-        hint.className = "simple-message-hint";
-        hint.textContent = "（口を開けると話す）";
-        preview.appendChild(hint);
+    if (talkTab === TALK_TAB_TREE) {
+        talkPath.forEach(node => addChip(`${node.emoji || ""} ${node.label}`.trim()));
+        const sentence = getTalkCurrentSentence();
+        preview.textContent = sentence ? `🔊 ${sentence}`
+            : talkPath.length === 0 ? "話したいことを選んでください（どの段でも「これで話す」で話せます）"
+            : "続きを選んでください";
+    } else {
+        preview.textContent = {
+            [TALK_TAB_AIZUCHI]: "相手の話に、ひとことで返します",
+            [TALK_TAB_FAVORITE]: "よく話す文を、そのまま話します",
+            [TALK_TAB_PARTNER]: "だれと話していますか？（呼びかけに名前が入ります）"
+        }[talkTab] || "";
     }
+    if (!/^🔊/.test(preview.textContent)) preview.classList.add("is-placeholder");
     const body = document.createElement("div");
     body.className = "simple-message-body";
-    body.append(chips, preview);
+    if (chips.childElementCount > 0) body.appendChild(chips);
+    body.appendChild(preview);
     simpleMessageContainer.appendChild(body);
-    const count = document.createElement("span");
-    count.className = "simple-message-count";
-    count.textContent = `${messageParts.length} / ${MESSAGE_MAX_PARTS}`;
-    simpleMessageContainer.appendChild(count);
 }
 
-function renderComposeTabs() {
+function renderTalkTabs() {
     if (!simpleTabsContainer) return;
     simpleTabsContainer.innerHTML = "";
-    if (!isComposeScreen()) {
+    if (!isTalkScreen()) {
         simpleTabsContainer.style.display = "none";
         return;
     }
     simpleTabsContainer.style.display = "";
-    getComposeTabs().forEach((category) => {
-        const control = `${COMPOSE_TAB_PREFIX}${category.key}`;
-        const btn = createSimpleButton(control, `${category.icon} ${category.label}`, {
-            className: `simple-ctrl simple-tab${category.key === composeTab ? " active" : ""}${category.key === COMPOSE_SUGGEST_TAB ? " simple-tab--suggest" : ""}`,
+    getTalkTabs().forEach((tab) => {
+        const control = `${TALK_TAB_PREFIX}${tab.key}`;
+        const btn = createSimpleButton(control, `${tab.icon} ${tab.label}`, {
+            className: `simple-ctrl simple-tab simple-tab--${tab.key}${tab.key === talkTab ? " active" : ""}`,
             onClick: () => handleSimpleControl(control)
         });
         simpleTabsContainer.appendChild(btn);
@@ -1896,7 +1795,7 @@ function renderSimpleMode() {
         appRoot.dataset.mode = APP_MODE_SIMPLE;
         appRoot.dataset.simplePaused = isSimplePaused ? "1" : "0";
         appRoot.dataset.question = activeQuestion ? "1" : "0";
-        appRoot.dataset.compose = isComposeScreen() ? "1" : "0";
+        appRoot.dataset.talk = isTalkScreen() ? "1" : "0";
         delete appRoot.dataset.symptomStage;
     }
     if (modePrompt) modePrompt.textContent = "";
@@ -1911,7 +1810,7 @@ function renderSimpleMode() {
     if (!simpleGridContainer || !simpleBarContainer) return;
 
     renderSimpleMessage();
-    renderComposeTabs();
+    renderTalkTabs();
 
     const { cols, rows, panels } = getSimpleLayout();
     const pageSize = cols * rows;
@@ -1929,8 +1828,8 @@ function renderSimpleMode() {
             icon: item.icon,
             emoji: item.emoji,
             image: item.image,
-            className: item.type ? `compose-word compose-word--${item.type}` : "",
-            onClick: () => (isComposeScreen() ? handleComposeWord(item) : handleSimpleClick(item))
+            className: item.type ? `talk-panel talk-panel--${item.type}${item.selected ? " is-selected" : ""}` : "",
+            onClick: () => (isTalkScreen() ? handleTalkPanel(item) : handleSimpleClick(item))
         }));
     });
     // 最終ページの空きは枠だけ置いて、パネルの大きさと位置をページ間で揃える
@@ -1952,11 +1851,10 @@ function renderSimpleMode() {
     if (activeQuestion) {
         appendSimpleControl(SIMPLE_CTRL_CANCEL, "✕ やめる", "simple-ctrl--cancel");
     } else {
-        if (isComposeScreen()) {
-            const isEmpty = messageParts.length === 0;
-            appendSimpleControl(SIMPLE_CTRL_BACKSPACE, "⌫ 1つ消す", "", isEmpty);
-            appendSimpleControl(SIMPLE_CTRL_CLEAR, "🗑️ 全部消す", "", isEmpty);
-            appendSimpleControl(SIMPLE_CTRL_SPEAK, "🔊 話す", "simple-ctrl--speak", isEmpty);
+        if (isTalkScreen() && talkTab === TALK_TAB_TREE) {
+            const isTop = talkPath.length === 0;
+            appendSimpleControl(SIMPLE_CTRL_BACKSPACE, "◀ 戻る", "", isTop);
+            appendSimpleControl(SIMPLE_CTRL_CLEAR, "🏠 最初から", "", isTop);
         }
         if (simpleConfig.showRest) {
             appendSimpleControl(SIMPLE_CTRL_REST, isSimplePaused ? "▶️ 再開" : "⏸️ 休憩", "simple-ctrl--rest");
@@ -1967,8 +1865,8 @@ function renderSimpleMode() {
     if (panels.length === 0) {
         const notice = document.createElement("div");
         notice.className = "simple-empty-notice";
-        notice.textContent = isComposeScreen()
-            ? "表示する言葉がありません（設定 → 文づくりで選択）"
+        notice.textContent = isTalkScreen()
+            ? (talkTab === TALK_TAB_FAVORITE ? "まだ話した文がありません（話すとここに出ます）" : "表示する言葉がありません（設定 → お話で選択）")
             : "表示するパネルがありません（設定 → シンプルモードで選択）";
         simpleGridContainer.appendChild(notice);
     }
@@ -2017,8 +1915,8 @@ async function speakSimpleSentence(sentence) {
 }
 
 function isSimpleControlDisabled(control) {
-    const needsMessage = [SIMPLE_CTRL_SPEAK, SIMPLE_CTRL_BACKSPACE, SIMPLE_CTRL_CLEAR].includes(control);
-    return needsMessage && messageParts.length === 0;
+    const needsPath = [SIMPLE_CTRL_BACKSPACE, SIMPLE_CTRL_CLEAR].includes(control);
+    return needsPath && talkPath.length === 0;
 }
 
 function handleSimpleControl(control) {
@@ -2033,23 +1931,16 @@ function handleSimpleControl(control) {
         endQuestion();
         return;
     }
-    if (control === SIMPLE_CTRL_SPEAK) {
-        speakComposedMessage();
-        return;
-    }
-
-    if (control.startsWith(COMPOSE_TAB_PREFIX)) {
-        composeTab = control.slice(COMPOSE_TAB_PREFIX.length);
-        simplePage = 0;
+    if (control.startsWith(TALK_TAB_PREFIX)) {
+        goToTalkTab(control.slice(TALK_TAB_PREFIX.length));
     } else if (control === SIMPLE_CTRL_REST) {
         isSimplePaused = !isSimplePaused;
     } else if (control === SIMPLE_CTRL_BACKSPACE) {
-        messageParts.pop();
-        // おすすめは直前の言葉で変わるので出し直す
-        if (composeTab === COMPOSE_SUGGEST_TAB) goToComposeTab(COMPOSE_SUGGEST_TAB);
+        talkPath.pop();
+        refreshTalkScreen();
     } else if (control === SIMPLE_CTRL_CLEAR) {
-        messageParts = [];
-        goToComposeTab(getComposeHomeTab());
+        talkPath = [];
+        refreshTalkScreen();
     } else {
         const { cols, rows, panels } = getSimpleLayout();
         const pageCount = Math.max(1, Math.ceil(panels.length / (cols * rows)));
@@ -2199,8 +2090,8 @@ function setAppMode(mode) {
     dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
     isSimplePaused = false;
     simplePage = 0;
-    messageParts = [];
-    composeTab = getComposeHomeTab();
+    talkTab = TALK_TAB_TREE;
+    talkPath = [];
     // 質問中に切り替えたら質問は終える（終了後に古いページへ戻らないようにする）
     activeQuestion = null;
     pageBeforeQuestion = 0;
@@ -2870,159 +2761,145 @@ function resetSimplePanelSelection() {
 }
 
 // ---------------------------------------------------------
-// 設定画面: 文づくりの語句
+// 設定画面: お話の言葉
 // ---------------------------------------------------------
-const COMPOSE_TYPE_LABELS = { noun: "どこ・だれ", adv: "程度・時", pred: "様子・動作" };
-let composeHiddenDraft = new Set();
-let composeCustomDraft = [];
-let composeEditorFilter = COMPOSE_CATEGORIES[0].key;
+let talkHiddenDraft = new Set();
+let talkCustomDraft = [];
+let talkEditorFilter = "";
 
-function openComposeEditor() {
-    composeHiddenDraft = new Set(composeConfig.hiddenIds);
-    composeCustomDraft = composeCustom.map(w => ({ ...w }));
-    composeEditorFilter = COMPOSE_CATEGORIES[0].key;
-    if (composeAutoAdvanceInput) composeAutoAdvanceInput.checked = composeConfig.autoAdvance;
-    if (composeMouthSpeaksInput) composeMouthSpeaksInput.checked = composeConfig.mouthSpeaks;
-    if (composeSmartSuggestInput) composeSmartSuggestInput.checked = composeConfig.smartSuggest;
-    if (composeAutoSpeakInput) composeAutoSpeakInput.checked = composeConfig.autoSpeak;
-    if (composeLearnInput) composeLearnInput.checked = composeConfig.learn;
-    updateComposeHistorySummary();
-    resetComposeCustomForm();
-    renderComposeEditor();
+function openTalkEditor() {
+    talkHiddenDraft = new Set(talkConfig.hiddenIds);
+    talkCustomDraft = talkCustom.map(n => ({ ...n }));
+    talkEditorFilter = TALK_TREE[0]?.id || "";
+    if (talkLearnInput) talkLearnInput.checked = talkConfig.learn;
+    updateTalkHistorySummary();
+    resetTalkCustomForm();
+    renderTalkEditor();
 }
 
-function renderComposeEditor() {
-    if (!composeWordList) return;
+function countTalkNodes(nodes) {
+    return nodes.reduce((sum, node) => sum + 1 + countTalkNodes(node.children || []), 0);
+}
 
-    if (composeWordFilter) {
-        composeWordFilter.innerHTML = "";
-        COMPOSE_CATEGORIES.forEach((category) => {
+function renderTalkEditor() {
+    if (!talkWordList) return;
+    const tree = getTalkTree(talkCustomDraft);
+    if (!tree.some(topic => topic.id === talkEditorFilter)) talkEditorFilter = tree[0]?.id || "";
+
+    if (talkWordFilter) {
+        talkWordFilter.innerHTML = "";
+        tree.forEach((topic) => {
             const chip = document.createElement("button");
             chip.type = "button";
-            chip.className = "filter-chip" + (category.key === composeEditorFilter ? " active" : "");
-            const count = getComposeCatalog(composeCustomDraft).filter(w => w.cat === category.key).length;
-            chip.append(`${category.icon} ${category.label}`, Object.assign(document.createElement("span"), { className: "filter-chip-count", textContent: String(count) }));
+            chip.className = "filter-chip" + (topic.id === talkEditorFilter ? " active" : "")
+                + (talkHiddenDraft.has(topic.id) ? " is-disabled" : "");
+            chip.append(`${topic.emoji} ${topic.label}`, Object.assign(document.createElement("span"), {
+                className: "filter-chip-count", textContent: String(countTalkNodes(topic.children || []))
+            }));
             chip.addEventListener("click", () => {
-                composeEditorFilter = category.key;
-                renderComposeEditor();
+                talkEditorFilter = topic.id;
+                renderTalkEditor();
             });
-            composeWordFilter.appendChild(chip);
+            talkWordFilter.appendChild(chip);
         });
     }
 
-    composeWordList.innerHTML = "";
-    getComposeCatalog(composeCustomDraft).filter(w => w.cat === composeEditorFilter).forEach((word) => {
-        const shown = !composeHiddenDraft.has(word.id);
-        const el = document.createElement("label");
-        el.className = "palette-item compose-editor-item" + (shown ? "" : " is-disabled");
+    talkWordList.innerHTML = "";
+    const topic = tree.find(t => t.id === talkEditorFilter);
+    if (!topic) return;
+    // 話題そのものと、その下の言葉を段ごとに字下げして並べる。外した言葉の下はまとめて出なくなる
+    const appendRow = (node, depth, parentHidden) => {
+        const hidden = talkHiddenDraft.has(node.id);
+        const row = document.createElement("label");
+        row.className = "talk-editor-row" + (hidden || parentHidden ? " is-disabled" : "");
+        row.style.setProperty("--depth", String(depth));
         const check = document.createElement("input");
         check.type = "checkbox";
-        check.checked = shown;
+        check.checked = !hidden;
         check.addEventListener("change", () => {
-            if (check.checked) composeHiddenDraft.delete(word.id);
-            else composeHiddenDraft.add(word.id);
-            renderComposeEditor();
+            if (check.checked) talkHiddenDraft.delete(node.id);
+            else talkHiddenDraft.add(node.id);
+            renderTalkEditor();
         });
-        el.appendChild(check);
-        el.appendChild(createLayoutThumb(word));
-        const name = document.createElement("div");
-        name.className = "layout-tile-name";
-        name.textContent = word.name;
-        el.appendChild(name);
-        const meta = document.createElement("small");
-        meta.className = "compose-editor-meta";
-        meta.textContent = word.type === "pred" ? `〜${word.particle}${word.text}` : COMPOSE_TYPE_LABELS[word.type];
-        el.appendChild(meta);
-        if (word.custom) {
+        const name = document.createElement("span");
+        name.className = "talk-editor-name";
+        name.textContent = `${node.emoji || ""} ${node.label}`.trim();
+        row.append(check, name);
+        const notes = [];
+        if (node.for) notes.push(`👤${node.for.map(id => TALK_PARTNERS.find(p => p.id === id)?.name || id).join("・")}のとき`);
+        if (node.time) notes.push({ morning: "🌅朝", day: "☀️昼", evening: "🌙夜" }[node.time]);
+        if (node.say || notes.length > 0) {
+            const say = document.createElement("small");
+            say.className = "talk-editor-say";
+            say.textContent = [node.say ? `「${node.say.replace(TALK_CALL_PLACEHOLDER, "（呼び名）、")}」` : "", ...notes].filter(Boolean).join(" ");
+            row.appendChild(say);
+        }
+        if (talkCustomDraft.some(n => n.id === node.id)) {
             const del = document.createElement("button");
             del.type = "button";
-            del.className = "layout-tile-remove";
-            del.title = "この語句を削除";
+            del.className = "talk-editor-remove";
+            del.title = "この文を削除";
             del.textContent = "✕";
             del.addEventListener("click", (e) => {
                 e.preventDefault();
-                composeCustomDraft = composeCustomDraft.filter(w => w.id !== word.id);
-                composeHiddenDraft.delete(word.id);
-                renderComposeEditor();
+                talkCustomDraft = talkCustomDraft.filter(n => n.id !== node.id);
+                talkHiddenDraft.delete(node.id);
+                renderTalkEditor();
             });
-            el.appendChild(del);
+            row.appendChild(del);
         }
-        composeWordList.appendChild(el);
-    });
-
-    syncComposeCustomFormFields();
+        talkWordList.appendChild(row);
+        (node.children || []).forEach(child => appendRow(child, depth + 1, parentHidden || hidden));
+    };
+    appendRow(topic, 0, false);
 }
 
-function resetComposeCustomForm() {
-    if (composeCustomNameInput) composeCustomNameInput.value = "";
-    if (composeCustomEmojiInput) composeCustomEmojiInput.value = "";
-    if (composeCustomTextInput) composeCustomTextInput.value = "";
+function resetTalkCustomForm() {
+    if (talkCustomLabelInput) talkCustomLabelInput.value = "";
+    if (talkCustomEmojiInput) talkCustomEmojiInput.value = "";
+    if (talkCustomSayInput) talkCustomSayInput.value = "";
 }
 
-// 「様子・動作」のときだけ発話と助詞を入力する
-function syncComposeCustomFormFields() {
-    const isPred = composeCustomTypeSelect?.value === "pred";
-    document.querySelectorAll(".compose-pred-only").forEach(el => { el.style.display = isPred ? "" : "none"; });
-}
-
-function addComposeCustomWord() {
-    const name = composeCustomNameInput?.value.trim() || "";
-    if (!name) {
-        alert("言葉を入力してください。");
+function addTalkCustomPhrase() {
+    const label = talkCustomLabelInput?.value.trim() || "";
+    if (!label) {
+        alert("パネルの言葉を入力してください。");
         return;
     }
-    const type = composeCustomTypeSelect?.value || "noun";
-    const word = {
-        id: `wc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-        cat: composeEditorFilter,
-        type,
-        name
-    };
-    const emoji = composeCustomEmojiInput?.value.trim() || "";
-    if (emoji) word.emoji = emoji;
-    if (type === "pred") {
-        word.text = composeCustomTextInput?.value.trim() || `${name}です。`;
-        word.particle = composeCustomParticleSelect?.value || "が";
-    }
-    composeCustomDraft.push(word);
-    resetComposeCustomForm();
-    renderComposeEditor();
+    const say = talkCustomSayInput?.value.trim() || `${label}。`;
+    const node = { id: `tc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`, label, say };
+    const emoji = talkCustomEmojiInput?.value.trim() || "";
+    if (emoji) node.emoji = emoji;
+    talkCustomDraft.push(node);
+    talkEditorFilter = TALK_CUSTOM_TOPIC_ID;
+    resetTalkCustomForm();
+    renderTalkEditor();
 }
 
-function updateComposeHistorySummary() {
-    if (!composeHistorySummary) return;
-    const sentences = Object.keys(composeHistory.sentences).length;
-    const pairs = Object.keys(composeHistory.pairs).length;
-    composeHistorySummary.textContent = sentences + pairs === 0
-        ? "まだ学習していません"
-        : `よく話す文 ${sentences} 件・言葉のつながり ${pairs} 件を記録中`;
+function updateTalkHistorySummary() {
+    if (!talkHistorySummary) return;
+    const sentences = Object.keys(talkHistory.sentences).length;
+    talkHistorySummary.textContent = sentences === 0 ? "まだ記録していません" : `よく話す文 ${sentences} 件を記録中`;
 }
 
-function saveComposeEditor() {
+function saveTalkEditor() {
     const nextConfig = {
-        hiddenIds: Array.from(composeHiddenDraft),
-        autoAdvance: composeAutoAdvanceInput ? composeAutoAdvanceInput.checked : composeConfig.autoAdvance,
-        mouthSpeaks: composeMouthSpeaksInput ? composeMouthSpeaksInput.checked : composeConfig.mouthSpeaks,
-        smartSuggest: composeSmartSuggestInput ? composeSmartSuggestInput.checked : composeConfig.smartSuggest,
-        autoSpeak: composeAutoSpeakInput ? composeAutoSpeakInput.checked : composeConfig.autoSpeak,
-        learn: composeLearnInput ? composeLearnInput.checked : composeConfig.learn
+        hiddenIds: Array.from(talkHiddenDraft),
+        learn: talkLearnInput ? talkLearnInput.checked : talkConfig.learn
     };
     try {
-        localStorage.setItem(COMPOSE_CUSTOM_KEY, JSON.stringify(composeCustomDraft));
-        localStorage.setItem(COMPOSE_CONFIG_KEY, JSON.stringify(nextConfig));
+        localStorage.setItem(TALK_CUSTOM_KEY, JSON.stringify(talkCustomDraft));
+        localStorage.setItem(TALK_CONFIG_KEY, JSON.stringify(nextConfig));
     } catch (error) {
-        console.error("compose save failed:", error);
-        alert("文づくりの設定を保存できませんでした。");
+        console.error("talk save failed:", error);
+        alert("お話の設定を保存できませんでした。");
         return false;
     }
-    composeCustom = composeCustomDraft;
-    const wasSmart = composeConfig.smartSuggest;
-    composeConfig = nextConfig;
-    // おすすめのON/OFFでタブ構成が変わるので、書き出しのタブへ戻す
-    if (wasSmart !== composeConfig.smartSuggest || !getComposeTabs().some(t => t.key === composeTab)) {
-        composeTab = getComposeHomeTab();
-        simplePage = 0;
-    }
+    talkCustom = talkCustomDraft;
+    talkConfig = nextConfig;
+    // たどっている途中の言葉が消えたかもしれないので、最初の話題選びへ戻す
+    talkPath = [];
+    simplePage = 0;
     return true;
 }
 
@@ -4216,15 +4093,6 @@ function triggerClick() {
         return false;
     }
 
-    // 文づくり: 文があれば、口を開けたらどこを見ていても組み立てた文を話す
-    if (shouldMouthSpeakComposed()) {
-        logClickDebug("click_compose_speak", { parts: messageParts.length });
-        markClickFeedback();
-        lastConfirmedAt = now;
-        handleSimpleControl(SIMPLE_CTRL_SPEAK);
-        return true;
-    }
-
     const activeBtn = document.querySelector(".h-btn.hover");
     if (activeBtn && !activeBtn.classList.contains("h-btn--empty")) {
         const targetKey = `${activeBtn.dataset.row}|${activeBtn.dataset.name}`;
@@ -4704,19 +4572,13 @@ const simplePanelFilter = document.getElementById("simple-panel-filter");
 const simpleTabsContainer = document.getElementById("simple-tabs");
 const layoutPagesContainer = document.getElementById("layout-pages");
 const layoutDetailContainer = document.getElementById("layout-detail");
-const composeWordList = document.getElementById("compose-word-list");
-const composeWordFilter = document.getElementById("compose-word-filter");
-const composeAutoAdvanceInput = document.getElementById("compose-auto-advance-input");
-const composeMouthSpeaksInput = document.getElementById("compose-mouth-speaks-input");
-const composeSmartSuggestInput = document.getElementById("compose-smart-suggest-input");
-const composeAutoSpeakInput = document.getElementById("compose-auto-speak-input");
-const composeLearnInput = document.getElementById("compose-learn-input");
-const composeHistorySummary = document.getElementById("compose-history-summary");
-const composeCustomTypeSelect = document.getElementById("compose-custom-type-select");
-const composeCustomNameInput = document.getElementById("compose-custom-name-input");
-const composeCustomEmojiInput = document.getElementById("compose-custom-emoji-input");
-const composeCustomTextInput = document.getElementById("compose-custom-text-input");
-const composeCustomParticleSelect = document.getElementById("compose-custom-particle-select");
+const talkWordList = document.getElementById("talk-word-list");
+const talkWordFilter = document.getElementById("talk-word-filter");
+const talkLearnInput = document.getElementById("talk-learn-input");
+const talkHistorySummary = document.getElementById("talk-history-summary");
+const talkCustomLabelInput = document.getElementById("talk-custom-label-input");
+const talkCustomEmojiInput = document.getElementById("talk-custom-emoji-input");
+const talkCustomSayInput = document.getElementById("talk-custom-say-input");
 const questionButtonsContainer = document.getElementById("question-buttons");
 const questionEndBtn = document.getElementById("question-end-btn");
 const questionEditorList = document.getElementById("question-editor-list");
@@ -5043,7 +4905,7 @@ settingsBtn.addEventListener("click", () => {
     if (dwellTimeSelect) dwellTimeSelect.value = String(dwellTimeMs);
     openSimplePanelEditor();
     openQuestionEditor();
-    openComposeEditor();
+    openTalkEditor();
     if (mouseLeftInput) mouseLeftInput.value = mouseClickSpeech.left;
     if (mouseMiddleInput) mouseMiddleInput.value = mouseClickSpeech.middle;
     if (mouseRightInput) mouseRightInput.value = mouseClickSpeech.right;
@@ -5071,7 +4933,7 @@ saveSettingsBtn.addEventListener("click", () => {
     // 画像を含み容量超過しやすいパネル設定を先に保存し、失敗したら他も保存しない
     if (!saveSimplePanelEditor()) return;
     if (!saveQuestionEditor()) return;
-    if (!saveComposeEditor()) return;
+    if (!saveTalkEditor()) return;
 
     const newKey = apiKeyInput.value.trim();
     GEMINI_API_KEY = newKey;
@@ -5133,14 +4995,13 @@ document.getElementById("simple-reset-panels-btn")?.addEventListener("click", re
 if (simpleShowRestInput) simpleShowRestInput.addEventListener("change", renderSimplePanelEditor);
 // 画面から外すドロップ先: 「追加できるパネル」の一覧
 if (simplePanelList) bindLayoutDrop(simplePanelList, id => removeLayoutPanel(id));
-document.getElementById("compose-custom-add-btn")?.addEventListener("click", addComposeCustomWord);
-document.getElementById("compose-history-clear-btn")?.addEventListener("click", () => {
-    if (!confirm("文づくりの学習（よく話す文・言葉のつながり）を消去しますか？")) return;
-    clearComposeHistory();
-    updateComposeHistorySummary();
-    if (isComposeScreen()) rerenderSimpleMode();
+document.getElementById("talk-custom-add-btn")?.addEventListener("click", addTalkCustomPhrase);
+document.getElementById("talk-history-clear-btn")?.addEventListener("click", () => {
+    if (!confirm("お話の「よく話す」記録を消去しますか？")) return;
+    clearTalkHistory();
+    updateTalkHistorySummary();
+    if (isTalkScreen()) rerenderSimpleMode();
 });
-if (composeCustomTypeSelect) composeCustomTypeSelect.addEventListener("change", syncComposeCustomFormFields);
 
 if (simpleCustomImageInput) {
     simpleCustomImageInput.addEventListener("change", async () => {
