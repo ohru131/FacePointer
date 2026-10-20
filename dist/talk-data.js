@@ -192,6 +192,39 @@ export const TALK_TREE = [
       ]},
       { id: "otaku-touken-talk", label: "語りたい", emoji: "🔥", say: "{呼}、刀剣乱舞について、ちょっと語ってもいい？" },
     ]},
+    { id: "otaku-ghibli", label: "ジブリ", emoji: "🌳", say: "{呼}、ジブリの話しよう。", children: [
+      { id: "otaku-ghibli-watch", label: "見たい", emoji: "📺", say: "ジブリが見たいな。", children: [
+        { id: "otaku-ghibli-watch-totoro", label: "トトロ", emoji: "🌰", say: "となりのトトロが見たいな。" },
+        { id: "otaku-ghibli-watch-chihiro", label: "千と千尋", emoji: "🏮", say: "千と千尋の神隠しが見たいな。" },
+        { id: "otaku-ghibli-watch-laputa", label: "ラピュタ", emoji: "🏰", say: "天空の城ラピュタが見たいな。" },
+        { id: "otaku-ghibli-watch-kiki", label: "魔女の宅急便", emoji: "🧹", say: "魔女の宅急便が見たいな。" },
+        { id: "otaku-ghibli-watch-mononoke", label: "もののけ姫", emoji: "🐺", say: "もののけ姫が見たいな。" },
+      ]},
+      { id: "otaku-ghibli-fav", label: "どれが好き？", emoji: "💚", say: "{呼}、ジブリでどれが一番好き？", children: [
+        { id: "otaku-ghibli-fav-howl", label: "ハウル", emoji: "🔥", say: "ハウルの動く城、好きなんだよね。" },
+        { id: "otaku-ghibli-fav-nausicaa", label: "ナウシカ", emoji: "🪲", say: "風の谷のナウシカ、何回見てもいいよね。" },
+        { id: "otaku-ghibli-fav-porco", label: "紅の豚", emoji: "🐷", say: "紅の豚、かっこいいよね。飛ばねえ豚はただの豚だ、ってね。" },
+        { id: "otaku-ghibli-fav-mimi", label: "耳をすませば", emoji: "🎻", say: "耳をすませば、青春って感じでいいよね。" },
+        { id: "otaku-ghibli-fav-ponyo", label: "ポニョ", emoji: "🐟", say: "崖の上のポニョ、かわいくて好き。" },
+      ]},
+      { id: "otaku-ghibli-music", label: "ジブリの曲", emoji: "🎵", say: "{呼}、ジブリの曲をかけてくれる？", children: [
+        { id: "otaku-ghibli-music-sanpo", label: "さんぽ", emoji: "🚶", say: "トトロの「さんぽ」をかけてくれる？" },
+        { id: "otaku-ghibli-music-kimi", label: "君をのせて", emoji: "🎶", say: "ラピュタの「君をのせて」をかけてくれる？" },
+        { id: "otaku-ghibli-music-itsumo", label: "いつも何度でも", emoji: "🌊", say: "千と千尋の「いつも何度でも」をかけてくれる？" },
+        { id: "otaku-ghibli-music-hisaishi", label: "サントラ", emoji: "🎹", say: "久石譲の曲、聴いてるとなんだか泣きそうになるんだ。" },
+      ]},
+      { id: "otaku-ghibli-talk", label: "語りたい", emoji: "💬", say: "{呼}、ジブリのこと語ってもいい？", children: [
+        { id: "otaku-ghibli-talk-food", label: "ジブリ飯", emoji: "🍳", say: "ジブリに出てくるごはん、どれもおいしそうだよね。どれが好き？" },
+        { id: "otaku-ghibli-talk-line", label: "名セリフ", emoji: "🗯️", say: "ジブリの名セリフ、言い合いっこしようよ。" },
+        { id: "otaku-ghibli-talk-scene", label: "好きな場面", emoji: "🎬", say: "{呼}、ジブリでいちばん好きな場面ってどこ？" },
+        { id: "otaku-ghibli-talk-park", label: "ジブリパーク", emoji: "🎡", say: "ジブリパーク、いつか行ってみたいな。写真見せてくれる？" },
+      ]},
+      { id: "otaku-ghibli-together", label: "一緒に見よう", emoji: "🛋️", say: "{呼}、ジブリ一緒に見ようよ。", children: [
+        { id: "otaku-ghibli-together-now", label: "今から", emoji: "▶️", say: "{呼}、今から一緒にジブリ見ない？" },
+        { id: "otaku-ghibli-together-kinro", label: "金曜ロードショー", emoji: "📡", say: "今度の金曜ロードショー、ジブリやるか調べてくれる？" },
+        { id: "otaku-ghibli-together-old", label: "昔みんなで", emoji: "👨‍👩‍👧‍👦", say: "昔、家族みんなでジブリ見たよね。なつかしいな。" },
+      ]},
+    ]},
     { id: "otaku-manga", label: "マンガ", emoji: "📖", say: "{呼}、マンガの話しようよ。", children: [
       { id: "otaku-manga-read", label: "続き読んで", emoji: "🗣️", say: "{呼}、マンガの続き、読んでくれる？", children: [
         { id: "otaku-manga-read-next", label: "続きから", emoji: "▶️", say: "昨日の続きから、読んでくれる？" },
@@ -236,7 +269,7 @@ export const TALK_TREE = [
         { id: "otaku-anime-vol-view", label: "画面の向き", emoji: "🖥️", say: "{呼}、画面を見やすい位置に動かしてくれる？" },
       ]},
     ]},
-    { id: "otaku-rec", label: "おすすめ", emoji: "⭐", children: [
+    { id: "otaku-rec", label: "推し・おすすめ", emoji: "⭐", children: [
       { id: "otaku-rec-ask", label: "教えて", emoji: "🙋", say: "{呼}、おすすめのマンガかアニメ、教えてくれる？" },
       { id: "otaku-rec-tell", label: "すすめたい", emoji: "📢", say: "すすめたい作品があるんだ。", children: [
         { id: "otaku-rec-tell-manga", label: "このマンガ", emoji: "📕", say: "読んでほしいマンガがあるんだ。題名はあとで伝えるね。" },
@@ -248,13 +281,12 @@ export const TALK_TREE = [
         { id: "otaku-rec-genre-action", label: "熱いバトル", emoji: "🔥", say: "今日は、熱いバトルものが見たいな。" },
       ]},
       { id: "otaku-rec-visitor", label: "好きなのは？", emoji: "💡", say: "どんなマンガやアニメが好き？" },
-    ]},
-    { id: "otaku-talk", label: "推し語り", emoji: "💘", children: [
-      { id: "otaku-talk-listen", label: "聞いて", emoji: "👂", say: "{呼}、推しの話、聞いてくれる？" },
-      { id: "otaku-talk-love", label: "好きすぎる", emoji: "😍", say: "好きすぎて困っちゃう。もう生活の一部だよ。" },
-      { id: "otaku-talk-cry", label: "尊い", emoji: "🥹", say: "あのシーン、尊すぎて何回見ても泣いちゃうんだ。" },
-      { id: "otaku-talk-pull", label: "沼に誘う", emoji: "🌀", say: "そろそろ、こっちの沼に来ない？ 楽しいよ。" },
-      { id: "otaku-talk-scene", label: "名シーン", emoji: "🎬", say: "{呼}、私のいちばん好きな名シーンの話、してもいい？" },
+      { id: "otaku-rec-oshi", label: "推し語り", emoji: "💘", say: "{呼}、推しの話、聞いてくれる？", children: [
+        { id: "otaku-rec-oshi-love", label: "好きすぎる", emoji: "😍", say: "好きすぎて困っちゃう。もう生活の一部だよ。" },
+        { id: "otaku-rec-oshi-cry", label: "尊い", emoji: "🥹", say: "あのシーン、尊すぎて何回見ても泣いちゃうんだ。" },
+        { id: "otaku-rec-oshi-pull", label: "沼に誘う", emoji: "🌀", say: "そろそろ、こっちの沼に来ない？ 楽しいよ。" },
+        { id: "otaku-rec-oshi-scene", label: "名シーン", emoji: "🎬", say: "{呼}、私のいちばん好きな名シーンの話、してもいい？" },
+      ]},
     ]},
   ]},
 
