@@ -22,6 +22,7 @@ const modePrompt = document.getElementById("mode-prompt");
 const simplePanelContainer = document.getElementById("simple-panel");
 const simpleGridContainer = document.getElementById("simple-grid");
 const simpleBarContainer = document.getElementById("simple-bar");
+const simpleMessageContainer = document.getElementById("simple-message");
 const dwellIndicator = document.getElementById("dwell-indicator");
 
 let faceLandmarker;
@@ -244,8 +245,11 @@ let dwellLeftAt = 0;
 // 確定済みパネル。一度外れるまで再選択しない（TD Snap の Look away before reselecting 相当）
 let dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
 
+// 介助者が出した質問への回答中（モードに関係なくパネル選択画面になる）
+let activeQuestion = null;
+
 function isSimpleMode() {
-    return appMode === APP_MODE_SIMPLE;
+    return appMode === APP_MODE_SIMPLE || activeQuestion !== null;
 }
 
 // Symptom state
@@ -1209,6 +1213,14 @@ const SIMPLE_GRID_SIZE_DEFAULT = "4x4";
 const SIMPLE_CTRL_PREV = "ctrl-prev";
 const SIMPLE_CTRL_NEXT = "ctrl-next";
 const SIMPLE_CTRL_REST = "ctrl-rest";
+const SIMPLE_CTRL_CANCEL = "ctrl-cancel";
+const SIMPLE_CTRL_SPEAK = "ctrl-speak";
+const SIMPLE_CTRL_BACKSPACE = "ctrl-backspace";
+const SIMPLE_CTRL_CLEAR = "ctrl-clear";
+// 文をつなげる: ためられるパネルの上限（長すぎると聞き取りにくい）
+const MESSAGE_MAX_PARTS = 6;
+// パネルごとの滞留時間の選択肢(ms)
+const PANEL_DWELL_CHOICES = [800, 1000, 1500, 2000, 3000, 5000];
 // 休憩中に再開するときは誤操作を避けるため長めに滞留させる
 const SIMPLE_RESUME_DWELL_RATIO = 2;
 const SIMPLE_RESUME_DWELL_MIN_MS = 2000;
@@ -1303,8 +1315,20 @@ function defaultSimpleConfig() {
         gridSize: SIMPLE_GRID_SIZE_DEFAULT,
         panelIds: getSimpleBasePanels().map(p => p.id),
         showRest: true,
-        confirmSound: true
+        confirmSound: true,
+        composeMode: false,
+        dwellOverrides: {}
     };
+}
+
+function sanitizeDwellOverrides(raw) {
+    const result = {};
+    if (!raw || typeof raw !== "object") return result;
+    Object.entries(raw).forEach(([id, ms]) => {
+        const value = Number(ms);
+        if (Number.isFinite(value) && value > 0) result[id] = clamp(value, 300, DWELL_TIME_MAX_MS);
+    });
+    return result;
 }
 
 function loadSimpleConfig() {
@@ -1316,7 +1340,9 @@ function loadSimpleConfig() {
             gridSize: SIMPLE_GRID_SIZES[parsed.gridSize] ? parsed.gridSize : fallback.gridSize,
             panelIds: Array.isArray(parsed.panelIds) ? parsed.panelIds.filter(id => typeof id === "string") : fallback.panelIds,
             showRest: parsed.showRest !== false,
-            confirmSound: parsed.confirmSound !== false
+            confirmSound: parsed.confirmSound !== false,
+            composeMode: parsed.composeMode === true,
+            dwellOverrides: sanitizeDwellOverrides(parsed.dwellOverrides)
         };
     } catch {
         return fallback;
@@ -1327,6 +1353,9 @@ let simpleCustomPanels = loadSimpleCustomPanels();
 let simpleConfig = loadSimpleConfig();
 let simplePage = 0;
 let isSimplePaused = false;
+let messageParts = [];        // 文をつなげる: ためたパネル
+let activeQuestionStartedAt = 0;
+let pageBeforeQuestion = 0;
 
 function getSimpleRowKey(id) {
     return `${SIMPLE_ROW_ID}|${id}`;
@@ -1381,10 +1410,79 @@ function createSimpleButton(id, label, options = {}) {
     return btn;
 }
 
+// 表示するパネルとグリッド。質問中は回答数に合わせて大きく並べる（設定のグリッドより細かくはしない）
+function getSimpleLayout() {
+    const userSize = SIMPLE_GRID_SIZES[simpleConfig.gridSize] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
+    if (!activeQuestion) return { ...userSize, panels: getEnabledSimplePanels() };
+
+    const n = activeQuestion.answers.length;
+    const auto = n <= 3 ? { cols: Math.max(1, n), rows: 1 }
+        : n <= 4 ? { cols: 2, rows: 2 }
+        : n <= 6 ? { cols: 3, rows: 2 }
+        : n <= 9 ? { cols: 3, rows: 3 }
+        : n <= 12 ? { cols: 4, rows: 3 }
+        : { cols: 4, rows: 4 };
+    return {
+        cols: Math.min(auto.cols, userSize.cols),
+        rows: Math.min(auto.rows, userSize.rows),
+        panels: activeQuestion.answers
+    };
+}
+
+function renderSimpleMessage() {
+    if (!simpleMessageContainer) return;
+    simpleMessageContainer.innerHTML = "";
+    simpleMessageContainer.classList.remove("is-question", "is-compose");
+
+    if (activeQuestion) {
+        simpleMessageContainer.classList.add("is-question");
+        simpleMessageContainer.style.display = "";
+        const text = document.createElement("div");
+        text.className = "simple-message-question";
+        text.textContent = `❓ ${activeQuestion.question}`;
+        simpleMessageContainer.appendChild(text);
+        return;
+    }
+
+    if (!simpleConfig.composeMode) {
+        simpleMessageContainer.style.display = "none";
+        return;
+    }
+
+    simpleMessageContainer.classList.add("is-compose");
+    simpleMessageContainer.style.display = "";
+    if (messageParts.length === 0) {
+        const placeholder = document.createElement("div");
+        placeholder.className = "simple-message-placeholder";
+        placeholder.textContent = "パネルを選ぶと、ここに文がたまります";
+        simpleMessageContainer.appendChild(placeholder);
+        return;
+    }
+    messageParts.forEach((part) => {
+        const chip = document.createElement("span");
+        chip.className = "simple-message-chip";
+        chip.textContent = part.name;
+        simpleMessageContainer.appendChild(chip);
+    });
+    const count = document.createElement("span");
+    count.className = "simple-message-count";
+    count.textContent = `${messageParts.length} / ${MESSAGE_MAX_PARTS}`;
+    simpleMessageContainer.appendChild(count);
+}
+
+function appendSimpleControl(control, label, extraClass = "", disabled = false) {
+    const btn = createSimpleButton(control, label, {
+        className: `simple-ctrl ${extraClass}${disabled ? " is-disabled" : ""}`.trim(),
+        onClick: () => handleSimpleControl(control)
+    });
+    simpleBarContainer.appendChild(btn);
+}
+
 function renderSimpleMode() {
     if (appRoot) {
         appRoot.dataset.mode = APP_MODE_SIMPLE;
         appRoot.dataset.simplePaused = isSimplePaused ? "1" : "0";
+        appRoot.dataset.question = activeQuestion ? "1" : "0";
         delete appRoot.dataset.symptomStage;
     }
     if (modePrompt) modePrompt.textContent = "";
@@ -1398,9 +1496,10 @@ function renderSimpleMode() {
 
     if (!simpleGridContainer || !simpleBarContainer) return;
 
-    const { cols, rows } = SIMPLE_GRID_SIZES[simpleConfig.gridSize] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
+    renderSimpleMessage();
+
+    const { cols, rows, panels } = getSimpleLayout();
     const pageSize = cols * rows;
-    const panels = getEnabledSimplePanels();
     const pageCount = Math.max(1, Math.ceil(panels.length / pageSize));
     simplePage = clamp(simplePage, 0, pageCount - 1);
 
@@ -1427,28 +1526,29 @@ function renderSimpleMode() {
 
     simpleBarContainer.innerHTML = "";
     if (pageCount > 1) {
-        simpleBarContainer.appendChild(createSimpleButton(SIMPLE_CTRL_PREV, "◀ 前へ", {
-            className: "simple-ctrl",
-            onClick: () => handleSimpleControl(SIMPLE_CTRL_PREV)
-        }));
+        appendSimpleControl(SIMPLE_CTRL_PREV, "◀ 前へ");
         const pageLabel = document.createElement("div");
         pageLabel.className = "simple-page-label";
         pageLabel.textContent = `${simplePage + 1} / ${pageCount}`;
         simpleBarContainer.appendChild(pageLabel);
-        simpleBarContainer.appendChild(createSimpleButton(SIMPLE_CTRL_NEXT, "次へ ▶", {
-            className: "simple-ctrl",
-            onClick: () => handleSimpleControl(SIMPLE_CTRL_NEXT)
-        }));
+        appendSimpleControl(SIMPLE_CTRL_NEXT, "次へ ▶");
     }
-    if (simpleConfig.showRest) {
-        simpleBarContainer.appendChild(createSimpleButton(SIMPLE_CTRL_REST, isSimplePaused ? "▶️ 再開" : "⏸️ 休憩", {
-            className: "simple-ctrl simple-ctrl--rest",
-            onClick: () => handleSimpleControl(SIMPLE_CTRL_REST)
-        }));
+    if (activeQuestion) {
+        appendSimpleControl(SIMPLE_CTRL_CANCEL, "✕ やめる", "simple-ctrl--cancel");
+    } else {
+        if (simpleConfig.composeMode) {
+            const isEmpty = messageParts.length === 0;
+            appendSimpleControl(SIMPLE_CTRL_BACKSPACE, "⌫ 1つ消す", "", isEmpty);
+            appendSimpleControl(SIMPLE_CTRL_CLEAR, "🗑️ 全部消す", "", isEmpty);
+            appendSimpleControl(SIMPLE_CTRL_SPEAK, "🔊 話す", "simple-ctrl--speak", isEmpty);
+        }
+        if (simpleConfig.showRest) {
+            appendSimpleControl(SIMPLE_CTRL_REST, isSimplePaused ? "▶️ 再開" : "⏸️ 休憩", "simple-ctrl--rest");
+        }
     }
     simpleBarContainer.style.display = simpleBarContainer.childElementCount > 0 ? "" : "none";
 
-    if (pagePanels.length === 0 && panels.length === 0) {
+    if (panels.length === 0) {
         const notice = document.createElement("div");
         notice.className = "simple-empty-notice";
         notice.textContent = "表示するパネルがありません（設定 → シンプルモードで選択）";
@@ -1456,6 +1556,12 @@ function renderSimpleMode() {
     }
 
     refitAllButtonText();
+}
+
+// パネル・ボタンを描画し直したあと、ホバー表示を付け直す
+function rerenderSimpleMode() {
+    renderSimpleMode();
+    checkPointerCollision();
 }
 
 function lockSimpleKeyAfterConfirm(key) {
@@ -1471,8 +1577,25 @@ async function handleSimpleClick(item) {
     if (!sentence) return;
 
     lockSimpleKeyAfterConfirm(getSimpleRowKey(item.id));
+
+    // 文をつなげる: 質問への回答以外は、すぐ話さずにためる
+    if (!activeQuestion && simpleConfig.composeMode) {
+        if (messageParts.length >= MESSAGE_MAX_PARTS) return;
+        messageParts.push({ id: item.id, name: item.name, sentence });
+        playConfirmSound();
+        rerenderSimpleMode();
+        return;
+    }
+
+    const isAnswer = activeQuestion !== null;
+    await speakSimpleSentence(sentence);
+    if (isAnswer) endQuestion();
+}
+
+async function speakSimpleSentence(sentence) {
     playConfirmSound();
-    showConfirm(sentence, SIMPLE_CONFIRM_DISPLAY_MS);
+    // 長い文は読み終える前に表示が消えないよう、文字数に応じて表示を延ばす
+    showConfirm(sentence, Math.max(SIMPLE_CONFIRM_DISPLAY_MS, sentence.length * 160));
     isConfirmInProgress = true;
     void speak(sentence);
 
@@ -1483,25 +1606,47 @@ async function handleSimpleClick(item) {
     }
 }
 
+function isSimpleControlDisabled(control) {
+    const needsMessage = [SIMPLE_CTRL_SPEAK, SIMPLE_CTRL_BACKSPACE, SIMPLE_CTRL_CLEAR].includes(control);
+    return needsMessage && messageParts.length === 0;
+}
+
 function handleSimpleControl(control) {
     if (isConfirmInProgress) return;
     if (isSimplePaused && control !== SIMPLE_CTRL_REST) return;
+    if (isSimpleControlDisabled(control)) return;
+
+    lockSimpleKeyAfterConfirm(getSimpleRowKey(control));
+
+    if (control === SIMPLE_CTRL_CANCEL) {
+        playConfirmSound();
+        endQuestion();
+        return;
+    }
+    if (control === SIMPLE_CTRL_SPEAK) {
+        const sentence = messageParts.map(part => part.sentence).join("");
+        messageParts = [];
+        rerenderSimpleMode();
+        void speakSimpleSentence(sentence);
+        return;
+    }
 
     if (control === SIMPLE_CTRL_REST) {
         isSimplePaused = !isSimplePaused;
+    } else if (control === SIMPLE_CTRL_BACKSPACE) {
+        messageParts.pop();
+    } else if (control === SIMPLE_CTRL_CLEAR) {
+        messageParts = [];
     } else {
-        const { cols, rows } = SIMPLE_GRID_SIZES[simpleConfig.gridSize] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
-        const pageCount = Math.max(1, Math.ceil(getEnabledSimplePanels().length / (cols * rows)));
+        const { cols, rows, panels } = getSimpleLayout();
+        const pageCount = Math.max(1, Math.ceil(panels.length / (cols * rows)));
         // 端から押したら反対側へ回り込む
         const step = control === SIMPLE_CTRL_NEXT ? 1 : -1;
         simplePage = (simplePage + step + pageCount) % pageCount;
     }
 
-    lockSimpleKeyAfterConfirm(getSimpleRowKey(control));
     playConfirmSound();
-    renderSimpleMode();
-    // 描画し直したボタンにホバー表示を付け直す
-    checkPointerCollision();
+    rerenderSimpleMode();
 }
 
 let confirmSoundContext = null;
@@ -1560,6 +1705,8 @@ function updateDwellSelection(hasFace) {
     let hoveredKey = lastHoveredButtonKey;
     // 休憩中は再開パネル以外では滞留しない
     if (isSimplePaused && hoveredKey !== restKey) hoveredKey = "";
+    // 押しても何も起きないボタン（ためた文が空の「話す」など）では滞留しない
+    if (hoveredKey && document.querySelector(".h-btn.hover.is-disabled")) hoveredKey = "";
 
     if (dwellLockedKey === DWELL_LOCK_FIRST_HOVER && hoveredKey) dwellLockedKey = hoveredKey;
     if (dwellLockedKey && dwellLockedKey !== DWELL_LOCK_FIRST_HOVER && hoveredKey !== dwellLockedKey) {
@@ -1592,7 +1739,7 @@ function updateDwellSelection(hasFace) {
 
     const requiredMs = isSimplePaused
         ? Math.max(dwellTimeMs * SIMPLE_RESUME_DWELL_RATIO, SIMPLE_RESUME_DWELL_MIN_MS)
-        : dwellTimeMs;
+        : getPanelDwellMs(hoveredKey);
     const progress = clamp((now - dwellStartAt) / requiredMs, 0, 1);
     if (dwellIndicator) {
         dwellIndicator.style.setProperty("--dwell-x", `${pointerX}px`);
@@ -1609,9 +1756,24 @@ function updateDwellSelection(hasFace) {
     }
 }
 
+// パネルごとに設定した滞留時間（未設定なら全体の滞留時間）
+function getPanelDwellMs(hoveredKey) {
+    if (activeQuestion) return dwellTimeMs;
+    const panelId = hoveredKey.slice(SIMPLE_ROW_ID.length + 1);
+    const override = simpleConfig.dwellOverrides?.[panelId];
+    return Number.isFinite(override) && override > 0 ? override : dwellTimeMs;
+}
+
 // 休憩中は口ジェスチャーでも再開パネル以外を確定しない
 function isSimpleClickBlocked(targetKey) {
     return isSimpleMode() && isSimplePaused && targetKey !== getSimpleRowKey(SIMPLE_CTRL_REST);
+}
+
+function centerPointerOnSimpleGrid() {
+    const bounds = getSimplePanelPointerBounds();
+    if (!bounds) return;
+    targetX = pointerX = bounds.centerX;
+    targetY = pointerY = bounds.centerY;
 }
 
 function setAppMode(mode) {
@@ -1624,22 +1786,259 @@ function setAppMode(mode) {
     dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
     isSimplePaused = false;
     simplePage = 0;
+    messageParts = [];
     resetSymptomModeState();
 
-    if (isSimpleMode()) {
-        // グリッド中央へ乗せ直す
-        const bounds = getSimplePanelPointerBounds();
-        if (bounds) {
-            targetX = pointerX = bounds.centerX;
-            targetY = pointerY = bounds.centerY;
-        }
+    // グリッド中央へ乗せ直す
+    if (isSimpleMode()) centerPointerOnSimpleGrid();
+}
+
+// =========================================================
+// 質問への返事テンプレート
+// 介助者が質問を選ぶと、回答パネルだけの画面に切り替わる。回答すると発話して元の画面へ戻る
+// =========================================================
+const QUESTION_CONFIG_KEY = "question_config_v1";
+const QUESTION_CUSTOM_KEY = "question_custom_v1";
+// 回答がないまま放置されたら元の画面へ戻す
+const QUESTION_TIMEOUT_MS = 90000;
+
+const QUESTION_PRESETS = [
+    {
+        id: "q-yes-no", label: "はい・いいえ", question: "はい・いいえで答えてください",
+        answers: [
+            { name: "はい", emoji: "⭕", sentence: "はい。" },
+            { name: "いいえ", emoji: "❌", sentence: "いいえ。" },
+            { name: "わからない", emoji: "❓", sentence: "わからないです。" },
+            { name: "もう一度", emoji: "🔁", sentence: "もう一度言ってください。" }
+        ]
+    },
+    {
+        id: "q-pain-where", label: "どこが痛い？", question: "どこが痛いですか？",
+        answers: [
+            { name: "頭", icon: "media/body-head.png", sentence: "頭が痛いです。" },
+            { name: "首", sentence: "首が痛いです。" },
+            { name: "肩", sentence: "肩が痛いです。" },
+            { name: "胸", sentence: "胸が痛いです。" },
+            { name: "お腹", sentence: "お腹が痛いです。" },
+            { name: "背中", sentence: "背中が痛いです。" },
+            { name: "腰", sentence: "腰が痛いです。" },
+            { name: "手・腕", icon: "media/body-hand.png", sentence: "手か腕が痛いです。" },
+            { name: "足", icon: "media/body-leg.png", sentence: "足が痛いです。" },
+            { name: "のど・気切", sentence: "のどか、気切のところが痛いです。" },
+            { name: "おしり", sentence: "おしりが痛いです。" },
+            { name: "わからない", emoji: "❓", sentence: "どこが痛いかわかりません。" }
+        ]
+    },
+    {
+        id: "q-pain-level", label: "痛さは？", question: "どのくらい痛いですか？",
+        answers: [
+            { name: "少し", emoji: "🙂", sentence: "少し痛いです。" },
+            { name: "まあまあ", emoji: "😐", sentence: "まあまあ痛いです。" },
+            { name: "とても", emoji: "😣", sentence: "とても痛いです。" },
+            { name: "がまんできない", emoji: "😭", sentence: "がまんできないほど痛いです。" }
+        ]
+    },
+    {
+        id: "q-itch-where", label: "どこがかゆい？", question: "どこがかゆいですか？",
+        answers: [
+            { name: "頭", icon: "media/body-head.png", sentence: "頭がかゆいです。" },
+            { name: "顔", sentence: "顔がかゆいです。" },
+            { name: "背中", sentence: "背中がかゆいです。" },
+            { name: "お腹", sentence: "お腹がかゆいです。" },
+            { name: "手・腕", icon: "media/body-hand.png", sentence: "手か腕がかゆいです。" },
+            { name: "足", icon: "media/body-leg.png", sentence: "足がかゆいです。" },
+            { name: "おしり", sentence: "おしりがかゆいです。" },
+            { name: "わからない", emoji: "❓", sentence: "どこがかゆいかわかりません。" }
+        ]
+    },
+    {
+        id: "q-feeling", label: "気分は？", question: "気分はどうですか？",
+        answers: [
+            { name: "いい", emoji: "😊", sentence: "気分はいいです。" },
+            { name: "ふつう", emoji: "😐", sentence: "ふつうです。" },
+            { name: "悪い", emoji: "😣", sentence: "気分が悪いです。" },
+            { name: "疲れた", emoji: "😩", sentence: "疲れました。" }
+        ]
+    },
+    {
+        id: "q-temperature", label: "暑い？寒い？", question: "暑いですか？寒いですか？",
+        answers: [
+            { name: "暑い", icon: "media/symptom-hot.png", sentence: "暑いです。" },
+            { name: "寒い", icon: "media/symptom-cold.png", sentence: "寒いです。" },
+            { name: "ちょうどいい", emoji: "👌", sentence: "ちょうどいいです。" }
+        ]
+    },
+    {
+        id: "q-position", label: "体の向きは？", question: "体の向きはどうしますか？",
+        answers: [
+            { name: "右向き", emoji: "➡️", sentence: "右向きにしてください。" },
+            { name: "左向き", emoji: "⬅️", sentence: "左向きにしてください。" },
+            { name: "上向き", emoji: "⬆️", sentence: "上向きにしてください。" },
+            { name: "頭を上げて", emoji: "🔼", sentence: "ベッドの頭を上げてください。" },
+            { name: "頭を下げて", emoji: "🔽", sentence: "ベッドの頭を下げてください。" },
+            { name: "このまま", emoji: "👌", sentence: "このままでいいです。" }
+        ]
+    },
+    {
+        id: "q-want", label: "何がしたい？", question: "何がしたいですか？",
+        answers: [
+            { name: "寝たい", emoji: "😴", sentence: "寝たいです。" },
+            { name: "体を起こして", emoji: "🛏️", sentence: "体を起こしてください。" },
+            { name: "動画・テレビ", emoji: "📺", sentence: "動画かテレビを見たいです。" },
+            { name: "音楽", emoji: "🎵", sentence: "音楽を聴きたいです。" },
+            { name: "スマホ", emoji: "📱", sentence: "スマホを見たいです。" },
+            { name: "お話したい", emoji: "💬", sentence: "お話ししたいです。" }
+        ]
+    },
+    {
+        id: "q-who", label: "誰に会いたい？", question: "誰に会いたいですか？",
+        answers: [
+            { name: "お母さん", emoji: "👩", sentence: "お母さんに会いたいです。" },
+            { name: "お父さん", emoji: "👨", sentence: "お父さんに会いたいです。" },
+            { name: "お姉ちゃん", emoji: "👱‍♀️", sentence: "お姉ちゃんに会いたいです。" },
+            { name: "お兄ちゃん", emoji: "🧑", sentence: "お兄ちゃんに会いたいです。" },
+            { name: "友だち", emoji: "👭", sentence: "友だちに会いたいです。" },
+            { name: "先生", emoji: "🩺", sentence: "先生と話したいです。" }
+        ]
     }
+];
+
+function loadQuestionCustom() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(QUESTION_CUSTOM_KEY) || "[]");
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter(q => q && typeof q.id === "string" && typeof q.question === "string"
+            && Array.isArray(q.answers) && q.answers.length > 0);
+    } catch {
+        return [];
+    }
+}
+
+function loadQuestionConfig() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(QUESTION_CONFIG_KEY) || "null");
+        return {
+            hiddenIds: Array.isArray(parsed?.hiddenIds) ? parsed.hiddenIds.filter(id => typeof id === "string") : [],
+            speakQuestion: parsed?.speakQuestion !== false
+        };
+    } catch {
+        return { hiddenIds: [], speakQuestion: true };
+    }
+}
+
+let questionCustom = loadQuestionCustom();
+let questionConfig = loadQuestionConfig();
+
+function getQuestionCatalog(custom = questionCustom) {
+    return [...QUESTION_PRESETS, ...custom.map(q => ({ ...q, custom: true }))];
+}
+
+function getQuestionLabel(q) {
+    return q.label || q.question;
+}
+
+function startQuestion(questionId) {
+    const question = getQuestionCatalog().find(q => q.id === questionId);
+    if (!question || isConfirmInProgress) return;
+
+    if (!activeQuestion) pageBeforeQuestion = simplePage;
+    activeQuestion = {
+        ...question,
+        answers: question.answers.map((answer, i) => ({ ...answer, id: `${question.id}-a${i}` }))
+    };
+    activeQuestionStartedAt = Date.now();
+    isSimplePaused = false;
+    simplePage = 0;
+    resetDwellProgress();
+    // 質問が出た瞬間にポインタの下の回答を選ばないよう、一度動くまで滞留しない
+    dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+    // 症状モードの途中状態（下段表示・30秒復帰タイマー）は持ち越さない
+    resetSymptomModeState(false);
+    renderAll();
+    centerPointerOnSimpleGrid();
+    renderQuestionButtons();
+
+    if (questionConfig.speakQuestion) void speak(question.question);
+}
+
+function endQuestion() {
+    if (!activeQuestion) return;
+
+    activeQuestion = null;
+    simplePage = pageBeforeQuestion;
+    resetDwellProgress();
+    dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+    if (appMode === APP_MODE_SIMPLE) {
+        renderAll();
+        centerPointerOnSimpleGrid();
+    } else {
+        resetSymptomModeState();
+    }
+    renderQuestionButtons();
+}
+
+function checkQuestionTimeout() {
+    if (!activeQuestion || isConfirmInProgress) return;
+    if (Date.now() - activeQuestionStartedAt >= QUESTION_TIMEOUT_MS) endQuestion();
+}
+
+// 介助者メニューの「質問する」ボタン
+function renderQuestionButtons() {
+    if (!questionButtonsContainer) return;
+
+    questionButtonsContainer.innerHTML = "";
+    const hidden = new Set(questionConfig.hiddenIds);
+    const visible = getQuestionCatalog().filter(q => !hidden.has(q.id));
+    visible.forEach((q) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "question-btn" + (activeQuestion?.id === q.id ? " active" : "");
+        btn.textContent = getQuestionLabel(q);
+        btn.title = q.question;
+        btn.addEventListener("click", () => {
+            if (activeQuestion?.id === q.id) {
+                endQuestion();
+                return;
+            }
+            startQuestion(q.id);
+            // 利用者が回答画面を見られるようメニューは閉じる
+            collapseControls();
+        });
+        questionButtonsContainer.appendChild(btn);
+    });
+    if (visible.length === 0) {
+        const note = document.createElement("p");
+        note.className = "settings-help";
+        note.textContent = "表示する質問がありません（設定 → 質問）";
+        questionButtonsContainer.appendChild(note);
+    }
+    if (questionEndBtn) questionEndBtn.style.display = activeQuestion ? "" : "none";
+}
+
+// 「絵文字 表示名=発話文」を1行1つで受け取る（絵文字・発話文は省略可）
+function parseQuestionAnswers(text) {
+    return text.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map((line) => {
+        let emoji = "";
+        const match = line.match(/^(\p{Extended_Pictographic}(?:️|⃣|‍\p{Extended_Pictographic})*)\s*(.*)$/u);
+        if (match) {
+            emoji = match[1];
+            line = match[2];
+        }
+        const [rawName, ...rest] = line.split("=");
+        const name = rawName.trim();
+        const sentence = rest.join("=").trim();
+        if (!name) return null;
+        const answer = { name, sentence: sentence || `${name}。` };
+        if (emoji) answer.emoji = emoji;
+        return answer;
+    }).filter(Boolean);
 }
 
 // ---------------------------------------------------------
 // 設定画面: シンプルモードのパネル選択・任意パネル追加
 // ---------------------------------------------------------
 let simpleEditorDraft = [];   // [{ id, enabled }] 表示順
+let simpleDwellDraft = {};    // パネルごとの滞留時間 { id: ms }
 let simpleEditorFilter = "all";
 const SIMPLE_FILTER_ALL = "all";
 const SIMPLE_FILTER_ENABLED = "enabled";
@@ -1706,6 +2105,8 @@ function openSimplePanelEditor() {
     if (simpleGridSizeSelect) simpleGridSizeSelect.value = simpleConfig.gridSize;
     if (simpleShowRestInput) simpleShowRestInput.checked = simpleConfig.showRest;
     if (simpleConfirmSoundInput) simpleConfirmSoundInput.checked = simpleConfig.confirmSound;
+    if (simpleComposeInput) simpleComposeInput.checked = simpleConfig.composeMode;
+    simpleDwellDraft = { ...simpleConfig.dwellOverrides };
     simpleEditorFilter = SIMPLE_FILTER_ALL;
     resetSimpleCustomForm();
     renderSimplePanelEditor();
@@ -1795,10 +2196,26 @@ function renderSimplePanelEditor() {
             [simpleEditorDraft[index + 1], simpleEditorDraft[index]] = [simpleEditorDraft[index], simpleEditorDraft[index + 1]];
             renderSimplePanelEditor();
         });
+        const dwellSelect = document.createElement("select");
+        dwellSelect.className = "simple-editor-dwell";
+        dwellSelect.title = "このパネルの滞留時間";
+        dwellSelect.add(new Option("滞留 既定", ""));
+        PANEL_DWELL_CHOICES.forEach(ms => dwellSelect.add(new Option(`${(ms / 1000).toFixed(1)}秒`, String(ms))));
+        dwellSelect.value = simpleDwellDraft[item.id] ? String(simpleDwellDraft[item.id]) : "";
+        if (dwellSelect.value !== "") dwellSelect.classList.add("is-custom");
+        dwellSelect.addEventListener("change", () => {
+            const ms = Number(dwellSelect.value);
+            if (ms > 0) simpleDwellDraft[item.id] = ms;
+            else delete simpleDwellDraft[item.id];
+            dwellSelect.classList.toggle("is-custom", ms > 0);
+        });
+        actions.appendChild(dwellSelect);
+
         if (item.custom) {
             addAction("削除", "この任意パネルを削除", false, () => {
                 simpleCustomDraft = simpleCustomDraft.filter(p => p.id !== item.id);
                 simpleEditorDraft = simpleEditorDraft.filter(d => d.id !== item.id);
+                delete simpleDwellDraft[item.id];
                 renderSimplePanelEditor();
             });
         }
@@ -1891,13 +2308,130 @@ function resetSimplePanelSelection() {
     renderSimplePanelEditor();
 }
 
+// ---------------------------------------------------------
+// 設定画面: 質問テンプレート
+// ---------------------------------------------------------
+let questionHiddenDraft = new Set();
+let questionCustomDraft = [];
+
+function openQuestionEditor() {
+    questionHiddenDraft = new Set(questionConfig.hiddenIds);
+    questionCustomDraft = questionCustom.map(q => ({ ...q, answers: q.answers.map(a => ({ ...a })) }));
+    if (questionSpeakInput) questionSpeakInput.checked = questionConfig.speakQuestion;
+    if (questionCustomTextInput) questionCustomTextInput.value = "";
+    if (questionCustomLabelInput) questionCustomLabelInput.value = "";
+    if (questionCustomAnswersInput) questionCustomAnswersInput.value = "";
+    renderQuestionEditor();
+}
+
+function renderQuestionEditor() {
+    if (!questionEditorList) return;
+    questionEditorList.innerHTML = "";
+
+    getQuestionCatalog(questionCustomDraft).forEach((q) => {
+        const row = document.createElement("div");
+        const isShown = !questionHiddenDraft.has(q.id);
+        row.className = "simple-editor-row question-editor-row" + (isShown ? "" : " is-disabled");
+
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = isShown;
+        check.title = "介助者メニューに表示する";
+        check.addEventListener("change", () => {
+            if (check.checked) questionHiddenDraft.delete(q.id);
+            else questionHiddenDraft.add(q.id);
+            renderQuestionEditor();
+        });
+        row.appendChild(check);
+
+        const text = document.createElement("div");
+        text.className = "simple-editor-text";
+        const title = document.createElement("strong");
+        title.textContent = q.question;
+        if (q.custom) {
+            const badge = document.createElement("span");
+            badge.className = "simple-editor-group";
+            badge.textContent = "任意";
+            title.appendChild(badge);
+        }
+        const answers = document.createElement("small");
+        answers.textContent = q.answers.map(a => `${a.emoji ? a.emoji + " " : ""}${a.name}`).join(" ／ ");
+        text.append(title, answers);
+        row.appendChild(text);
+
+        if (q.custom) {
+            const actions = document.createElement("div");
+            actions.className = "simple-editor-actions";
+            const del = document.createElement("button");
+            del.type = "button";
+            del.className = "ctrl-btn secondary";
+            del.textContent = "削除";
+            del.addEventListener("click", () => {
+                questionCustomDraft = questionCustomDraft.filter(c => c.id !== q.id);
+                questionHiddenDraft.delete(q.id);
+                renderQuestionEditor();
+            });
+            actions.appendChild(del);
+            row.appendChild(actions);
+        }
+
+        questionEditorList.appendChild(row);
+    });
+}
+
+function addCustomQuestion() {
+    const question = questionCustomTextInput?.value.trim() || "";
+    const answers = parseQuestionAnswers(questionCustomAnswersInput?.value || "");
+    if (!question) {
+        alert("質問文を入力してください。");
+        return;
+    }
+    if (answers.length < 2) {
+        alert("答えを2つ以上、1行に1つずつ入力してください。");
+        return;
+    }
+    questionCustomDraft.push({
+        id: `qc-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        label: questionCustomLabelInput?.value.trim() || "",
+        question,
+        answers
+    });
+    questionCustomTextInput.value = "";
+    if (questionCustomLabelInput) questionCustomLabelInput.value = "";
+    questionCustomAnswersInput.value = "";
+    renderQuestionEditor();
+}
+
+function saveQuestionEditor() {
+    const nextConfig = {
+        hiddenIds: Array.from(questionHiddenDraft),
+        speakQuestion: questionSpeakInput ? questionSpeakInput.checked : questionConfig.speakQuestion
+    };
+    try {
+        localStorage.setItem(QUESTION_CUSTOM_KEY, JSON.stringify(questionCustomDraft));
+        localStorage.setItem(QUESTION_CONFIG_KEY, JSON.stringify(nextConfig));
+    } catch (error) {
+        console.error("question save failed:", error);
+        alert("質問の設定を保存できませんでした。");
+        return false;
+    }
+    questionCustom = questionCustomDraft;
+    questionConfig = nextConfig;
+    // 回答中の質問が削除されたら終了する
+    if (activeQuestion && !getQuestionCatalog().some(q => q.id === activeQuestion.id)) endQuestion();
+    renderQuestionButtons();
+    return true;
+}
+
 // 保存に失敗したら false（画像が多すぎて容量超過など）
 function saveSimplePanelEditor() {
     const nextConfig = {
         gridSize: SIMPLE_GRID_SIZES[simpleGridSizeSelect?.value] ? simpleGridSizeSelect.value : simpleConfig.gridSize,
         panelIds: simpleEditorDraft.filter(d => d.enabled).map(d => d.id),
         showRest: simpleShowRestInput ? simpleShowRestInput.checked : simpleConfig.showRest,
-        confirmSound: simpleConfirmSoundInput ? simpleConfirmSoundInput.checked : simpleConfig.confirmSound
+        confirmSound: simpleConfirmSoundInput ? simpleConfirmSoundInput.checked : simpleConfig.confirmSound,
+        composeMode: simpleComposeInput ? simpleComposeInput.checked : simpleConfig.composeMode,
+        dwellOverrides: sanitizeDwellOverrides(simpleDwellDraft)
     };
     try {
         localStorage.setItem(SIMPLE_CUSTOM_PANELS_KEY, JSON.stringify(simpleCustomDraft));
@@ -1911,6 +2445,7 @@ function saveSimplePanelEditor() {
     simpleConfig = nextConfig;
     // 休憩パネルを消したときに休憩中のまま戻れなくならないようにする
     if (!simpleConfig.showRest) isSimplePaused = false;
+    if (!simpleConfig.composeMode) messageParts = [];
     return true;
 }
 
@@ -2142,6 +2677,11 @@ async function prefetchAllAudio() {
         phrases.push(buildSimpleSentence(panel));
     });
 
+    getQuestionCatalog().forEach(q => {
+        phrases.push(q.question);
+        q.answers.forEach(answer => phrases.push(buildSimpleSentence(answer)));
+    });
+
     Object.values(mouseClickSpeech).forEach(p => {
         if (p) phrases.push(p.trim());
     });
@@ -2308,6 +2848,7 @@ async function predictWebcam() {
         updateVerticalStageTransition();
     }
     checkSymptomIdleReset();
+    checkQuestionTimeout();
     window.requestAnimationFrame(predictWebcam);
 }
 
@@ -3252,6 +3793,14 @@ const modeSelect = radioGroup("app-mode");
 const dwellTimeSelect = radioGroup("dwell-time");
 const simpleGridSizeSelect = radioGroup("simple-grid-size");
 const simplePanelFilter = document.getElementById("simple-panel-filter");
+const simpleComposeInput = document.getElementById("simple-compose-input");
+const questionButtonsContainer = document.getElementById("question-buttons");
+const questionEndBtn = document.getElementById("question-end-btn");
+const questionEditorList = document.getElementById("question-editor-list");
+const questionSpeakInput = document.getElementById("question-speak-input");
+const questionCustomTextInput = document.getElementById("question-custom-text-input");
+const questionCustomLabelInput = document.getElementById("question-custom-label-input");
+const questionCustomAnswersInput = document.getElementById("question-custom-answers-input");
 const settingsCloseX = document.getElementById("settings-close-x");
 const apiKeyRevealBtn = document.getElementById("api-key-reveal-btn");
 const simpleShowRestInput = document.getElementById("simple-show-rest-input");
@@ -3470,6 +4019,7 @@ settingsBtn.addEventListener("click", () => {
     if (modeSelect) modeSelect.value = appMode;
     if (dwellTimeSelect) dwellTimeSelect.value = String(dwellTimeMs);
     openSimplePanelEditor();
+    openQuestionEditor();
     if (mouseLeftInput) mouseLeftInput.value = mouseClickSpeech.left;
     if (mouseMiddleInput) mouseMiddleInput.value = mouseClickSpeech.middle;
     if (mouseRightInput) mouseRightInput.value = mouseClickSpeech.right;
@@ -3495,6 +4045,7 @@ if (apiKeyRevealBtn) {
 
 saveSettingsBtn.addEventListener("click", () => {
     if (!saveSimplePanelEditor()) return;
+    if (!saveQuestionEditor()) return;
 
     const newKey = apiKeyInput.value.trim();
     GEMINI_API_KEY = newKey;
@@ -3536,6 +4087,9 @@ settingsTabButtons.forEach(btn => {
 
 if (simpleGridSizeSelect) simpleGridSizeSelect.addEventListener("change", renderSimplePanelEditor);
 if (simpleCustomAddBtn) simpleCustomAddBtn.addEventListener("click", addSimpleCustomPanel);
+document.getElementById("question-custom-add-btn")?.addEventListener("click", addCustomQuestion);
+if (questionEndBtn) questionEndBtn.addEventListener("click", endQuestion);
+renderQuestionButtons();
 document.getElementById("simple-enable-all-btn")?.addEventListener("click", () => setAllSimplePanelsEnabled(true));
 document.getElementById("simple-disable-all-btn")?.addEventListener("click", () => setAllSimplePanelsEnabled(false));
 document.getElementById("simple-reset-panels-btn")?.addEventListener("click", resetSimplePanelSelection);

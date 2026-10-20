@@ -2016,3 +2016,182 @@ header {
         height: 100%;
     }
 }
+
+/* =========================================================
+   シンプルモード: 質問文 / つなげた文の表示
+   ========================================================= */
+#simple-message {
+    flex: 0 0 clamp(60px, 10vh, 92px);
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.4rem 1rem;
+    overflow: hidden;
+    border-radius: 1.2rem;
+    background: rgba(255, 255, 255, 0.92);
+    border: 2px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+
+#simple-message.is-question {
+    justify-content: center;
+    background: linear-gradient(135deg, #fff7e6 0%, #ffe8c2 100%);
+    border-color: rgba(244, 162, 97, 0.6);
+}
+
+.simple-message-question {
+    font-size: clamp(1.6rem, 3.6vw, 3rem);
+    font-weight: 900;
+    color: #7f5539;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.simple-message-placeholder {
+    font-size: clamp(1rem, 1.8vw, 1.4rem);
+    font-weight: 700;
+    color: #94a3b8;
+}
+
+.simple-message-chip {
+    flex: 0 0 auto;
+    padding: 0.3rem 0.9rem;
+    border-radius: 999px;
+    background: #fff1f2;
+    border: 2px solid rgba(230, 57, 70, 0.35);
+    font-size: clamp(1.2rem, 2.6vw, 2.2rem);
+    font-weight: 900;
+    color: var(--text);
+}
+
+.simple-message-count {
+    margin-left: auto;
+    flex: 0 0 auto;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--text-dim);
+}
+
+/* 押しても何も起きない操作ボタン（ためた文が空の「話す」など） */
+#simple-bar .h-btn.simple-ctrl.is-disabled {
+    opacity: 0.35;
+    filter: grayscale(0.8);
+}
+
+#simple-bar .h-btn.simple-ctrl.simple-ctrl--speak {
+    background: linear-gradient(180deg, #ffe9ec 0%, #ffd3d9 100%);
+    border-color: rgba(230, 57, 70, 0.55);
+}
+
+#simple-bar .h-btn.simple-ctrl.simple-ctrl--cancel {
+    flex: 0 1 min(420px, 40%);
+    background: linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%);
+    border-color: rgba(100, 116, 139, 0.45);
+}
+
+/* 回答パネルの文字・アイコンは大きめ */
+#app[data-question="1"] .simple-grid .h-btn {
+    font-size: clamp(2rem, 4.4vw, 4rem);
+}
+
+/* =========================================================
+   介助者メニュー: 質問ボタン
+   ========================================================= */
+.question-buttons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.4rem;
+}
+
+.question-btn {
+    padding: 0.55rem 0.4rem;
+    border-radius: 0.7rem;
+    border: 1px solid #d0d7de;
+    background: #fff;
+    font-family: inherit;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--text);
+    cursor: pointer;
+}
+
+.question-btn:hover {
+    border-color: #f4a261;
+    background: #fff7e6;
+}
+
+.question-btn.active {
+    background: #f4a261;
+    border-color: #f4a261;
+    color: #fff;
+}
+
+/* =========================================================
+   設定: パネルごとの滞留時間・質問エディタ
+   ========================================================= */
+.settings-panes select.simple-editor-dwell {
+    width: auto;
+    min-height: 2.1rem;
+    padding: 0.2rem 0.4rem;
+    font-size: 0.82rem;
+    color: var(--text-dim);
+}
+
+.settings-panes select.simple-editor-dwell.is-custom {
+    border-color: var(--primary);
+    color: var(--primary);
+    font-weight: 700;
+}
+
+#question-editor-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.question-editor-row .simple-editor-text small {
+    white-space: normal;
+}
+
+.question-custom-form {
+    display: grid;
+    grid-template-columns: 1.6fr 1fr;
+    gap: 0.7rem;
+    align-items: end;
+}
+
+.field--full {
+    grid-column: 1 / -1;
+}
+
+.question-custom-form textarea {
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    border-radius: 0.7rem;
+    border: 1px solid #d0d7de;
+    font-family: inherit;
+    font-size: 0.95rem;
+    resize: vertical;
+}
+
+.question-custom-form textarea:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(230, 57, 70, 0.15);
+}
+
+#question-custom-add-btn {
+    grid-column: 1 / -1;
+    justify-self: end;
+}
+
+/* 回答パネルは文字を大きくする分、絵文字は控えめにして文字が切れないようにする */
+#app[data-question="1"] .simple-grid .h-btn-emoji {
+    font-size: 1.3em;
+}
+
+/* 右上の⚙と重ならないよう右側に余白を取る */
+#simple-message {
+    padding-right: 64px;
+}

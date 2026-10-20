@@ -43,6 +43,8 @@
 
             <!-- Simple mode: panel grid (select to speak) -->
             <div id="simple-panel">
+                <!-- 質問文 / つなげた文の表示 -->
+                <div id="simple-message" aria-live="polite" style="display:none;"></div>
                 <div id="simple-grid" class="simple-grid"></div>
                 <div id="simple-bar"></div>
             </div>
@@ -111,6 +113,12 @@
                 </section>
 
                 <section class="drawer-section">
+                    <h4 class="drawer-heading">質問する（回答パネルに切替）</h4>
+                    <div id="question-buttons" class="question-buttons"></div>
+                    <button id="question-end-btn" class="ctrl-btn secondary" type="button" style="display:none;">質問を終了して戻る</button>
+                </section>
+
+                <section class="drawer-section">
                     <h4 class="drawer-heading">表示</h4>
                     <button id="params-toggle-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true">調整・計測値</button>
                     <button id="vertical-move-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true">上下移動（症状モード）</button>
@@ -152,6 +160,7 @@
                     <nav class="settings-tabs" aria-label="設定の分類">
                         <button class="settings-tab-btn active" type="button" data-tab="basic-tab"><span>🧭</span>操作</button>
                         <button class="settings-tab-btn" type="button" data-tab="simple-tab"><span>🔲</span>シンプルモード</button>
+                        <button class="settings-tab-btn" type="button" data-tab="question-tab"><span>❓</span>質問</button>
                         <button class="settings-tab-btn" type="button" data-tab="voice-tab"><span>🔊</span>音声</button>
                     </nav>
 
@@ -222,6 +231,11 @@
                                         <span>休憩パネルを表示<small>休憩中は「再開」以外を確定しない</small></span>
                                     </label>
                                     <label class="toggle-row">
+                                        <input type="checkbox" id="simple-compose-input">
+                                        <span class="toggle-switch" aria-hidden="true"></span>
+                                        <span>文をつなげる<small>選んだパネルを上部にためて「🔊 話す」でまとめて発話（例: 頭が痛い＋看護師さん呼んで）</small></span>
+                                    </label>
+                                    <label class="toggle-row">
                                         <input type="checkbox" id="simple-confirm-sound-input">
                                         <span class="toggle-switch" aria-hidden="true"></span>
                                         <span>確定音を鳴らす<small>確定時に短い「ピポッ」</small></span>
@@ -240,6 +254,7 @@
                                     <button id="simple-disable-all-btn" class="ctrl-btn secondary" type="button">この一覧を全て非表示</button>
                                     <button id="simple-reset-panels-btn" class="ctrl-btn secondary" type="button">初期状態に戻す</button>
                                 </div>
+                                <p class="settings-help">右端のプルダウンでパネルごとの滞留時間を変えられます（例: 「はい」は短く、緊急系は長く）。全体の滞留が OFF のときは無効。</p>
                                 <div id="simple-panel-list"></div>
                             </section>
 
@@ -271,6 +286,43 @@
                                     <button id="simple-custom-add-btn" class="ctrl-btn primary" type="button">＋ 追加</button>
                                 </div>
                                 <p class="settings-help">画像は 256px に縮小してブラウザに保存されます。</p>
+                            </section>
+                        </div>
+
+                        <!-- Question Tab -->
+                        <div id="question-tab" class="settings-tab-content">
+                            <section class="settings-section">
+                                <h4>質問への返事テンプレート</h4>
+                                <p class="settings-help">介助者メニュー（右上の ⚙）の「質問する」で選ぶと、画面が回答パネルだけに切り替わります。回答すると発話して元の画面へ戻ります（90秒操作がなければ自動で戻る）。</p>
+                                <label class="toggle-row">
+                                    <input type="checkbox" id="question-speak-input">
+                                    <span class="toggle-switch" aria-hidden="true"></span>
+                                    <span>質問を読み上げる<small>切り替え時に質問文を音声で流す</small></span>
+                                </label>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4>介助者メニューに出す質問</h4>
+                                <div id="question-editor-list"></div>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4>質問を追加</h4>
+                                <div class="question-custom-form">
+                                    <label class="field">
+                                        <span>質問文 <em>必須</em></span>
+                                        <input type="text" id="question-custom-text-input" placeholder="例: 何が飲みたいですか？" maxlength="60">
+                                    </label>
+                                    <label class="field">
+                                        <span>メニューでの短い名前</span>
+                                        <input type="text" id="question-custom-label-input" placeholder="空欄なら質問文" maxlength="16">
+                                    </label>
+                                    <label class="field field--full">
+                                        <span>答え（1行に1つ。「絵文字 表示名=発話文」、絵文字と発話文は省略可）</span>
+                                        <textarea id="question-custom-answers-input" rows="5" placeholder="👩 お母さん=お母さんに来てほしいです。&#10;👨 お父さん&#10;❓ わからない=わかりません。"></textarea>
+                                    </label>
+                                    <button id="question-custom-add-btn" class="ctrl-btn primary" type="button">＋ 質問を追加</button>
+                                </div>
                             </section>
                         </div>
 
