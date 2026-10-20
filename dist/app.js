@@ -1864,6 +1864,8 @@ function addSimpleCustomPanel() {
     // 追加したパネルは表示中の末尾に入れる
     const firstDisabled = simpleEditorDraft.findIndex(d => !d.enabled);
     simpleEditorDraft.splice(firstDisabled === -1 ? simpleEditorDraft.length : firstDisabled, 0, { id: panel.id, enabled: true });
+    // 追加結果が一覧で見えるよう「任意」に切り替える
+    simpleEditorFilter = SIMPLE_GROUP_CUSTOM;
     resetSimpleCustomForm();
     renderSimplePanelEditor();
 }
