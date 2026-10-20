@@ -1003,57 +1003,95 @@ header {
 }
 
 /* ── calibration wizard ──────────────────────────── */
+/* 計測中はワイヤーフレームを最前面（ウィザードの直下）に薄く出し、後ろの画面は隠す */
+body.calib-active #mirror-container {
+    z-index: 2400;
+    background: rgba(248, 249, 250, 0.94);
+    pointer-events: none;
+}
+
+body.calib-active #canvas-overlay {
+    opacity: 0.35;
+}
+
+body.calib-active #pointer,
+body.calib-active #dwell-indicator {
+    display: none;
+}
+
 #calib-wizard {
     position: fixed;
     inset: 0;
     z-index: 2500;
     display: none;
-    align-items: center;
-    justify-content: center;
-    background: rgba(15, 23, 42, 0.35);
     pointer-events: auto;
 }
 
 #calib-wizard.active {
-    display: flex;
+    display: block;
 }
 
-#calib-box {
-    width: min(560px, calc(100% - 2rem));
-    padding: 1.6rem 1.8rem 1.4rem;
-    border-radius: 1.4rem;
-    background: rgba(255, 255, 255, 0.96);
-    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.25);
-    text-align: center;
+#calib-topbar {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.7rem 1.2rem 0.6rem;
+    background: rgba(255, 255, 255, 0.92);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
     color: var(--text);
 }
 
+#calib-topbar-text {
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+}
+
+/* .ctrl-btn の display 指定が hidden 属性より優先されるため明示する */
+#calib-topbar-actions [hidden] {
+    display: none;
+}
+
+#calib-topbar-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+#calib-wizard.done #calib-topbar-actions {
+    display: none;
+}
+
 #calib-step-count {
-    font-size: 0.95rem;
+    font-size: 0.9rem;
     color: var(--text-dim);
 }
 
-#calib-arrow {
-    font-size: 4.5rem;
-    line-height: 1.1;
-    min-height: 5rem;
+#calib-instruction {
+    font-size: clamp(1.2rem, 2.6vw, 1.8rem);
+    font-weight: 900;
+    line-height: 1.3;
 }
 
-#calib-instruction {
-    font-size: clamp(1.4rem, 3vw, 2rem);
-    font-weight: 900;
+#calib-arrow {
+    margin-right: 0.4em;
 }
 
 #calib-sub {
-    margin-top: 0.4rem;
+    margin-top: 0.2rem;
     min-height: 1.4em;
     font-size: 1rem;
     color: var(--text-dim);
 }
 
 #calib-progress {
-    margin: 1rem 0 0.6rem;
-    height: 12px;
+    margin: 0.5rem auto 0;
+    max-width: 640px;
+    height: 8px;
     border-radius: 999px;
     background: rgba(0, 0, 0, 0.08);
     overflow: hidden;
@@ -1069,9 +1107,86 @@ header {
     background: #adb5bd;
 }
 
-#calib-result {
+/* 見てもらう○。--calib-hold(0〜1) の割合だけ縁を塗って、止まっている時間を見せる */
+#calib-target {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 92px;
+    height: 92px;
+    border-radius: 50%;
     display: none;
-    margin: 0.6rem 0;
+    transform: translate3d(var(--calib-x, 50vw), var(--calib-y, 50vh), 0) translate(-50%, -50%);
+    background:
+        radial-gradient(circle, var(--primary) 0 7px, transparent 8px),
+        radial-gradient(circle, rgba(255, 255, 255, 0.85) 0 37px, transparent 38px),
+        conic-gradient(var(--primary) calc(var(--calib-hold, 0) * 360deg), rgba(230, 57, 70, 0.25) 0);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.2);
+    transition: transform 0.25s ease, background 0.15s;
+    pointer-events: none;
+}
+
+#calib-wizard.is-target #calib-target {
+    display: block;
+}
+
+#calib-target.matched {
+    background:
+        radial-gradient(circle, #2b8a3e 0 7px, transparent 8px),
+        radial-gradient(circle, rgba(235, 251, 238, 0.95) 0 37px, transparent 38px),
+        conic-gradient(#2b8a3e 360deg, #2b8a3e 0);
+    transform: translate3d(var(--calib-x, 50vw), var(--calib-y, 50vh), 0) translate(-50%, -50%) scale(1.15);
+}
+
+/* 今の顔の向きから予測したカーソル。○より目立たないよう薄く小さくする */
+#calib-cursor {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 2px solid rgba(69, 123, 157, 0.7);
+    background: rgba(69, 123, 157, 0.25);
+    transform: translate3d(var(--calib-x, 50vw), var(--calib-y, 50vh), 0) translate(-50%, -50%);
+    opacity: 0;
+    transition: opacity 0.2s, background 0.15s;
+    pointer-events: none;
+}
+
+#calib-wizard.is-target #calib-cursor.visible {
+    opacity: 0.8;
+}
+
+#calib-cursor.in-circle {
+    border-color: rgba(43, 138, 62, 0.9);
+    background: rgba(43, 138, 62, 0.35);
+}
+
+#calib-box {
+    display: none;
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(620px, calc(100% - 2rem));
+    padding: 1.2rem 1.6rem;
+    border-radius: 1.4rem;
+    background: rgba(255, 255, 255, 0.97);
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.25);
+    color: var(--text);
+}
+
+#calib-wizard.done #calib-box {
+    display: block;
+}
+
+#calib-wizard.done #calib-progress {
+    display: none;
+}
+
+#calib-result {
+    margin: 0 0 0.6rem;
     text-align: left;
     font-size: 0.9rem;
     line-height: 1.6;
@@ -1079,29 +1194,10 @@ header {
     font-family: inherit;
 }
 
-#calib-wizard.done #calib-result {
-    display: block;
-}
-
 #calib-actions {
     display: flex;
     justify-content: center;
     gap: 0.8rem;
-    margin-top: 0.6rem;
-}
-
-#calib-save-btn,
-#calib-retry-btn {
-    display: none;
-}
-
-#calib-wizard.done #calib-save-btn,
-#calib-wizard.done #calib-retry-btn {
-    display: inline-block;
-}
-
-#calib-wizard.done #calib-progress {
-    display: none;
 }
 
 /* =========================================================
