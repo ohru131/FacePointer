@@ -2846,6 +2846,11 @@ body.settings-open #dwell-indicator {
     line-height: 1.25;
 }
 
+.tts-credit-note {
+    display: block;
+    color: var(--text-dim);
+}
+
 .tts-model-row {
     display: flex;
     gap: 0.6rem;
