@@ -331,6 +331,7 @@ pitch 抽出:
 結果画面には各値の変化と「○とのずれ（平均）」を近い・離れた位置ごとに出す。「保存」で localStorage に保存して即反映。
 
 nose_noise / angle_noise / vertical_gain_ratio はスライダーを持たないため、「校正リセット」で初期値（0 / 0 / 1.0）へ戻す。
+姿勢が変わっただけなら「正面取り直し」を使う（正面位置だけ取り直し、感度・揺れ・距離補正の値は残す）。
 nose_gain / yaw_gain / jaw_open_threshold はスライダーで調整できるのでリセット対象外。
 distance_ref / distance_exponent は感度と対で決めた値なので「校正リセット」では消さない（キャリブレーションのやり直しで上書き）。
 

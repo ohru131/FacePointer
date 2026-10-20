@@ -5139,6 +5139,15 @@ calibrateBtn.addEventListener("click", () => {
     speak("リセット");
 });
 
+// 姿勢が変わったときに、キャリブレーション結果（感度・揺れ・距離補正）は残したまま正面だけ取り直す
+const recaptureFrontBtn = document.getElementById("recapture-front-btn");
+if (recaptureFrontBtn) {
+    recaptureFrontBtn.addEventListener("click", () => {
+        isCalibrating = true;
+        resetPointerMotionHistory();
+    });
+}
+
 const audioCacheBtn = document.getElementById("audio-cache-btn");
 audioCacheBtn.addEventListener("click", () => {
     if (!GEMINI_API_KEY) {
