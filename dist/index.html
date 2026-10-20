@@ -105,6 +105,7 @@
             <div id="controls-top">
                 <div class="drawer-header">
                     <span class="drawer-title">介助者メニュー</span>
+                    <button id="fullscreen-exit-btn" class="drawer-toggle" type="button" title="全画面を解除" aria-label="全画面を解除" style="display:none;">⤡</button>
                     <button id="controls-collapse-btn" class="drawer-toggle" type="button" title="メニューを閉じる" aria-expanded="true">✕</button>
                 </div>
 
@@ -320,6 +321,47 @@
                             <section class="settings-section">
                                 <h4>お話モード</h4>
                                 <p class="settings-help">用意した会話を「話題 → 内容 → …」と2〜4回選んで話します。どの段でも「🔊 これで話す」で確定でき、続きのない言葉を選ぶとそのまま話します。上のタブの「👤 相手」で来ている人を選ぶと、「お母さん、〜」のように呼びかけが入り、その人向けの話題も出ます（選ばなければ呼びかけなし）。</p>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4>会話パターン</h4>
+                                <p class="settings-help">使う会話パターンを選びます（選ぶとすぐ切り替わります）。AIで作ったパターンは自動で保存され、削除しない限り残ります。</p>
+                                <div id="talk-set-list" class="talk-set-list"></div>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4>AIで会話パターンを作る（インタビュー）</h4>
+                                <p class="settings-help">本人の性別・年齢を入れて「質問を作る」を押すと、Gemini が本人について質問します。家族・介助者が答えて「会話パターンを作る」を押すと、新しいパターンが名前付きで保存され、使う設定になります。Gemini APIキー（音声タブ）が必要です。作成には1〜3分かかります。</p>
+                                <div class="talk-profile-form">
+                                    <label class="field">
+                                        <span>性別</span>
+                                        <select id="talk-profile-gender">
+                                            <option value="">未設定</option>
+                                            <option value="female">女性</option>
+                                            <option value="male">男性</option>
+                                            <option value="other">その他・答えない</option>
+                                        </select>
+                                    </label>
+                                    <label class="field">
+                                        <span>年齢</span>
+                                        <input type="number" id="talk-profile-age" min="1" max="129" placeholder="例: 45">
+                                    </label>
+                                    <label class="field">
+                                        <span>AIモデル</span>
+                                        <input type="text" id="talk-ai-model-input" placeholder="gemini-2.5-flash">
+                                    </label>
+                                </div>
+                                <label class="toggle-row">
+                                    <input type="checkbox" id="talk-interview-carry" checked>
+                                    <span class="toggle-switch" aria-hidden="true"></span>
+                                    <span>今使っているパターンの回答を引き継ぐ<small>AIで作ったパターンを使っているとき、前回の回答を元に追加の質問を出し、作り直しにも使う</small></span>
+                                </label>
+                                <div class="talk-ai-actions">
+                                    <button id="talk-interview-start-btn" class="ctrl-btn secondary" type="button">💬 質問を作る</button>
+                                    <button id="talk-generate-btn" class="ctrl-btn primary" type="button">✨ 会話パターンを作る</button>
+                                </div>
+                                <p id="talk-ai-status" class="settings-help" aria-live="polite"></p>
+                                <div id="talk-interview-list" class="talk-interview-list"></div>
                             </section>
 
                             <section class="settings-section">

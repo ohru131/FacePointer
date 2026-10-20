@@ -1,5 +1,6 @@
 import vision from "./mediapipe/vision_bundle.mjs";
 import { TALK_TREE } from "./talk-data.js";
+import { TALK_AI_MODEL_DEFAULT, generateInterviewQuestions, generateTalkSet, countTalkTreeNodes } from "./talk-generator.js";
 const { FaceLandmarker, FilesetResolver, DrawingUtils } = vision;
 
 const video = document.getElementById("webcam");
@@ -1567,14 +1568,73 @@ const TALK_FAVORITE_LIMIT = 12;
 const TALK_HISTORY_SENTENCE_LIMIT = 40;
 const TALK_CALL_PLACEHOLDER = /^\{呼\}、/;
 
-const TALK_PARTNERS = [
+const DEFAULT_TALK_PARTNERS = [
     { id: "father", name: "お父さん", emoji: "👨" },
     { id: "mother", name: "お母さん", emoji: "👩" },
     { id: "sister", name: "お姉ちゃん", emoji: "👱‍♀️" },
     { id: "brother", name: "お兄ちゃん", emoji: "🧑" },
-    { id: "nurse", name: "看護師さん", emoji: "👩‍⚕️" },
-    { id: "", name: "決めない", emoji: "👥" }
+    { id: "nurse", name: "看護師さん", emoji: "👩‍⚕️" }
 ];
+const TALK_PARTNER_NONE = { id: "", name: "決めない", emoji: "👥" };
+
+// 会話パターン: 初期データ（talk-data.js）と、インタビューから AI で作ったもの。作ったものは消すまで残す
+const TALK_SETS_KEY = "talk_sets_v1";
+const TALK_ACTIVE_SET_KEY = "talk_active_set";
+const TALK_PROFILE_KEY = "talk_profile_v1";
+const TALK_AI_MODEL_KEY = "talk_ai_model";
+const DEFAULT_TALK_SET = { id: "default", name: "標準（初期データ）", builtin: true, partners: DEFAULT_TALK_PARTNERS, tree: TALK_TREE };
+
+function loadTalkSets() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(TALK_SETS_KEY) || "[]");
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter(set => set && typeof set.id === "string" && typeof set.name === "string"
+            && Array.isArray(set.tree) && Array.isArray(set.partners));
+    } catch {
+        return [];
+    }
+}
+
+function loadTalkProfile() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(TALK_PROFILE_KEY) || "null");
+        const age = Number.parseInt(parsed?.age, 10);
+        return {
+            gender: ["female", "male", "other"].includes(parsed?.gender) ? parsed.gender : "",
+            age: Number.isFinite(age) && age > 0 ? age : null
+        };
+    } catch {
+        return { gender: "", age: null };
+    }
+}
+
+let talkSets = loadTalkSets();
+let talkActiveSetId = localStorage.getItem(TALK_ACTIVE_SET_KEY) || DEFAULT_TALK_SET.id;
+let talkProfile = loadTalkProfile();
+
+function getTalkSets() {
+    return [DEFAULT_TALK_SET, ...talkSets];
+}
+
+function getActiveTalkSet() {
+    return getTalkSets().find(set => set.id === talkActiveSetId) || DEFAULT_TALK_SET;
+}
+
+function getTalkPartners() {
+    return [...getActiveTalkSet().partners, TALK_PARTNER_NONE];
+}
+
+function saveTalkSets(nextSets) {
+    try {
+        localStorage.setItem(TALK_SETS_KEY, JSON.stringify(nextSets));
+    } catch (error) {
+        console.error("talk sets save failed:", error);
+        alert("会話パターンを保存できませんでした（保存容量の不足）。使わないパターンを削除してください。");
+        return false;
+    }
+    talkSets = nextSets;
+    return true;
+}
 
 const TALK_AIZUCHI = [
     { id: "a-uun", name: "うんうん", emoji: "😌", sentence: "うんうん。" },
@@ -1636,12 +1696,13 @@ let talkPartnerId = "";     // 来ている人。呼び名と話題の絞り込�
 let talkFavoriteOrder = null; // 「よく話す」タブを開いている間の並び
 
 function getTalkTree(custom = talkCustom) {
-    if (custom.length === 0) return TALK_TREE;
-    return [...TALK_TREE, { id: TALK_CUSTOM_TOPIC_ID, label: "自分の言葉", emoji: "✏️", children: custom }];
+    const tree = getActiveTalkSet().tree;
+    if (custom.length === 0) return tree;
+    return [...tree, { id: TALK_CUSTOM_TOPIC_ID, label: "自分の言葉", emoji: "✏️", children: custom }];
 }
 
 function getTalkPartner() {
-    return TALK_PARTNERS.find(p => p.id && p.id === talkPartnerId) || null;
+    return getTalkPartners().find(p => p.id && p.id === talkPartnerId) || null;
 }
 
 function getTalkTimeOfDay(date = new Date()) {
@@ -1707,7 +1768,7 @@ function getTalkPanels() {
     if (talkTab === TALK_TAB_AIZUCHI) return TALK_AIZUCHI.map(item => ({ ...item, type: "aizuchi" }));
     if (talkTab === TALK_TAB_FAVORITE) return getFavoriteTalkSentences();
     if (talkTab === TALK_TAB_PARTNER) {
-        return TALK_PARTNERS.map(p => ({
+        return getTalkPartners().map(p => ({
             id: `talk-partner-${p.id || "none"}`,
             type: "partner",
             selected: p.id === talkPartnerId,
@@ -2933,7 +2994,8 @@ let talkEditorFilter = "";
 function openTalkEditor() {
     talkHiddenDraft = new Set(talkConfig.hiddenIds);
     talkCustomDraft = talkCustom.map(n => ({ ...n }));
-    talkEditorFilter = TALK_TREE[0]?.id || "";
+    talkEditorFilter = getTalkTree(talkCustomDraft)[0]?.id || "";
+    openTalkSetEditor();
     if (talkLearnInput) talkLearnInput.checked = talkConfig.learn;
     updateTalkHistorySummary();
     resetTalkCustomForm();
@@ -2989,7 +3051,7 @@ function renderTalkEditor() {
         name.textContent = `${node.emoji || ""} ${node.label}`.trim();
         row.append(check, name);
         const notes = [];
-        if (node.for) notes.push(`👤${node.for.map(id => TALK_PARTNERS.find(p => p.id === id)?.name || id).join("・")}のとき`);
+        if (node.for) notes.push(`👤${node.for.map(id => getTalkPartners().find(p => p.id === id)?.name || id).join("・")}のとき`);
         if (node.time) notes.push({ morning: "🌅朝", day: "☀️昼", evening: "🌙夜" }[node.time]);
         if (node.say || notes.length > 0) {
             const say = document.createElement("small");
@@ -3045,6 +3107,252 @@ function updateTalkHistorySummary() {
     talkHistorySummary.textContent = sentences === 0 ? "まだ記録していません" : `よく話す文 ${sentences} 件を記録中`;
 }
 
+// ---------------------------------------------------------
+// 設定画面: 会話パターンの切り替えと、AI インタビューでの作成
+// ---------------------------------------------------------
+const TALK_INTERVIEW_FREE_QUESTION = "その他、本人について伝えたいこと（自由に）";
+let talkInterviewDraft = [];   // [{ q, a }]
+let isTalkAiBusy = false;
+
+// 使うパターンを切り替える。相手や途中の位置は前のパターンのものなので最初に戻す
+function setActiveTalkSet(id) {
+    talkActiveSetId = getTalkSets().some(set => set.id === id) ? id : DEFAULT_TALK_SET.id;
+    localStorage.setItem(TALK_ACTIVE_SET_KEY, talkActiveSetId);
+    talkPartnerId = "";
+    talkPath = [];
+    talkTab = TALK_TAB_TREE;
+    talkFavoriteOrder = null;
+    simplePage = 0;
+    if (isTalkScreen()) rerenderSimpleMode();
+}
+
+function openTalkSetEditor() {
+    if (talkProfileGenderSelect) talkProfileGenderSelect.value = talkProfile.gender;
+    if (talkProfileAgeInput) talkProfileAgeInput.value = talkProfile.age ?? "";
+    if (talkAiModelInput) talkAiModelInput.value = localStorage.getItem(TALK_AI_MODEL_KEY) || "";
+    renderTalkSetList();
+    renderTalkInterview();
+    updateTalkAiButtons();
+}
+
+function readTalkProfileForm() {
+    const age = Number.parseInt(talkProfileAgeInput?.value || "", 10);
+    return {
+        gender: talkProfileGenderSelect?.value || "",
+        age: Number.isFinite(age) && age > 0 && age < 130 ? age : null
+    };
+}
+
+function saveTalkProfileForm() {
+    talkProfile = readTalkProfileForm();
+    localStorage.setItem(TALK_PROFILE_KEY, JSON.stringify(talkProfile));
+    const model = talkAiModelInput?.value.trim() || "";
+    if (model) localStorage.setItem(TALK_AI_MODEL_KEY, model);
+    else localStorage.removeItem(TALK_AI_MODEL_KEY);
+}
+
+// 設定画面で入力したばかり（未保存）のキーも使う
+function getTalkAiApiKey() {
+    return apiKeyInput?.value.trim() || GEMINI_API_KEY;
+}
+
+function getTalkAiModel() {
+    return localStorage.getItem(TALK_AI_MODEL_KEY) || TALK_AI_MODEL_DEFAULT;
+}
+
+function formatTalkSetDate(time) {
+    const date = new Date(time);
+    return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function renderTalkSetList() {
+    if (!talkSetList) return;
+    talkSetList.innerHTML = "";
+    getTalkSets().forEach((set) => {
+        const row = document.createElement("label");
+        row.className = "talk-set-row" + (set.id === talkActiveSetId ? " active" : "");
+        const radio = document.createElement("input");
+        radio.type = "radio";
+        radio.name = "talk-set";
+        radio.checked = set.id === talkActiveSetId;
+        radio.addEventListener("change", () => {
+            setActiveTalkSet(set.id);
+            talkEditorFilter = "";
+            renderTalkSetList();
+            renderTalkEditor();
+        });
+        const body = document.createElement("span");
+        body.className = "talk-set-body";
+        const name = document.createElement("span");
+        name.className = "talk-set-name";
+        name.textContent = set.name;
+        const meta = document.createElement("small");
+        meta.className = "talk-set-meta";
+        const partners = set.partners.map(p => p.name).join("・");
+        meta.textContent = [
+            set.createdAt ? `${new Date(set.createdAt).toLocaleString("ja-JP", { dateStyle: "short", timeStyle: "short" })} 作成` : "",
+            `${countTalkTreeNodes(set.tree)} 項目`,
+            partners ? `相手: ${partners}` : ""
+        ].filter(Boolean).join(" ／ ");
+        body.append(name, meta);
+        row.append(radio, body);
+        if (!set.builtin) {
+            const rename = document.createElement("button");
+            rename.type = "button";
+            rename.className = "ctrl-btn secondary talk-set-btn";
+            rename.textContent = "名前";
+            rename.addEventListener("click", (e) => {
+                e.preventDefault();
+                const next = prompt("会話パターンの名前", set.name);
+                if (!next || !next.trim()) return;
+                saveTalkSets(talkSets.map(s => (s.id === set.id ? { ...s, name: next.trim().slice(0, 40) } : s)));
+                renderTalkSetList();
+            });
+            const del = document.createElement("button");
+            del.type = "button";
+            del.className = "ctrl-btn secondary talk-set-btn";
+            del.textContent = "削除";
+            del.addEventListener("click", (e) => {
+                e.preventDefault();
+                if (!confirm(`「${set.name}」を削除しますか？（元に戻せません）`)) return;
+                if (!saveTalkSets(talkSets.filter(s => s.id !== set.id))) return;
+                if (set.id === talkActiveSetId) setActiveTalkSet(DEFAULT_TALK_SET.id);
+                talkEditorFilter = "";
+                renderTalkSetList();
+                renderTalkEditor();
+            });
+            row.append(rename, del);
+        }
+        talkSetList.appendChild(row);
+    });
+}
+
+function renderTalkInterview() {
+    if (!talkInterviewList) return;
+    talkInterviewList.innerHTML = "";
+    talkInterviewDraft.forEach((item, index) => {
+        const field = document.createElement("label");
+        field.className = "field talk-interview-item";
+        const q = document.createElement("span");
+        q.textContent = `Q${index + 1}. ${item.q}`;
+        const a = document.createElement("textarea");
+        a.rows = 2;
+        a.value = item.a;
+        a.placeholder = "わかる範囲で（空欄でもよい）";
+        a.addEventListener("input", () => {
+            item.a = a.value;
+            updateTalkAiButtons();
+        });
+        field.append(q, a);
+        talkInterviewList.appendChild(field);
+    });
+}
+
+function getAnsweredTalkInterview() {
+    return talkInterviewDraft.filter(item => item.a.trim()).map(item => ({ q: item.q, a: item.a.trim() }));
+}
+
+// 今のパターンを作ったときの回答（引き継ぐ設定のとき）
+function getCarriedTalkInterview() {
+    if (talkInterviewCarryInput && !talkInterviewCarryInput.checked) return [];
+    return (getActiveTalkSet().interview || []).map(item => ({ q: item.q, a: item.a }));
+}
+
+function updateTalkAiButtons() {
+    if (talkInterviewStartBtn) talkInterviewStartBtn.disabled = isTalkAiBusy;
+    if (talkGenerateBtn) {
+        const hasAnswers = getAnsweredTalkInterview().length > 0 || getCarriedTalkInterview().some(item => item.a);
+        talkGenerateBtn.disabled = isTalkAiBusy || !hasAnswers;
+    }
+}
+
+function setTalkAiStatus(text, isError = false) {
+    if (!talkAiStatus) return;
+    talkAiStatus.textContent = text;
+    talkAiStatus.classList.toggle("is-error", isError);
+}
+
+async function startTalkInterview() {
+    if (isTalkAiBusy) return;
+    saveTalkProfileForm();
+    // 引き継ぐ回答に、画面で答えた内容を重ねる（同じ質問は画面の答えを優先）
+    const base = getCarriedTalkInterview();
+    talkInterviewDraft.forEach((item) => {
+        const existing = base.find(b => b.q === item.q);
+        if (existing) existing.a = item.a;
+        else base.push({ q: item.q, a: item.a });
+    });
+    isTalkAiBusy = true;
+    updateTalkAiButtons();
+    setTalkAiStatus("質問を考えています…");
+    try {
+        const questions = await generateInterviewQuestions({
+            apiKey: getTalkAiApiKey(), model: getTalkAiModel(), profile: talkProfile, interview: base
+        });
+        const asked = new Set(base.map(item => item.q));
+        const fresh = questions.filter(q => !asked.has(q)).map(q => ({ q, a: "" }));
+        const answered = base.filter(item => item.a && item.a.trim() && item.q !== TALK_INTERVIEW_FREE_QUESTION);
+        const free = base.find(item => item.q === TALK_INTERVIEW_FREE_QUESTION) || { q: TALK_INTERVIEW_FREE_QUESTION, a: "" };
+        talkInterviewDraft = [...fresh, ...answered, free];
+        renderTalkInterview();
+        setTalkAiStatus(`${fresh.length} 個の質問を作りました。答えてから「会話パターンを作る」を押してください。前回の回答は下に続いています。`);
+    } catch (error) {
+        console.error("talk interview failed:", error);
+        setTalkAiStatus(error.message, true);
+    } finally {
+        isTalkAiBusy = false;
+        updateTalkAiButtons();
+    }
+}
+
+async function generateTalkSetFromInterview() {
+    if (isTalkAiBusy) return;
+    saveTalkProfileForm();
+    const interview = getAnsweredTalkInterview();
+    // 画面で質問を出していなければ、今のパターンの回答から作り直す
+    const source = interview.length > 0 ? interview : getCarriedTalkInterview().filter(item => item.a);
+    if (source.length === 0) {
+        setTalkAiStatus("質問に1つ以上答えてください。", true);
+        return;
+    }
+    isTalkAiBusy = true;
+    updateTalkAiButtons();
+    setTalkAiStatus("会話パターンを作っています…（1〜3分かかります。設定は閉じずにお待ちください）");
+    try {
+        const id = `ai${Date.now().toString(36)}`;
+        const createdAt = Date.now();
+        const result = await generateTalkSet({
+            apiKey: getTalkAiApiKey(), model: getTalkAiModel(), profile: talkProfile, interview: source, setId: id
+        });
+        const set = {
+            id,
+            name: `${result.name}（${formatTalkSetDate(createdAt)}）`,
+            createdAt,
+            profile: { ...talkProfile },
+            interview: source,
+            partners: result.partners,
+            tree: result.tree
+        };
+        if (!saveTalkSets([...talkSets, set])) {
+            setTalkAiStatus("保存できませんでした。使わないパターンを削除してから、もう一度お試しください。", true);
+            return;
+        }
+        setActiveTalkSet(id);
+        talkInterviewDraft = [];
+        talkEditorFilter = "";
+        renderTalkSetList();
+        renderTalkInterview();
+        renderTalkEditor();
+        setTalkAiStatus(`「${set.name}」を作って保存し、使う設定にしました（${countTalkTreeNodes(set.tree)} 項目）。`);
+    } catch (error) {
+        console.error("talk set generation failed:", error);
+        setTalkAiStatus(error.message, true);
+    } finally {
+        isTalkAiBusy = false;
+        updateTalkAiButtons();
+    }
+}
+
 function saveTalkEditor() {
     const nextConfig = {
         hiddenIds: Array.from(talkHiddenDraft),
@@ -3060,6 +3368,7 @@ function saveTalkEditor() {
     }
     talkCustom = talkCustomDraft;
     talkConfig = nextConfig;
+    saveTalkProfileForm();
     // たどっている途中の言葉が消えたかもしれないので、最初の話題選びへ戻す
     talkPath = [];
     simplePage = 0;
@@ -5102,10 +5411,16 @@ audioCacheBtn.addEventListener("click", () => {
 // 全画面表示の切り替え（ブラウザ版向け。Escでも解除される）
 const fullscreenBtn = document.getElementById("fullscreen-btn");
 
+// 全画面中は、メニューを閉じていても右上（⚙の横）に解除アイコンを出す
+const fullscreenExitBtn = document.getElementById("fullscreen-exit-btn");
+
 function updateFullscreenButton() {
+    const isFullscreen = Boolean(document.fullscreenElement);
+    document.body.classList.toggle("is-fullscreen", isFullscreen);
+    if (fullscreenExitBtn) fullscreenExitBtn.style.display = isFullscreen ? "" : "none";
     if (!fullscreenBtn) return;
     const label = fullscreenBtn.querySelector(".fullscreen-btn-label");
-    if (label) label.textContent = document.fullscreenElement ? "全画面を解除" : "全画面";
+    if (label) label.textContent = isFullscreen ? "全画面を解除" : "全画面";
 }
 
 if (fullscreenBtn) {
@@ -5119,6 +5434,9 @@ if (fullscreenBtn) {
             } catch (error) {
                 console.warn("fullscreen toggle failed:", error);
             }
+        });
+        fullscreenExitBtn?.addEventListener("click", () => {
+            if (document.fullscreenElement) document.exitFullscreen().catch(error => console.warn("fullscreen exit failed:", error));
         });
         document.addEventListener("fullscreenchange", updateFullscreenButton);
         updateFullscreenButton();
@@ -5187,6 +5505,15 @@ const talkHistorySummary = document.getElementById("talk-history-summary");
 const talkCustomLabelInput = document.getElementById("talk-custom-label-input");
 const talkCustomEmojiInput = document.getElementById("talk-custom-emoji-input");
 const talkCustomSayInput = document.getElementById("talk-custom-say-input");
+const talkSetList = document.getElementById("talk-set-list");
+const talkProfileGenderSelect = document.getElementById("talk-profile-gender");
+const talkProfileAgeInput = document.getElementById("talk-profile-age");
+const talkAiModelInput = document.getElementById("talk-ai-model-input");
+const talkInterviewCarryInput = document.getElementById("talk-interview-carry");
+const talkInterviewStartBtn = document.getElementById("talk-interview-start-btn");
+const talkGenerateBtn = document.getElementById("talk-generate-btn");
+const talkInterviewList = document.getElementById("talk-interview-list");
+const talkAiStatus = document.getElementById("talk-ai-status");
 const questionButtonsContainer = document.getElementById("question-buttons");
 const questionEndBtn = document.getElementById("question-end-btn");
 const questionEditorList = document.getElementById("question-editor-list");
@@ -5642,6 +5969,9 @@ if (simpleShowRestInput) simpleShowRestInput.addEventListener("change", renderSi
 // 画面から外すドロップ先: 「追加できるパネル」の一覧
 if (simplePanelList) bindLayoutDrop(simplePanelList, id => removeLayoutPanel(id));
 document.getElementById("talk-custom-add-btn")?.addEventListener("click", addTalkCustomPhrase);
+talkInterviewStartBtn?.addEventListener("click", () => void startTalkInterview());
+talkGenerateBtn?.addEventListener("click", () => void generateTalkSetFromInterview());
+talkInterviewCarryInput?.addEventListener("change", updateTalkAiButtons);
 document.getElementById("talk-history-clear-btn")?.addEventListener("click", () => {
     if (!confirm("お話の「よく話す」記録を消去しますか？")) return;
     clearTalkHistory();

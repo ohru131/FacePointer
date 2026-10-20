@@ -1513,6 +1513,15 @@ body.calib-active #dwell-indicator {
     opacity: 1;
 }
 
+#fullscreen-exit-btn {
+    margin-left: auto;
+}
+
+/* 全画面中は右上に解除アイコンも出るので、その分だけ上部の文の右余白を広げる */
+body.is-fullscreen #simple-message {
+    padding-right: 116px;
+}
+
 /* =========================================================
    設定モーダル
    ========================================================= */
@@ -1676,6 +1685,7 @@ body.calib-active #dwell-indicator {
 
 .settings-panes select,
 .settings-panes input[type="text"],
+.settings-panes input[type="number"],
 .settings-panes input[type="password"] {
     width: 100%;
     min-height: 2.6rem;
@@ -2665,6 +2675,88 @@ body.settings-open #dwell-indicator {
     background: transparent;
     color: var(--text-dim);
     cursor: pointer;
+}
+
+.talk-set-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.talk-set-row {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid #d0d7de;
+    border-radius: 0.6rem;
+    cursor: pointer;
+}
+
+.talk-set-row.active {
+    border-color: var(--primary);
+    background: rgba(230, 57, 70, 0.05);
+}
+
+.talk-set-row input[type="radio"] {
+    accent-color: var(--primary);
+}
+
+.talk-set-body {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.talk-set-name {
+    font-weight: 700;
+}
+
+.talk-set-meta {
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.talk-set-btn {
+    flex: 0 0 auto;
+    padding: 0.3rem 0.7rem;
+}
+
+.talk-profile-form {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.7rem;
+    margin-bottom: 0.6rem;
+}
+
+.talk-ai-actions {
+    display: flex;
+    gap: 0.6rem;
+    justify-content: flex-end;
+    margin-top: 0.6rem;
+}
+
+#talk-ai-status.is-error {
+    color: var(--primary);
+    font-weight: 600;
+}
+
+.talk-interview-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+
+.talk-interview-item textarea {
+    width: 100%;
+    resize: vertical;
+    font: inherit;
+    padding: 0.4rem 0.5rem;
+    border: 1px solid #d0d7de;
+    border-radius: 0.5rem;
 }
 
 .talk-custom-form {
