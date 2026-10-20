@@ -2236,11 +2236,19 @@ body.settings-open #dwell-indicator {
 }
 
 #app[data-compose="1"] .simple-grid .h-btn {
-    font-size: clamp(1.8rem, 3.8vw, 3.4rem);
+    font-size: clamp(1.5rem, 3.2vw, 3rem);
 }
 
+/* 文づくりは上部に文・タブがあり行が低いので、絵文字・アイコンは縮められるようにして文字を優先 */
 #app[data-compose="1"] .simple-grid .h-btn-emoji {
-    font-size: 1.3em;
+    font-size: 1.1em;
+    flex: 0 1 auto;
+    min-height: 0;
+    overflow: hidden;
+}
+
+#app[data-compose="1"] .simple-grid .h-btn-icon {
+    height: 48%;
 }
 
 #app[data-compose="1"] #simple-message {
@@ -2582,4 +2590,28 @@ body.settings-open #dwell-indicator {
     font-size: 0.75em;
     font-weight: 400;
     color: var(--text-dim);
+}
+
+/* ✨おすすめタブ */
+#simple-tabs .h-btn.simple-ctrl.simple-tab.simple-tab--suggest {
+    background: linear-gradient(180deg, #fff8e1 0%, #ffe9a8 100%);
+    border-color: rgba(214, 158, 46, 0.55);
+}
+
+#simple-tabs .h-btn.simple-ctrl.simple-tab.simple-tab--suggest.active {
+    background: linear-gradient(180deg, #f4a261 0%, #e76f51 100%);
+    border-color: #e76f51;
+    color: #fff;
+}
+
+/* よく話す文（そのまま発話する候補） */
+#app[data-compose="1"] .simple-grid .h-btn.compose-word--phrase {
+    background: linear-gradient(180deg, #ffffff 0%, #fff4d6 100%);
+    border-color: rgba(244, 162, 97, 0.6);
+    font-size: clamp(1rem, 1.9vw, 1.7rem);
+}
+
+#app[data-compose="1"] .simple-grid .h-btn.compose-word--phrase .h-btn-text {
+    white-space: normal;
+    line-height: 1.25;
 }

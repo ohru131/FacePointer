@@ -965,6 +965,12 @@ async function startCamera() {
 }
 
 function fitButtonText(btn, label) {
+    // よく話す文の候補は長いので折り返して表示する
+    if (btn.classList.contains("compose-word--phrase")) {
+        label.style.whiteSpace = "normal";
+        label.style.fontSize = "";
+        return;
+    }
     label.style.whiteSpace = "nowrap";
     label.style.fontSize = "";
     const maxWidth = btn.clientWidth - 16;
@@ -1480,7 +1486,7 @@ const COMPOSE_PRESET_WORDS = [
     { id: "w-warm", cat: "request", type: "pred", name: "温めて", text: "温めてください。", particle: "を", emoji: "♨️" },
     { id: "w-look", cat: "request", type: "pred", name: "見て", text: "見てください。", particle: "を", emoji: "👀" },
     { id: "w-move", cat: "request", type: "pred", name: "動かして", text: "動かしてください。", particle: "を", emoji: "🔄" },
-    { id: "w-call", cat: "request", type: "pred", name: "呼んで", text: "呼んでください。", particle: "を", emoji: "🔔" },
+    { id: "w-call", cat: "request", type: "pred", name: "呼んで", text: "呼んでください。", particle: "を", emoji: "🔔", fits: ["person"] },
     { id: "w-meet", cat: "request", type: "pred", name: "会いたい", text: "会いたいです。", particle: "に", emoji: "🤝" },
     { id: "w-phone", cat: "request", type: "pred", name: "電話して", text: "電話してください。", particle: "に", emoji: "📞" },
     { id: "w-come", cat: "request", type: "pred", name: "来てほしい", text: "来てほしいです。", particle: "に", emoji: "🚶" }
@@ -1503,24 +1509,200 @@ function loadComposeConfig() {
         return {
             hiddenIds: Array.isArray(parsed?.hiddenIds) ? parsed.hiddenIds.filter(id => typeof id === "string") : [],
             autoAdvance: parsed?.autoAdvance !== false,
-            mouthSpeaks: parsed?.mouthSpeaks !== false
+            mouthSpeaks: parsed?.mouthSpeaks !== false,
+            smartSuggest: parsed?.smartSuggest !== false,
+            autoSpeak: parsed?.autoSpeak === true,
+            learn: parsed?.learn !== false
         };
     } catch {
-        return { hiddenIds: [], autoAdvance: true, mouthSpeaks: true };
+        return { hiddenIds: [], autoAdvance: true, mouthSpeaks: true, smartSuggest: true, autoSpeak: false, learn: true };
     }
 }
 
 let composeCustom = loadComposeCustom();
 let composeConfig = loadComposeConfig();
-let composeTab = COMPOSE_CATEGORIES[0].key;
+
+// ---------------------------------------------------------
+// 文づくりの「おすすめ」
+// 直前に選んだ言葉に合う候補（部位なら「痛い・さすって」、人なら「会いたい・呼んで」）を、
+// これまでの使い方（言葉のつながり・よく話す文）から順位付けして出す
+// ---------------------------------------------------------
+const COMPOSE_SUGGEST_TAB = "suggest";
+const COMPOSE_SUGGEST_CATEGORY = { key: COMPOSE_SUGGEST_TAB, label: "おすすめ", icon: "✨" };
+const COMPOSE_HISTORY_KEY = "compose_history_v1";
+const COMPOSE_START_ID = "^";
+const COMPOSE_PHRASE_PREFIX = "phrase-";
+const COMPOSE_HISTORY_SENTENCE_LIMIT = 40;
+const COMPOSE_SUGGEST_PHRASES = 4;
+const COMPOSE_SUGGEST_LIMIT = 20;
+const COMPOSE_SUGGEST_ADV_AFTER = 6;
+const COMPOSE_SUGGEST_ADV_MAX = 2;
+// 履歴がないときの書き出し候補（よく使いそうな順）
+const COMPOSE_DEFAULT_STARTERS = ["w-head", "w-belly", "w-back", "w-leg", "w-hand", "w-throat", "w-nurse", "w-mother"];
+
+function loadComposeHistory() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(COMPOSE_HISTORY_KEY) || "null");
+        return {
+            pairs: parsed?.pairs && typeof parsed.pairs === "object" ? parsed.pairs : {},
+            sentences: parsed?.sentences && typeof parsed.sentences === "object" ? parsed.sentences : {}
+        };
+    } catch {
+        return { pairs: {}, sentences: {} };
+    }
+}
+
+let composeHistory = loadComposeHistory();
+let composeTab = composeConfig.smartSuggest ? COMPOSE_SUGGEST_TAB : COMPOSE_CATEGORIES[0].key;
+
+function getComposeTabs() {
+    return composeConfig.smartSuggest ? [COMPOSE_SUGGEST_CATEGORY, ...COMPOSE_CATEGORIES] : COMPOSE_CATEGORIES;
+}
+
+function getComposeHomeTab() {
+    return composeConfig.smartSuggest ? COMPOSE_SUGGEST_TAB : COMPOSE_CATEGORIES[0].key;
+}
+
+// 名詞の種類: 部位(body) / 人(person)
+function getNounKind(word) {
+    return word.cat === "who" ? "person" : "body";
+}
+
+// その様子・動作の言葉が、どの種類の名詞に付けられるか
+function getPredFits(word) {
+    if (Array.isArray(word.fits)) return word.fits;
+    if (word.cat === "state") return ["body"];
+    return word.particle === "に" ? ["person"] : ["body"];
+}
+
+function getPairCount(fromId, toId) {
+    return composeHistory.pairs[`${fromId}>${toId}`] || 0;
+}
+
+// 履歴の多い順。同点なら元の並び順
+function rankComposeWords(words, scoreOf) {
+    return words
+        .map((word, index) => ({ word, index, score: scoreOf(word) }))
+        .sort((a, b) => (b.score - a.score) || (a.index - b.index))
+        .map(entry => entry.word);
+}
+
+function getVisibleComposeWords() {
+    const hidden = new Set(composeConfig.hiddenIds);
+    return getComposeCatalog().filter(w => !hidden.has(w.id));
+}
+
+// 最後の述語より後ろ（＝組み立て中の1文）
+function getCurrentClause(parts) {
+    let lastPred = -1;
+    parts.forEach((part, i) => { if (part.type === "pred") lastPred = i; });
+    return parts.slice(lastPred + 1);
+}
+
+function getFrequentPhrases(limit) {
+    return Object.entries(composeHistory.sentences)
+        .sort((a, b) => (b[1].count - a[1].count) || (b[1].at - a[1].at))
+        .slice(0, limit)
+        .map(([sentence], i) => ({ id: `${COMPOSE_PHRASE_PREFIX}${i}`, type: "phrase", name: `⭐ ${sentence}`, sentence }));
+}
+
+function getComposeSuggestions() {
+    const visible = getVisibleComposeWords();
+    const clause = getCurrentClause(messageParts);
+    const last = messageParts[messageParts.length - 1];
+    const prevId = last ? last.id : COMPOSE_START_ID;
+    const clauseNouns = clause.filter(p => p.type === "noun");
+
+    if (clauseNouns.length === 0) {
+        // 文の書き出し: よく話す文（文が空のときだけ）＋よく書き出しに使う言葉
+        const phrases = messageParts.length === 0 ? getFrequentPhrases(COMPOSE_SUGGEST_PHRASES) : [];
+        const nouns = visible.filter(w => w.type === "noun");
+        const starters = rankComposeWords(nouns, (w) => {
+            const defaultRank = COMPOSE_DEFAULT_STARTERS.indexOf(w.id);
+            const fallback = defaultRank === -1 ? 0 : (COMPOSE_DEFAULT_STARTERS.length - defaultRank) * 0.01;
+            return getPairCount(COMPOSE_START_ID, w.id) + getPairCount(prevId, w.id) + fallback;
+        });
+        return [...phrases, ...starters].slice(0, COMPOSE_SUGGEST_LIMIT);
+    }
+
+    // 名詞のあと: その名詞に合う様子・動作を、よく続けた順に。程度・時の言葉は1つまで
+    const kinds = new Set(clauseNouns.map(p => p.kind));
+    const preds = visible.filter(w => w.type === "pred" && getPredFits(w).some(kind => kinds.has(kind)));
+    const rankedPreds = rankComposeWords(preds, (w) =>
+        clauseNouns.reduce((sum, noun) => sum + getPairCount(noun.id, w.id), 0) + getPairCount(prevId, w.id));
+    const hasAdv = clause.some(p => p.type === "adv");
+    const advs = hasAdv ? [] : visible.filter(w => w.type === "adv"
+        && (w.cat !== "state" || kinds.has("body")));
+    const rankedAdvs = rankComposeWords(advs, w => getPairCount(prevId, w.id));
+    // 程度・時の言葉は埋もれないよう、上位の候補のすぐ後ろに置く
+    const head = rankedPreds.slice(0, COMPOSE_SUGGEST_ADV_AFTER);
+    return [...head, ...rankedAdvs.slice(0, COMPOSE_SUGGEST_ADV_MAX), ...rankedPreds.slice(COMPOSE_SUGGEST_ADV_AFTER)].slice(0, COMPOSE_SUGGEST_LIMIT);
+}
+
+// 話した文から、言葉のつながりとよく話す文を覚える
+function recordComposeHistory(parts, sentence) {
+    if (!composeConfig.learn || parts.length === 0) return;
+    const bump = (from, to) => {
+        const key = `${from}>${to}`;
+        composeHistory.pairs[key] = (composeHistory.pairs[key] || 0) + 1;
+    };
+    let clauseNouns = [];
+    parts.forEach((part, i) => {
+        bump(i === 0 ? COMPOSE_START_ID : parts[i - 1].id, part.id);
+        if (part.type === "noun") clauseNouns.push(part.id);
+        if (part.type === "pred") {
+            // 名詞→述語のつながり（間に程度の言葉があっても覚える）
+            clauseNouns.forEach(nounId => { if (nounId !== parts[i - 1]?.id) bump(nounId, part.id); });
+            clauseNouns = [];
+            if (parts[i + 1]) bump(COMPOSE_START_ID, parts[i + 1].id);
+        }
+    });
+    const entry = composeHistory.sentences[sentence] || { count: 0, at: 0 };
+    composeHistory.sentences[sentence] = { count: entry.count + 1, at: Date.now() };
+    // よく話す文は上位だけ残す
+    const kept = Object.entries(composeHistory.sentences)
+        .sort((a, b) => (b[1].count - a[1].count) || (b[1].at - a[1].at))
+        .slice(0, COMPOSE_HISTORY_SENTENCE_LIMIT);
+    composeHistory.sentences = Object.fromEntries(kept);
+    try {
+        localStorage.setItem(COMPOSE_HISTORY_KEY, JSON.stringify(composeHistory));
+    } catch (error) {
+        console.warn("compose history save failed:", error);
+    }
+}
+
+function clearComposeHistory() {
+    composeHistory = { pairs: {}, sentences: {} };
+    localStorage.removeItem(COMPOSE_HISTORY_KEY);
+}
+
+// 組み立てた文を話して、次の文の書き出しへ戻る
+function speakComposedMessage() {
+    const parts = messageParts;
+    const sentence = buildComposedSentence(parts);
+    messageParts = [];
+    recordComposeHistory(parts, sentence);
+    goToComposeTab(getComposeHomeTab());
+    rerenderSimpleMode();
+    void speakSimpleSentence(sentence);
+}
+
+// タブが変わると同じ位置に別の言葉が出るので、一度動くまで滞留しない
+function goToComposeTab(tab) {
+    if (composeTab === tab && simplePage === 0) return;
+    composeTab = tab;
+    simplePage = 0;
+    resetDwellProgress();
+    dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+}
 
 function getComposeCatalog(custom = composeCustom) {
     return [...COMPOSE_PRESET_WORDS, ...custom.map(w => ({ ...w, custom: true }))];
 }
 
 function getComposeWords(cat) {
-    const hidden = new Set(composeConfig.hiddenIds);
-    return getComposeCatalog().filter(w => w.cat === cat && !hidden.has(w.id));
+    if (cat === COMPOSE_SUGGEST_TAB) return getComposeSuggestions();
+    return getVisibleComposeWords().filter(w => w.cat === cat);
 }
 
 // ためた語句を、助詞を補った文にする
@@ -1559,17 +1741,44 @@ function shouldMouthSpeakComposed() {
 function handleComposeWord(word) {
     if (isConfirmInProgress || isSimplePaused) return;
     lockSimpleKeyAfterConfirm(getSimpleRowKey(word.id));
+
+    // よく話す文は、選んだらそのまま話す
+    if (word.type === "phrase") {
+        if (composeConfig.learn) {
+            const entry = composeHistory.sentences[word.sentence] || { count: 0, at: 0 };
+            composeHistory.sentences[word.sentence] = { count: entry.count + 1, at: Date.now() };
+            try { localStorage.setItem(COMPOSE_HISTORY_KEY, JSON.stringify(composeHistory)); } catch { /* 容量超過は無視 */ }
+        }
+        goToComposeTab(getComposeHomeTab());
+        rerenderSimpleMode();
+        void speakSimpleSentence(word.sentence);
+        return;
+    }
     if (messageParts.length >= MESSAGE_MAX_PARTS) return;
 
-    messageParts.push({ id: word.id, name: word.name, type: word.type, text: word.text, particle: word.particle });
+    messageParts.push({
+        id: word.id,
+        name: word.name,
+        type: word.type,
+        text: word.text,
+        particle: word.particle,
+        kind: word.type === "noun" ? getNounKind(word) : undefined
+    });
     playConfirmSound();
-    const category = COMPOSE_CATEGORIES.find(c => c.key === word.cat);
-    if (composeConfig.autoAdvance && category?.next) {
-        composeTab = category.next;
-        simplePage = 0;
-        // 切り替わったタブで同じ位置の言葉を続けて選ばないよう、一度動くまで滞留しない
+
+    // 文末（様子・動作）を選んだら1文完成。自動発話するか、次の文の書き出しへ戻る
+    if (word.type === "pred" && composeConfig.autoSpeak) {
+        speakComposedMessage();
+        return;
+    }
+    if (composeConfig.smartSuggest) {
+        goToComposeTab(COMPOSE_SUGGEST_TAB);
+        // おすすめは選ぶたびに中身が変わるので、同じタブでも一度動くまで滞留しない
         resetDwellProgress();
         dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+    } else {
+        const category = COMPOSE_CATEGORIES.find(c => c.key === word.cat);
+        if (composeConfig.autoAdvance && category?.next) goToComposeTab(category.next);
     }
     rerenderSimpleMode();
 }
@@ -1664,10 +1873,10 @@ function renderComposeTabs() {
         return;
     }
     simpleTabsContainer.style.display = "";
-    COMPOSE_CATEGORIES.forEach((category) => {
+    getComposeTabs().forEach((category) => {
         const control = `${COMPOSE_TAB_PREFIX}${category.key}`;
         const btn = createSimpleButton(control, `${category.icon} ${category.label}`, {
-            className: `simple-ctrl simple-tab${category.key === composeTab ? " active" : ""}`,
+            className: `simple-ctrl simple-tab${category.key === composeTab ? " active" : ""}${category.key === COMPOSE_SUGGEST_TAB ? " simple-tab--suggest" : ""}`,
             onClick: () => handleSimpleControl(control)
         });
         simpleTabsContainer.appendChild(btn);
@@ -1825,10 +2034,7 @@ function handleSimpleControl(control) {
         return;
     }
     if (control === SIMPLE_CTRL_SPEAK) {
-        const sentence = buildComposedSentence(messageParts);
-        messageParts = [];
-        rerenderSimpleMode();
-        void speakSimpleSentence(sentence);
+        speakComposedMessage();
         return;
     }
 
@@ -1839,8 +2045,11 @@ function handleSimpleControl(control) {
         isSimplePaused = !isSimplePaused;
     } else if (control === SIMPLE_CTRL_BACKSPACE) {
         messageParts.pop();
+        // おすすめは直前の言葉で変わるので出し直す
+        if (composeTab === COMPOSE_SUGGEST_TAB) goToComposeTab(COMPOSE_SUGGEST_TAB);
     } else if (control === SIMPLE_CTRL_CLEAR) {
         messageParts = [];
+        goToComposeTab(getComposeHomeTab());
     } else {
         const { cols, rows, panels } = getSimpleLayout();
         const pageCount = Math.max(1, Math.ceil(panels.length / (cols * rows)));
@@ -1991,7 +2200,7 @@ function setAppMode(mode) {
     isSimplePaused = false;
     simplePage = 0;
     messageParts = [];
-    composeTab = COMPOSE_CATEGORIES[0].key;
+    composeTab = getComposeHomeTab();
     // 質問中に切り替えたら質問は終える（終了後に古いページへ戻らないようにする）
     activeQuestion = null;
     pageBeforeQuestion = 0;
@@ -2674,6 +2883,10 @@ function openComposeEditor() {
     composeEditorFilter = COMPOSE_CATEGORIES[0].key;
     if (composeAutoAdvanceInput) composeAutoAdvanceInput.checked = composeConfig.autoAdvance;
     if (composeMouthSpeaksInput) composeMouthSpeaksInput.checked = composeConfig.mouthSpeaks;
+    if (composeSmartSuggestInput) composeSmartSuggestInput.checked = composeConfig.smartSuggest;
+    if (composeAutoSpeakInput) composeAutoSpeakInput.checked = composeConfig.autoSpeak;
+    if (composeLearnInput) composeLearnInput.checked = composeConfig.learn;
+    updateComposeHistorySummary();
     resetComposeCustomForm();
     renderComposeEditor();
 }
@@ -2776,11 +2989,23 @@ function addComposeCustomWord() {
     renderComposeEditor();
 }
 
+function updateComposeHistorySummary() {
+    if (!composeHistorySummary) return;
+    const sentences = Object.keys(composeHistory.sentences).length;
+    const pairs = Object.keys(composeHistory.pairs).length;
+    composeHistorySummary.textContent = sentences + pairs === 0
+        ? "まだ学習していません"
+        : `よく話す文 ${sentences} 件・言葉のつながり ${pairs} 件を記録中`;
+}
+
 function saveComposeEditor() {
     const nextConfig = {
         hiddenIds: Array.from(composeHiddenDraft),
         autoAdvance: composeAutoAdvanceInput ? composeAutoAdvanceInput.checked : composeConfig.autoAdvance,
-        mouthSpeaks: composeMouthSpeaksInput ? composeMouthSpeaksInput.checked : composeConfig.mouthSpeaks
+        mouthSpeaks: composeMouthSpeaksInput ? composeMouthSpeaksInput.checked : composeConfig.mouthSpeaks,
+        smartSuggest: composeSmartSuggestInput ? composeSmartSuggestInput.checked : composeConfig.smartSuggest,
+        autoSpeak: composeAutoSpeakInput ? composeAutoSpeakInput.checked : composeConfig.autoSpeak,
+        learn: composeLearnInput ? composeLearnInput.checked : composeConfig.learn
     };
     try {
         localStorage.setItem(COMPOSE_CUSTOM_KEY, JSON.stringify(composeCustomDraft));
@@ -2791,7 +3016,13 @@ function saveComposeEditor() {
         return false;
     }
     composeCustom = composeCustomDraft;
+    const wasSmart = composeConfig.smartSuggest;
     composeConfig = nextConfig;
+    // おすすめのON/OFFでタブ構成が変わるので、書き出しのタブへ戻す
+    if (wasSmart !== composeConfig.smartSuggest || !getComposeTabs().some(t => t.key === composeTab)) {
+        composeTab = getComposeHomeTab();
+        simplePage = 0;
+    }
     return true;
 }
 
@@ -4299,6 +4530,10 @@ const composeWordList = document.getElementById("compose-word-list");
 const composeWordFilter = document.getElementById("compose-word-filter");
 const composeAutoAdvanceInput = document.getElementById("compose-auto-advance-input");
 const composeMouthSpeaksInput = document.getElementById("compose-mouth-speaks-input");
+const composeSmartSuggestInput = document.getElementById("compose-smart-suggest-input");
+const composeAutoSpeakInput = document.getElementById("compose-auto-speak-input");
+const composeLearnInput = document.getElementById("compose-learn-input");
+const composeHistorySummary = document.getElementById("compose-history-summary");
 const composeCustomTypeSelect = document.getElementById("compose-custom-type-select");
 const composeCustomNameInput = document.getElementById("compose-custom-name-input");
 const composeCustomEmojiInput = document.getElementById("compose-custom-emoji-input");
@@ -4609,6 +4844,12 @@ if (simpleShowRestInput) simpleShowRestInput.addEventListener("change", renderSi
 // 画面から外すドロップ先: 「追加できるパネル」の一覧
 if (simplePanelList) bindLayoutDrop(simplePanelList, id => removeLayoutPanel(id));
 document.getElementById("compose-custom-add-btn")?.addEventListener("click", addComposeCustomWord);
+document.getElementById("compose-history-clear-btn")?.addEventListener("click", () => {
+    if (!confirm("文づくりの学習（よく話す文・言葉のつながり）を消去しますか？")) return;
+    clearComposeHistory();
+    updateComposeHistorySummary();
+    if (isComposeScreen()) rerenderSimpleMode();
+});
 if (composeCustomTypeSelect) composeCustomTypeSelect.addEventListener("change", syncComposeCustomFormFields);
 
 if (simpleCustomImageInput) {

@@ -307,15 +307,38 @@
                                 <h4>文づくりモード</h4>
                                 <p class="settings-help">言葉を選ぶと助詞を補って文にします。例: 頭 → とても → 痛い ＝「頭がとても痛いです。」、お母さん → 会いたい ＝「お母さんに会いたいです。」。続けて選べば複数の文になります。</p>
                                 <label class="toggle-row">
+                                    <input type="checkbox" id="compose-smart-suggest-input">
+                                    <span class="toggle-switch" aria-hidden="true"></span>
+                                    <span>✨おすすめを出す<small>選ぶたびに「おすすめ」タブへ戻り、次に合う言葉を出す（部位→痛い・さすって、人→会いたい・呼んで）。文が空のときは、よく話す文も出す</small></span>
+                                </label>
+                                <label class="toggle-row">
+                                    <input type="checkbox" id="compose-auto-speak-input">
+                                    <span class="toggle-switch" aria-hidden="true"></span>
+                                    <span>1文できたら自動で話す<small>「痛い」「呼んで」など文末の言葉を選んだら、すぐ発話して次の文へ</small></span>
+                                </label>
+                                <label class="toggle-row">
                                     <input type="checkbox" id="compose-auto-advance-input">
                                     <span class="toggle-switch" aria-hidden="true"></span>
-                                    <span>次のタブへ自動で進む<small>「どこ」を選んだら「どうした」、「だれ」を選んだら「してほしい」へ</small></span>
+                                    <span>次のタブへ自動で進む（おすすめOFF時）<small>「どこ」を選んだら「どうした」、「だれ」を選んだら「してほしい」へ</small></span>
                                 </label>
                                 <label class="toggle-row">
                                     <input type="checkbox" id="compose-mouth-speaks-input">
                                     <span class="toggle-switch" aria-hidden="true"></span>
                                     <span>口を開けたら文を話す<small>文が1語以上あるとき、口を開けるとどこを見ていても組み立てた文を発話。言葉の選択は滞留で行う（滞留OFFだと2語目以降を口で選べないので、その場合はOFF）</small></span>
                                 </label>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4>学習</h4>
+                                <label class="toggle-row">
+                                    <input type="checkbox" id="compose-learn-input">
+                                    <span class="toggle-switch" aria-hidden="true"></span>
+                                    <span>使い方を学習する<small>話した文から、言葉のつながりとよく話す文を覚え、おすすめの順番に使う（この端末内だけに保存）</small></span>
+                                </label>
+                                <div class="settings-section-head">
+                                    <span id="compose-history-summary" class="settings-help"></span>
+                                    <button id="compose-history-clear-btn" class="ctrl-btn secondary" type="button">学習を消去</button>
+                                </div>
                             </section>
 
                             <section class="settings-section">
