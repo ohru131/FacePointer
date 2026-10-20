@@ -20,6 +20,8 @@
         </div>
         <!-- Pointer lives above ALL layers -->
         <div id="pointer"></div>
+        <!-- Dwell (滞留確定) progress pie, follows the pointer -->
+        <div id="dwell-indicator" aria-hidden="true"></div>
 
         <!-- UI Layer -->
         <div id="ui-layer">
@@ -37,6 +39,12 @@
 
                 <div class="row-label">③ 決定</div>
                 <div id="row3" class="btn-row btn-row--confirm"></div>
+            </div>
+
+            <!-- Simple mode: panel grid (select to speak) -->
+            <div id="simple-panel">
+                <div id="simple-grid" class="simple-grid"></div>
+                <div id="simple-bar"></div>
             </div>
         </div>
 
@@ -78,27 +86,39 @@
         <!-- Gesture Indicator -->
         <div id="gesture-indicator"></div>
 
-        <!-- Controls (bottom right) -->
+        <!-- Caregiver drawer (top right) -->
         <div id="controls">
             <div id="controls-top">
-                <button id="controls-collapse-btn" class="ctrl-btn icon-btn" type="button" title="パネルを閉じる" aria-expanded="true">✕</button>
-                <button id="settings-btn" class="ctrl-btn icon-btn" title="設定">⚙️</button>
-                <button id="params-toggle-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true">パラメータ ON</button>
-                <button id="vertical-move-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true">上下移動 ON</button>
-                <button id="calib-wizard-btn" class="ctrl-btn" type="button">キャリブレーション</button>
-                <button id="audio-cache-btn" class="ctrl-btn secondary control-advanced">音声データを更新</button>
-                <button id="calibrate-btn" class="ctrl-btn control-advanced">校正リセット</button>
-                <div id="audio-status" class="status-info control-advanced" style="display:none;">
-                    <div class="status-label"></div>
-                    <div class="status-progress-bar">
-                        <div class="status-progress-fill"></div>
+                <div class="drawer-header">
+                    <span class="drawer-title">介助者メニュー</span>
+                    <button id="controls-collapse-btn" class="drawer-toggle" type="button" title="メニューを閉じる" aria-expanded="true">✕</button>
+                </div>
+
+                <section class="drawer-section">
+                    <h4 class="drawer-heading">操作</h4>
+                    <div class="drawer-actions">
+                        <button id="settings-btn" class="drawer-action" type="button"><span class="drawer-action-icon">⚙️</span>設定</button>
+                        <button id="calib-wizard-btn" class="drawer-action" type="button"><span class="drawer-action-icon">🎯</span>キャリブレーション</button>
+                        <button id="calibrate-btn" class="drawer-action" type="button"><span class="drawer-action-icon">↺</span>校正リセット</button>
+                        <button id="audio-cache-btn" class="drawer-action" type="button"><span class="drawer-action-icon">🔊</span>音声データを更新</button>
                     </div>
-                </div>
+                    <div id="audio-status" class="status-info" style="display:none;">
+                        <div class="status-label"></div>
+                        <div class="status-progress-bar">
+                            <div class="status-progress-fill"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="drawer-section">
+                    <h4 class="drawer-heading">表示</h4>
+                    <button id="params-toggle-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true">調整・計測値</button>
+                    <button id="vertical-move-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true">上下移動（症状モード）</button>
+                </section>
             </div>
-            <div id="controls-bottom" class="control-advanced">
-                <div id="telemetry-panel">
-                    <pre id="telemetry-values">計測待機中</pre>
-                </div>
+
+            <section id="controls-bottom" class="drawer-section control-advanced">
+                <h4 class="drawer-heading">感度調整（即時反映）</h4>
                 <div id="quick-tuning" aria-label="調整スライダー">
                     <div class="compact-slider-item">
                         <label for="jaw-open-threshold-slider">口の開き <span id="jaw-open-threshold-value">0.10</span></label>
@@ -113,83 +133,174 @@
                         <input type="range" id="yaw-gain-slider" min="0" max="20" step="0.5" value="10">
                     </div>
                 </div>
-            </div>
+                <details id="telemetry-panel">
+                    <summary>計測値</summary>
+                    <pre id="telemetry-values">計測待機中</pre>
+                </details>
+            </section>
         </div>
 
         <!-- Settings Modal -->
-        <div id="settings-modal" class="modal">
+        <div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
             <div class="modal-content settings-modal-content">
-                <h3>設定</h3>
-                
-                <!-- Tabs -->
-                <div class="settings-tabs">
-                    <button class="settings-tab-btn active" data-tab="api-tab">API設定</button>
-                    <button class="settings-tab-btn" data-tab="phrase-tab">セリフ編集</button>
+                <div class="modal-header">
+                    <h3 id="settings-title">設定</h3>
+                    <button id="settings-close-x" class="modal-close" type="button" title="閉じる（保存しない）">✕</button>
                 </div>
 
-                <!-- API Tab -->
-                <div id="api-tab" class="settings-tab-content active">
-                    <div class="setting-item">
-                        <label for="mode-select">操作モード</label>
-                        <select id="mode-select">
-                            <option value="symptom-relative">新モード（横移動）</option>
-                            <option value="symptom">症状モード</option>
-                            <option value="hierarchy">階層モード</option>
-                        </select>
-                        <small>調整スライダーはメイン画面右下で即時反映されます。</small>
-                    </div>
-                    <div class="setting-item">
-                        <label for="icon-style-select">アイコンスタイル</label>
-                        <select id="icon-style-select">
-                            <option value="simple">シンプル（ピクトグラム）</option>
-                            <option value="cute">かわいい（イラスト）</option>
-                            <option value="comic">ヒーロー（イラスト）</option>
-                            <option value="comic2">ヒーロー2（イラスト）</option>
-                        </select>
-                    </div>
-                    <div class="setting-item">
-                        <label for="api-key-input">Gemini API Key (Google Cloud TTS用):</label>
-                        <input type="text" id="api-key-input" placeholder="AIZA...">
-                        <small>※ブラウザに保存されます</small>
-                    </div>
-                    <div class="setting-item" style="margin-top: 15px;">
-                        <label>マウスクリックで話す文言:</label>
-                        <div class="mouse-speech-grid">
-                            <input type="text" id="mouse-left-input" placeholder="左クリックの文言">
-                            <input type="text" id="mouse-middle-input" placeholder="真ん中クリックの文言">
-                            <input type="text" id="mouse-right-input" placeholder="右クリックの文言">
-                        </div>
-                        <small>※ 左/真ん中/右クリックで即時発話されます</small>
-                    </div>
-                </div>
+                <div class="settings-body">
+                    <nav class="settings-tabs" aria-label="設定の分類">
+                        <button class="settings-tab-btn active" type="button" data-tab="basic-tab"><span>🧭</span>操作</button>
+                        <button class="settings-tab-btn" type="button" data-tab="simple-tab"><span>🔲</span>シンプルモード</button>
+                        <button class="settings-tab-btn" type="button" data-tab="voice-tab"><span>🔊</span>音声</button>
+                    </nav>
 
-                <!-- Phrase Tab -->
-                <div id="phrase-tab" class="settings-tab-content">
-                    <div class="phrase-editor-toolbar">
-                        <input id="phrase-search-input" type="text" placeholder="分類名・ボタン名・発話文で検索">
-                        <div class="phrase-editor-toolbar-actions">
-                            <button id="phrase-expand-all" class="ctrl-btn secondary" type="button">全展開</button>
-                            <button id="phrase-collapse-all" class="ctrl-btn secondary" type="button">全折りたたみ</button>
-                            <button id="phrase-clear-search" class="ctrl-btn secondary" type="button">検索クリア</button>
+                    <div class="settings-panes">
+                        <!-- Basic Tab -->
+                        <div id="basic-tab" class="settings-tab-content active">
+                            <section class="settings-section">
+                                <h4>操作モード</h4>
+                                <div class="choice-cards">
+                                    <label class="choice-card">
+                                        <input type="radio" name="app-mode" value="symptom">
+                                        <span class="choice-card-icon">🩺</span>
+                                        <span class="choice-card-title">症状モード</span>
+                                        <span class="choice-card-desc">分類 → 内容の2段階で選ぶ。上下の首振りで段階を移動。</span>
+                                    </label>
+                                    <label class="choice-card">
+                                        <input type="radio" name="app-mode" value="simple">
+                                        <span class="choice-card-icon">🔲</span>
+                                        <span class="choice-card-title">シンプルモード</span>
+                                        <span class="choice-card-desc">パネルを選ぶだけで発話。止まる（滞留）か口を開けて確定。</span>
+                                    </label>
+                                </div>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4>滞留で確定（シンプルモード）</h4>
+                                <div class="segmented" role="radiogroup" aria-label="滞留時間">
+                                    <label><input type="radio" name="dwell-time" value="0"><span>OFF</span></label>
+                                    <label><input type="radio" name="dwell-time" value="800"><span>0.8秒</span></label>
+                                    <label><input type="radio" name="dwell-time" value="1000"><span>1.0秒</span></label>
+                                    <label><input type="radio" name="dwell-time" value="1500"><span>1.5秒</span></label>
+                                    <label><input type="radio" name="dwell-time" value="2000"><span>2.0秒</span></label>
+                                    <label><input type="radio" name="dwell-time" value="2500"><span>2.5秒</span></label>
+                                    <label><input type="radio" name="dwell-time" value="3000"><span>3.0秒</span></label>
+                                </div>
+                                <p class="settings-help">パネル上でポインタを止めると円が埋まり、満タンで発話。OFF のときは口を開けて確定のみ。</p>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4><label for="icon-style-select">アイコンスタイル</label></h4>
+                                <select id="icon-style-select">
+                                    <option value="simple">シンプル（ピクトグラム）</option>
+                                    <option value="cute">かわいい（イラスト）</option>
+                                    <option value="comic">ヒーロー（イラスト）</option>
+                                    <option value="comic2">ヒーロー2（イラスト）</option>
+                                </select>
+                            </section>
+
+                            <p class="settings-help">感度スライダーとキャリブレーションは、画面右上の ⚙（介助者メニュー）にあります。</p>
                         </div>
-                    </div>
-                    <div id="phrase-editor-summary" class="phrase-editor-summary"></div>
-                    <div id="phrase-editor-container" style="display: grid; grid-template-columns: 1fr; gap: 1.5rem;"></div>
-                    <div id="phrase-synthesis-status" class="status-info" style="display:none; margin-top: 1rem;">
-                        <div class="status-label"></div>
-                        <div class="status-progress-bar">
-                            <div class="status-progress-fill"></div>
+
+                        <!-- Simple Mode Tab -->
+                        <div id="simple-tab" class="settings-tab-content">
+                            <section class="settings-section">
+                                <h4>グリッドサイズ</h4>
+                                <div class="segmented" role="radiogroup" aria-label="グリッドサイズ">
+                                    <label><input type="radio" name="simple-grid-size" value="2x2"><span>2×2<small>4枚</small></span></label>
+                                    <label><input type="radio" name="simple-grid-size" value="3x2"><span>3×2<small>6枚</small></span></label>
+                                    <label><input type="radio" name="simple-grid-size" value="3x3"><span>3×3<small>9枚</small></span></label>
+                                    <label><input type="radio" name="simple-grid-size" value="4x3"><span>4×3<small>12枚</small></span></label>
+                                    <label><input type="radio" name="simple-grid-size" value="4x4"><span>4×4<small>16枚</small></span></label>
+                                </div>
+                                <p class="settings-help">入りきらない分は画面下の「前へ / 次へ」でページ送り。</p>
+                                <div class="toggle-list">
+                                    <label class="toggle-row">
+                                        <input type="checkbox" id="simple-show-rest-input">
+                                        <span class="toggle-switch" aria-hidden="true"></span>
+                                        <span>休憩パネルを表示<small>休憩中は「再開」以外を確定しない</small></span>
+                                    </label>
+                                    <label class="toggle-row">
+                                        <input type="checkbox" id="simple-confirm-sound-input">
+                                        <span class="toggle-switch" aria-hidden="true"></span>
+                                        <span>確定音を鳴らす<small>確定時に短い「ピポッ」</small></span>
+                                    </label>
+                                </div>
+                            </section>
+
+                            <section class="settings-section">
+                                <div class="settings-section-head">
+                                    <h4>表示パネル</h4>
+                                    <span id="simple-panel-summary" class="settings-badge"></span>
+                                </div>
+                                <div id="simple-panel-filter" class="filter-chips" role="tablist" aria-label="パネルの分類"></div>
+                                <div class="simple-editor-toolbar">
+                                    <button id="simple-enable-all-btn" class="ctrl-btn secondary" type="button">この一覧を全て表示</button>
+                                    <button id="simple-disable-all-btn" class="ctrl-btn secondary" type="button">この一覧を全て非表示</button>
+                                    <button id="simple-reset-panels-btn" class="ctrl-btn secondary" type="button">初期状態に戻す</button>
+                                </div>
+                                <div id="simple-panel-list"></div>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4>任意パネルを追加</h4>
+                                <div class="simple-custom-form">
+                                    <label class="field">
+                                        <span>表示名 <em>必須</em></span>
+                                        <input type="text" id="simple-custom-name-input" placeholder="例: テレビ" maxlength="20">
+                                    </label>
+                                    <label class="field field--wide">
+                                        <span>発話文</span>
+                                        <input type="text" id="simple-custom-sentence-input" placeholder="空欄なら表示名を読み上げ" maxlength="80">
+                                    </label>
+                                    <label class="field field--narrow">
+                                        <span>絵文字</span>
+                                        <input type="text" id="simple-custom-emoji-input" placeholder="📺" maxlength="8">
+                                    </label>
+                                    <div class="field field--image">
+                                        <span>画像（絵文字より優先）</span>
+                                        <div class="image-picker">
+                                            <label class="ctrl-btn secondary image-picker-btn">
+                                                画像を選ぶ
+                                                <input type="file" id="simple-custom-image-input" accept="image/*">
+                                            </label>
+                                            <img id="simple-custom-image-preview" alt="" style="display:none;">
+                                        </div>
+                                    </div>
+                                    <button id="simple-custom-add-btn" class="ctrl-btn primary" type="button">＋ 追加</button>
+                                </div>
+                                <p class="settings-help">画像は 256px に縮小してブラウザに保存されます。</p>
+                            </section>
                         </div>
-                    </div>
-                    <div style="margin-top: 1.5rem; display: flex; gap: 1rem;">
-                        <button id="prefetch-modified-btn" class="ctrl-btn primary">修正済みセリフのみ再合成</button>
-                        <button id="reset-phrases-btn" class="ctrl-btn secondary">修正内容をリセット</button>
+
+                        <!-- Voice Tab -->
+                        <div id="voice-tab" class="settings-tab-content">
+                            <section class="settings-section">
+                                <h4><label for="api-key-input">Gemini API Key（高品質音声）</label></h4>
+                                <div class="input-with-button">
+                                    <input type="password" id="api-key-input" placeholder="AIza..." autocomplete="off">
+                                    <button id="api-key-reveal-btn" class="ctrl-btn secondary" type="button">表示</button>
+                                </div>
+                                <p class="settings-help">ブラウザに保存されます。未設定・通信エラー時は OS 標準の日本語音声で読み上げます。オフライン用の音声は介助者メニューの「音声データを更新」で作成。</p>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4>マウスクリックで話す文言</h4>
+                                <div class="mouse-speech-grid">
+                                    <label class="field field--row"><span>左クリック</span><input type="text" id="mouse-left-input" placeholder="左クリックの文言"></label>
+                                    <label class="field field--row"><span>中クリック</span><input type="text" id="mouse-middle-input" placeholder="真ん中クリックの文言"></label>
+                                    <label class="field field--row"><span>右クリック</span><input type="text" id="mouse-right-input" placeholder="右クリックの文言"></label>
+                                </div>
+                                <p class="settings-help">介助者がマウスで即時発話させるためのショートカット。</p>
+                            </section>
+                        </div>
                     </div>
                 </div>
 
                 <div class="modal-actions">
-                    <button id="save-settings" class="ctrl-btn primary">保存して閉じる</button>
-                    <button id="close-settings" class="ctrl-btn secondary">キャンセル</button>
+                    <button id="close-settings" class="ctrl-btn secondary" type="button">キャンセル</button>
+                    <button id="save-settings" class="ctrl-btn primary" type="button">保存して閉じる</button>
                 </div>
             </div>
         </div>

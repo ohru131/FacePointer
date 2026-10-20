@@ -19,6 +19,10 @@ const confirmZone = document.getElementById("confirm-zone");
 const confirmZonePreview = document.getElementById("confirm-zone-preview");
 const appRoot = document.getElementById("app");
 const modePrompt = document.getElementById("mode-prompt");
+const simplePanelContainer = document.getElementById("simple-panel");
+const simpleGridContainer = document.getElementById("simple-grid");
+const simpleBarContainer = document.getElementById("simple-bar");
+const dwellIndicator = document.getElementById("dwell-indicator");
 
 let faceLandmarker;
 let lastVideoTime = -1;
@@ -125,6 +129,25 @@ const SYMPTOM_IDLE_RESET_MS = 30000;
 
 const SYMPTOM_FLOW_DIRECT = "direct";
 
+// 操作モード: 2段階の症状モード / パネルを選ぶだけのシンプルモード
+const APP_MODE_KEY = "app_mode";
+const APP_MODE_SYMPTOM = "symptom";
+const APP_MODE_SIMPLE = "simple";
+const SIMPLE_ROW_ID = "s";
+const SIMPLE_CONFIRM_DISPLAY_MS = 2200;
+// 滞留(dwell)選択: 同じパネル上でしばらく動かなければ確定する
+const DWELL_TIME_KEY = "dwell_time_ms";
+const DWELL_TIME_DEFAULT_MS = 1500;
+const DWELL_TIME_MAX_MS = 5000;
+// この距離以上ポインタが動いたら「動いた」とみなして滞留をやり直す
+const DWELL_MOVE_TOLERANCE_PX = 48;
+// ジッタでパネル境界を一瞬外れても進捗を保つ猶予
+const DWELL_LEAVE_GRACE_MS = 200;
+// 一瞬通過しただけでインジケータが出ないよう、少し溜まってから表示する
+const DWELL_INDICATOR_SHOW_RATIO = 0.08;
+// 起動・モード切替直後は、最初にホバーしたパネルから一度外れるまで滞留しない
+const DWELL_LOCK_FIRST_HOVER = "*";
+
 const symptomChoices = [
     {
         name: "身体",
@@ -173,7 +196,10 @@ const symptomChoices = [
 ];
 
 function readStoredNumber(key, fallback, min, max) {
-    const raw = localStorage.getItem(key);
+    return readStoredNumberFromValue(localStorage.getItem(key), fallback, min, max);
+}
+
+function readStoredNumberFromValue(raw, fallback, min, max) {
     const parsed = Number.parseFloat(raw);
     if (!Number.isFinite(parsed)) return fallback;
     return Math.max(min, Math.min(max, parsed));
@@ -206,6 +232,21 @@ let jawOpenThreshold = readStoredNumber(JAW_OPEN_THRESHOLD_KEY, JAW_OPEN_THRESHO
 let noseGain = readStoredNumber(NOSE_GAIN_KEY, NOSE_GAIN_DEFAULT, 0, NOSE_GAIN_MAX);
 let yawGain = readStoredNumber(YAW_GAIN_KEY, YAW_GAIN_DEFAULT, 0, YAW_GAIN_MAX);
 let iconStyle = localStorage.getItem(ICON_STYLE_KEY) || ICON_STYLE_DEFAULT;
+let appMode = localStorage.getItem(APP_MODE_KEY) === APP_MODE_SIMPLE ? APP_MODE_SIMPLE : APP_MODE_SYMPTOM;
+let dwellTimeMs = readStoredNumber(DWELL_TIME_KEY, DWELL_TIME_DEFAULT_MS, 0, DWELL_TIME_MAX_MS); // 0 = 滞留確定OFF
+
+// Dwell state
+let dwellTargetKey = "";
+let dwellStartAt = 0;
+let dwellAnchorX = 0;
+let dwellAnchorY = 0;
+let dwellLeftAt = 0;
+// 確定済みパネル。一度外れるまで再選択しない（TD Snap の Look away before reselecting 相当）
+let dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+
+function isSimpleMode() {
+    return appMode === APP_MODE_SIMPLE;
+}
 
 // Symptom state
 let symptomStage = SYMPTOM_STAGE_SYMPTOM;
@@ -284,6 +325,8 @@ function resetPointerMotionHistory() {
 }
 
 function getSymptomRowPointerBounds() {
+    if (isSimpleMode()) return getSimplePanelPointerBounds();
+
     // 選択中の階層（未選択なら row1、選択後は row2）にポインタを追従させる
     const activeContainer = symptomStage === SYMPTOM_STAGE_BODY_PART ? row2Container : row1Container;
     const buttons = Array.from(activeContainer.querySelectorAll(".h-btn:not(.h-btn--empty):not(.h-btn--static)"));
@@ -302,6 +345,23 @@ function getSymptomRowPointerBounds() {
     const centerX = centers.reduce((sum, c) => sum + c.x, 0) / centers.length;
     const centerY = centers.reduce((sum, c) => sum + c.y, 0) / centers.length;
     return { minX, maxX, centerX, centerY };
+}
+
+// シンプルモード: グリッド全体の各パネル中央の範囲でポインタを動かす
+function getSimplePanelPointerBounds() {
+    if (!simplePanelContainer) return null;
+
+    const buttons = Array.from(simplePanelContainer.querySelectorAll(".h-btn:not(.h-btn--empty)"));
+    const rects = buttons.map(btn => btn.getBoundingClientRect()).filter(rect => rect.width > 0 && rect.height > 0);
+    if (rects.length === 0) return null;
+
+    const xs = rects.map(rect => rect.left + rect.width / 2);
+    const ys = rects.map(rect => rect.top + rect.height / 2);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    return { minX, maxX, minY, maxY, centerX: (minX + maxX) / 2, centerY: (minY + maxY) / 2 };
 }
 
 // 表示中の行の縦位置。パンくず表示・プレビュー表示（h-btn--static）も対象にする
@@ -331,6 +391,12 @@ function getRowGeometry(container) {
 
 // 上下移動の限界は上段/下段それぞれのボタン中央
 function getVerticalPointerBounds() {
+    if (isSimpleMode()) {
+        // シンプルモードは上下移動ONに関係なく縦横に動かす
+        const bounds = getSimplePanelPointerBounds();
+        if (!bounds || bounds.maxY - bounds.minY < VERTICAL_MIN_TRAVEL_PX) return null;
+        return { minY: bounds.minY, maxY: bounds.maxY };
+    }
     if (!isVerticalMoveEnabled) return null;
 
     const upper = getRowGeometry(row1Container);
@@ -381,6 +447,24 @@ function findRow1ButtonByPointerX() {
         if (pointerX >= rect.left && pointerX <= rect.right) return btn;
 
         const distance = Math.abs(pointerX - (rect.left + (rect.width / 2)));
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            nearest = btn;
+        }
+    }
+    return nearest;
+}
+
+function findNearestSimplePanel() {
+    if (!simplePanelContainer) return null;
+
+    let nearest = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const btn of simplePanelContainer.querySelectorAll(".h-btn:not(.h-btn--empty)")) {
+        const rect = btn.getBoundingClientRect();
+        const dx = Math.max(rect.left - pointerX, 0, pointerX - rect.right);
+        const dy = Math.max(rect.top - pointerY, 0, pointerY - rect.bottom);
+        const distance = dx * dx + dy * dy;
         if (distance < bestDistance) {
             bestDistance = distance;
             nearest = btn;
@@ -625,7 +709,9 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex,
         lastYaw = filteredYaw;
         lastPitch = filteredPitch;
         targetX = clamp(targetX, bounds.minX, bounds.maxX);
-        if (isVerticalMoveEnabled) {
+        if (isSimpleMode()) {
+            targetY = clamp(targetY, bounds.minY, bounds.maxY);
+        } else if (isVerticalMoveEnabled) {
             // 校正直後は必ず上段の高さから始める
             snapPointerToUpperRow();
         } else {
@@ -735,7 +821,7 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex,
 
 // 上下移動で行を跨いだら階層を進める/戻す
 function updateVerticalStageTransition() {
-    if (!isVerticalMoveEnabled) return;
+    if (isSimpleMode() || !isVerticalMoveEnabled) return;
     if (isCalibrating || isConfirmInProgress) return;
     if (pendingClickTimer) return;
     if (Date.now() - lastVerticalStageSwitchAt < VERTICAL_STAGE_SWITCH_LOCKOUT_MS) return;
@@ -936,7 +1022,7 @@ function renderRow(container, items, rowNumber, onClick, options = {}) {
     });
 }
 
-function showConfirm(sentence) {
+function showConfirm(sentence, displayMs = 3500) {
     if (confirmOverlay.classList.contains("active") && confirmText.textContent === sentence) {
         return;
     }
@@ -949,7 +1035,7 @@ function showConfirm(sentence) {
     window.confirmTimer = setTimeout(() => {
         confirmOverlay.classList.remove("active");
         resolveConfirmOverlayHideWaiters();
-    }, 3500);
+    }, displayMs);
 }
 
 function checkPointerCollision() {
@@ -980,7 +1066,6 @@ function checkPointerCollision() {
                 currentHoveredBtn = btn;
             }
         }
-        btn.classList.remove("hover");
     });
 
     if (hoveredBtn && currentHoveredBtn) {
@@ -991,12 +1076,21 @@ function checkPointerCollision() {
     }
 
     // 上下移動で行間を通過中も、上段の選択対象とプレビューを保持する
-    if (!hoveredBtn && isVerticalMoveEnabled && symptomStage === SYMPTOM_STAGE_SYMPTOM) {
+    if (!hoveredBtn && !isSimpleMode() && isVerticalMoveEnabled && symptomStage === SYMPTOM_STAGE_SYMPTOM) {
         hoveredBtn = findRow1ButtonByPointerX();
     }
 
+    // シンプルモードはパネル間の隙間も最寄りパネル扱いにし、選択が途切れないようにする
+    if (!hoveredBtn && isSimpleMode()) {
+        hoveredBtn = findNearestSimplePanel();
+    }
+
+    // 付け外しを毎フレーム行うと CSS トランジションが始まり直して強調が見えないため、変化分だけ更新する
+    allBtns.forEach(btn => {
+        if (btn !== hoveredBtn && btn.classList.contains("hover")) btn.classList.remove("hover");
+    });
     if (hoveredBtn) {
-        hoveredBtn.classList.add("hover");
+        if (!hoveredBtn.classList.contains("hover")) hoveredBtn.classList.add("hover");
         lastHoveredButtonKey = `${hoveredBtn.dataset.row}|${hoveredBtn.dataset.name}`;
     } else {
         lastHoveredButtonKey = "";
@@ -1023,7 +1117,7 @@ function checkPointerCollision() {
 
 function updateSymptomPreview(hoveredBtn) {
     // 上位階層選択前（symptom段階）のみ、ホバー中の項目の次階層を下段にプレビュー表示する
-    if (symptomStage !== SYMPTOM_STAGE_SYMPTOM || !row2Container) return;
+    if (isSimpleMode() || symptomStage !== SYMPTOM_STAGE_SYMPTOM || !row2Container) return;
 
     const isRow1Hover = hoveredBtn && hoveredBtn.dataset.row === "1";
     const name = isRow1Hover ? hoveredBtn.dataset.name : null;
@@ -1047,6 +1141,13 @@ function updateSymptomPreview(hoveredBtn) {
 }
 
 function renderAll() {
+    if (isSimpleMode()) {
+        renderSimpleMode();
+        return;
+    }
+    if (simpleGridContainer) simpleGridContainer.innerHTML = "";
+    if (simpleBarContainer) simpleBarContainer.innerHTML = "";
+
     if (appRoot) {
         appRoot.dataset.mode = "symptom";
         appRoot.dataset.symptomStage = symptomStage;
@@ -1090,6 +1191,727 @@ function renderAll() {
         row3Container.innerHTML = "";
         row3Container.style.display = "none";
     }
+}
+
+// =========================================================
+// Simple mode (パネルを選ぶと即発話。滞留またはジェスチャーで確定)
+// =========================================================
+const SIMPLE_CONFIG_KEY = "simple_panel_config_v1";
+const SIMPLE_CUSTOM_PANELS_KEY = "simple_custom_panels_v1";
+const SIMPLE_GRID_SIZES = {
+    "2x2": { cols: 2, rows: 2 },
+    "3x2": { cols: 3, rows: 2 },
+    "3x3": { cols: 3, rows: 3 },
+    "4x3": { cols: 4, rows: 3 },
+    "4x4": { cols: 4, rows: 4 }
+};
+const SIMPLE_GRID_SIZE_DEFAULT = "4x4";
+const SIMPLE_CTRL_PREV = "ctrl-prev";
+const SIMPLE_CTRL_NEXT = "ctrl-next";
+const SIMPLE_CTRL_REST = "ctrl-rest";
+// 休憩中に再開するときは誤操作を避けるため長めに滞留させる
+const SIMPLE_RESUME_DWELL_RATIO = 2;
+const SIMPLE_RESUME_DWELL_MIN_MS = 2000;
+const CUSTOM_IMAGE_MAX_PX = 256;
+
+// 既存の症状モード16フレーズに加えて選べるプリセット
+// 想定利用者: 40代女性・未婚、両親と姉・兄が1人ずつ。気管切開・胃ろう・カテーテル装着で入院/療養中
+// group は設定画面の一覧で分類表示に使う
+const SIMPLE_EXTRA_PRESETS = [
+    // 返事（はい/いいえで答えられる質問への即答）
+    { id: "p-yes", group: "返事", name: "はい", emoji: "⭕", sentence: "はい。" },
+    { id: "p-no", group: "返事", name: "いいえ", emoji: "❌", sentence: "いいえ。" },
+    { id: "p-not-that", group: "返事", name: "そうじゃない", emoji: "🙅‍♀️", sentence: "そうじゃないです。" },
+    { id: "p-wait", group: "返事", name: "ちょっと待って", emoji: "✋", sentence: "ちょっと待ってください。" },
+    { id: "p-dont-know", group: "返事", name: "わからない", emoji: "❓", sentence: "わからないです。" },
+    { id: "p-again", group: "返事", name: "もう一度言って", emoji: "🔁", sentence: "もう一度言ってください。" },
+    // 家族（両親・姉・兄）
+    { id: "p-mother", group: "家族", name: "お母さん", emoji: "👩", sentence: "お母さんに会いたいです。" },
+    { id: "p-father", group: "家族", name: "お父さん", emoji: "👨", sentence: "お父さんに会いたいです。" },
+    { id: "p-sister", group: "家族", name: "お姉ちゃん", emoji: "👱‍♀️", sentence: "お姉ちゃんに会いたいです。" },
+    { id: "p-brother", group: "家族", name: "お兄ちゃん", emoji: "🧑", sentence: "お兄ちゃんに会いたいです。" },
+    { id: "p-call-family", group: "家族", name: "家族に電話", emoji: "📞", sentence: "家族に電話してください。" },
+    { id: "p-family-ok", group: "家族", name: "家族は元気？", emoji: "🏠", sentence: "家族はみんな元気ですか？" },
+    { id: "p-tell-thanks", group: "家族", name: "ありがとうと伝えて", emoji: "💐", sentence: "家族にありがとうと伝えてください。" },
+    // 体調
+    { id: "p-head-pain", group: "体調", name: "頭が痛い", icon: "media/body-head.png", sentence: "頭が痛いです。" },
+    { id: "p-body-pain", group: "体調", name: "体が痛い", icon: "media/body-body.png", sentence: "体が痛いです。" },
+    { id: "p-hand-pain", group: "体調", name: "手が痛い", icon: "media/body-hand.png", sentence: "手が痛いです。" },
+    { id: "p-leg-pain", group: "体調", name: "足が痛い", icon: "media/body-leg.png", sentence: "足が痛いです。" },
+    { id: "p-cold", group: "体調", name: "寒い", icon: "media/symptom-cold.png", sentence: "寒いです。" },
+    { id: "p-hot", group: "体調", name: "暑い", icon: "media/symptom-hot.png", sentence: "暑いです。" },
+    { id: "p-feel-bad", group: "体調", name: "気分が悪い", icon: "media/symptom-feel.png", sentence: "気分が悪いです。" },
+    { id: "p-breath", group: "体調", name: "息が苦しい", emoji: "😮‍💨", sentence: "息が苦しいです。" },
+    { id: "p-dry-mouth", group: "体調", name: "口が乾く", emoji: "💧", sentence: "口が乾いています。しめらせてください。" },
+    { id: "p-period", group: "体調", name: "生理かも", emoji: "🩸", sentence: "生理が来たかもしれません。" },
+    { id: "p-cant-sleep", group: "体調", name: "眠れない", emoji: "😣", sentence: "眠れません。" },
+    // ケア・身だしなみ
+    { id: "p-call", group: "ケア", name: "看護師さん呼んで", emoji: "🔔", sentence: "看護師さんを呼んでください。" },
+    { id: "p-female-staff", group: "ケア", name: "女性の方に", emoji: "👩‍⚕️", sentence: "女性の方にお願いしたいです。" },
+    { id: "p-curtain", group: "ケア", name: "カーテン閉めて", emoji: "🙈", sentence: "カーテンを閉めてください。" },
+    { id: "p-hair", group: "ケア", name: "髪をとかして", emoji: "💇‍♀️", sentence: "髪をとかしてください。" },
+    { id: "p-face", group: "ケア", name: "顔をふいて", emoji: "🧼", sentence: "顔をふいてください。" },
+    { id: "p-cream", group: "ケア", name: "クリームぬって", emoji: "🧴", sentence: "クリームをぬってください。" },
+    { id: "p-nails", group: "ケア", name: "爪を切って", emoji: "💅", sentence: "爪を切ってください。" },
+    { id: "p-mirror", group: "ケア", name: "鏡を見たい", emoji: "🤳", sentence: "鏡を見たいです。" },
+    // 過ごし方
+    { id: "p-phone", group: "過ごし方", name: "スマホ見たい", emoji: "📱", sentence: "スマホを見たいです。" },
+    { id: "p-video", group: "過ごし方", name: "動画が見たい", emoji: "📺", sentence: "動画を見たいです。" },
+    { id: "p-news", group: "過ごし方", name: "今日のこと", emoji: "🗞️", sentence: "今日の出来事を教えてください。" },
+    { id: "p-weather", group: "過ごし方", name: "外の様子", emoji: "🌤️", sentence: "外の様子を教えてください。" },
+    { id: "p-time", group: "過ごし方", name: "いま何時？", emoji: "🕐", sentence: "いま何時ですか？" },
+    { id: "p-light", group: "過ごし方", name: "電気つけて", emoji: "💡", sentence: "電気をつけてください。" },
+    { id: "p-dark", group: "過ごし方", name: "暗くして", emoji: "🌙", sentence: "暗くしてください。" },
+    { id: "p-alone", group: "過ごし方", name: "一人にして", emoji: "🚶‍♀️", sentence: "少し一人にしてください。" },
+    // 気持ち（気持ち＋してほしいことをセットで伝える）
+    { id: "p-anxious", group: "気持ち", name: "不安", emoji: "😟", sentence: "不安なので、そばにいてください。" },
+    { id: "p-stay", group: "気持ち", name: "そばにいて", emoji: "🤝", sentence: "そばにいてください。" },
+    { id: "p-hold-hand", group: "気持ち", name: "手をにぎって", emoji: "🤲", sentence: "手をにぎってください。" },
+    { id: "p-happy", group: "気持ち", name: "うれしい", emoji: "😊", sentence: "うれしいです。" },
+    { id: "p-sleepy", group: "気持ち", name: "ねむい", emoji: "😴", sentence: "ねむいです。" },
+    // あいさつ
+    { id: "p-good-morning", group: "あいさつ", name: "おはよう", emoji: "🌅", sentence: "おはようございます。" },
+    { id: "p-good-night", group: "あいさつ", name: "おやすみ", emoji: "🛌", sentence: "おやすみなさい。" },
+    { id: "p-see-you", group: "あいさつ", name: "また来てね", emoji: "👋", sentence: "また来てくださいね。" }
+];
+
+function loadSimpleCustomPanels() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(SIMPLE_CUSTOM_PANELS_KEY) || "[]");
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter(p => p && typeof p.id === "string" && typeof p.name === "string" && p.name.trim());
+    } catch {
+        return [];
+    }
+}
+
+function getSimpleBasePanels() {
+    return symptomChoices.flatMap((category, ci) => (category.options || []).map((option, oi) => ({
+        id: `base-${ci}-${oi}`,
+        name: option.name,
+        icon: option.icon,
+        sentence: option.sentence
+    })));
+}
+
+function getSimpleCatalog(customPanels = simpleCustomPanels) {
+    return [...getSimpleBasePanels(), ...SIMPLE_EXTRA_PRESETS, ...customPanels.map(p => ({ ...p, custom: true }))];
+}
+
+function defaultSimpleConfig() {
+    return {
+        gridSize: SIMPLE_GRID_SIZE_DEFAULT,
+        panelIds: getSimpleBasePanels().map(p => p.id),
+        showRest: true,
+        confirmSound: true
+    };
+}
+
+function loadSimpleConfig() {
+    const fallback = defaultSimpleConfig();
+    try {
+        const parsed = JSON.parse(localStorage.getItem(SIMPLE_CONFIG_KEY) || "null");
+        if (!parsed || typeof parsed !== "object") return fallback;
+        return {
+            gridSize: SIMPLE_GRID_SIZES[parsed.gridSize] ? parsed.gridSize : fallback.gridSize,
+            panelIds: Array.isArray(parsed.panelIds) ? parsed.panelIds.filter(id => typeof id === "string") : fallback.panelIds,
+            showRest: parsed.showRest !== false,
+            confirmSound: parsed.confirmSound !== false
+        };
+    } catch {
+        return fallback;
+    }
+}
+
+let simpleCustomPanels = loadSimpleCustomPanels();
+let simpleConfig = loadSimpleConfig();
+let simplePage = 0;
+let isSimplePaused = false;
+
+function getSimpleRowKey(id) {
+    return `${SIMPLE_ROW_ID}|${id}`;
+}
+
+function getEnabledSimplePanels() {
+    const byId = new Map(getSimpleCatalog().map(p => [p.id, p]));
+    return simpleConfig.panelIds.map(id => byId.get(id)).filter(Boolean);
+}
+
+function buildSimpleSentence(item) {
+    if (item.sentence && item.sentence.trim()) return item.sentence.trim();
+    return `${item.name}。`;
+}
+
+function createSimpleButton(id, label, options = {}) {
+    const { icon = "", emoji = "", image = "", className = "", onClick = null } = options;
+    const btn = document.createElement("div");
+    btn.className = `h-btn ${className}`.trim();
+    btn.dataset.row = SIMPLE_ROW_ID;
+    btn.dataset.name = id;
+
+    if (image || icon) {
+        const img = document.createElement("img");
+        img.className = "h-btn-icon";
+        if (image) {
+            img.src = image;
+        } else {
+            const styledIconPath = resolveIconPath(icon);
+            img.src = styledIconPath;
+            if (styledIconPath !== icon) {
+                img.onerror = () => {
+                    img.onerror = null;
+                    img.src = icon;
+                };
+            }
+        }
+        btn.appendChild(img);
+    } else if (emoji) {
+        const emojiEl = document.createElement("div");
+        emojiEl.className = "h-btn-emoji";
+        emojiEl.textContent = emoji;
+        btn.appendChild(emojiEl);
+    }
+
+    const text = document.createElement("div");
+    text.className = "h-btn-text";
+    text.innerText = label;
+    btn.appendChild(text);
+
+    if (onClick) btn.addEventListener("click", onClick);
+    return btn;
+}
+
+function renderSimpleMode() {
+    if (appRoot) {
+        appRoot.dataset.mode = APP_MODE_SIMPLE;
+        appRoot.dataset.simplePaused = isSimplePaused ? "1" : "0";
+        delete appRoot.dataset.symptomStage;
+    }
+    if (modePrompt) modePrompt.textContent = "";
+    if (confirmZone) confirmZone.style.display = "none";
+    [row1Container, row2Container, row3Container].forEach((container) => {
+        if (!container) return;
+        container.innerHTML = "";
+        container.style.display = "none";
+    });
+    previewSymptomName = null;
+
+    if (!simpleGridContainer || !simpleBarContainer) return;
+
+    const { cols, rows } = SIMPLE_GRID_SIZES[simpleConfig.gridSize] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
+    const pageSize = cols * rows;
+    const panels = getEnabledSimplePanels();
+    const pageCount = Math.max(1, Math.ceil(panels.length / pageSize));
+    simplePage = clamp(simplePage, 0, pageCount - 1);
+
+    simpleGridContainer.innerHTML = "";
+    simpleGridContainer.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+    simpleGridContainer.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
+    simpleGridContainer.dataset.cols = String(cols);
+
+    const pagePanels = panels.slice(simplePage * pageSize, (simplePage + 1) * pageSize);
+    pagePanels.forEach((item) => {
+        simpleGridContainer.appendChild(createSimpleButton(item.id, item.name, {
+            icon: item.icon,
+            emoji: item.emoji,
+            image: item.image,
+            onClick: () => handleSimpleClick(item)
+        }));
+    });
+    // 最終ページの空きは枠だけ置いて、パネルの大きさと位置をページ間で揃える
+    for (let i = pagePanels.length; i < pageSize; i++) {
+        const empty = document.createElement("div");
+        empty.className = "h-btn h-btn--empty";
+        simpleGridContainer.appendChild(empty);
+    }
+
+    simpleBarContainer.innerHTML = "";
+    if (pageCount > 1) {
+        simpleBarContainer.appendChild(createSimpleButton(SIMPLE_CTRL_PREV, "◀ 前へ", {
+            className: "simple-ctrl",
+            onClick: () => handleSimpleControl(SIMPLE_CTRL_PREV)
+        }));
+        const pageLabel = document.createElement("div");
+        pageLabel.className = "simple-page-label";
+        pageLabel.textContent = `${simplePage + 1} / ${pageCount}`;
+        simpleBarContainer.appendChild(pageLabel);
+        simpleBarContainer.appendChild(createSimpleButton(SIMPLE_CTRL_NEXT, "次へ ▶", {
+            className: "simple-ctrl",
+            onClick: () => handleSimpleControl(SIMPLE_CTRL_NEXT)
+        }));
+    }
+    if (simpleConfig.showRest) {
+        simpleBarContainer.appendChild(createSimpleButton(SIMPLE_CTRL_REST, isSimplePaused ? "▶️ 再開" : "⏸️ 休憩", {
+            className: "simple-ctrl simple-ctrl--rest",
+            onClick: () => handleSimpleControl(SIMPLE_CTRL_REST)
+        }));
+    }
+    simpleBarContainer.style.display = simpleBarContainer.childElementCount > 0 ? "" : "none";
+
+    if (pagePanels.length === 0 && panels.length === 0) {
+        const notice = document.createElement("div");
+        notice.className = "simple-empty-notice";
+        notice.textContent = "表示するパネルがありません（設定 → シンプルモードで選択）";
+        simpleGridContainer.appendChild(notice);
+    }
+
+    refitAllButtonText();
+}
+
+function lockSimpleKeyAfterConfirm(key) {
+    // 口ジェスチャー・滞留のどちらで確定しても、外れるまで同じパネルは再選択しない
+    dwellLockedKey = key;
+    resetDwellProgress();
+}
+
+async function handleSimpleClick(item) {
+    if (isConfirmInProgress || isSimplePaused) return;
+
+    const sentence = buildSimpleSentence(item);
+    if (!sentence) return;
+
+    lockSimpleKeyAfterConfirm(getSimpleRowKey(item.id));
+    playConfirmSound();
+    showConfirm(sentence, SIMPLE_CONFIRM_DISPLAY_MS);
+    isConfirmInProgress = true;
+    void speak(sentence);
+
+    try {
+        await waitForConfirmOverlayToHide();
+    } finally {
+        isConfirmInProgress = false;
+    }
+}
+
+function handleSimpleControl(control) {
+    if (isConfirmInProgress) return;
+    if (isSimplePaused && control !== SIMPLE_CTRL_REST) return;
+
+    if (control === SIMPLE_CTRL_REST) {
+        isSimplePaused = !isSimplePaused;
+    } else {
+        const { cols, rows } = SIMPLE_GRID_SIZES[simpleConfig.gridSize] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
+        const pageCount = Math.max(1, Math.ceil(getEnabledSimplePanels().length / (cols * rows)));
+        // 端から押したら反対側へ回り込む
+        const step = control === SIMPLE_CTRL_NEXT ? 1 : -1;
+        simplePage = (simplePage + step + pageCount) % pageCount;
+    }
+
+    lockSimpleKeyAfterConfirm(getSimpleRowKey(control));
+    playConfirmSound();
+    renderSimpleMode();
+    // 描画し直したボタンにホバー表示を付け直す
+    checkPointerCollision();
+}
+
+let confirmSoundContext = null;
+
+function playConfirmSound() {
+    if (!simpleConfig.confirmSound) return;
+    try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        if (!confirmSoundContext) confirmSoundContext = new AudioCtx();
+        const ctx = confirmSoundContext;
+        if (ctx.state === "suspended") void ctx.resume();
+
+        // 短い2音の「ピポッ」
+        const start = ctx.currentTime;
+        [[880, 0], [1320, 0.09]].forEach(([freq, offset]) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = "sine";
+            osc.frequency.value = freq;
+            gain.gain.setValueAtTime(0.0001, start + offset);
+            gain.gain.exponentialRampToValueAtTime(0.25, start + offset + 0.01);
+            gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.12);
+            osc.connect(gain).connect(ctx.destination);
+            osc.start(start + offset);
+            osc.stop(start + offset + 0.13);
+        });
+    } catch (error) {
+        console.warn("confirm sound failed:", error);
+    }
+}
+
+function resetDwellProgress() {
+    if (dwellTargetKey) {
+        const btn = document.querySelector(".h-btn.dwelling");
+        if (btn) btn.classList.remove("dwelling");
+    }
+    dwellTargetKey = "";
+    dwellStartAt = 0;
+    dwellLeftAt = 0;
+    if (dwellIndicator) {
+        dwellIndicator.classList.remove("active");
+        dwellIndicator.style.setProperty("--dwell-progress", "0");
+    }
+}
+
+function updateDwellSelection(hasFace) {
+    if (!isSimpleMode() || dwellTimeMs <= 0 || !hasFace || isCalibrating
+        || calibrationWizard.isActive() || isConfirmInProgress || pendingClickTimer) {
+        resetDwellProgress();
+        return;
+    }
+
+    const now = performance.now();
+    const restKey = getSimpleRowKey(SIMPLE_CTRL_REST);
+    let hoveredKey = lastHoveredButtonKey;
+    // 休憩中は再開パネル以外では滞留しない
+    if (isSimplePaused && hoveredKey !== restKey) hoveredKey = "";
+
+    if (dwellLockedKey === DWELL_LOCK_FIRST_HOVER && hoveredKey) dwellLockedKey = hoveredKey;
+    if (dwellLockedKey && dwellLockedKey !== DWELL_LOCK_FIRST_HOVER && hoveredKey !== dwellLockedKey) {
+        dwellLockedKey = "";
+    }
+
+    if (!hoveredKey || hoveredKey === dwellLockedKey) {
+        // 境界のジッタで一瞬外れただけなら進捗を保持する
+        if (dwellTargetKey && !hoveredKey && !isSimplePaused) {
+            if (!dwellLeftAt) dwellLeftAt = now;
+            if (now - dwellLeftAt < DWELL_LEAVE_GRACE_MS) return;
+        }
+        resetDwellProgress();
+        return;
+    }
+
+    const movedFar = Math.hypot(pointerX - dwellAnchorX, pointerY - dwellAnchorY) > DWELL_MOVE_TOLERANCE_PX;
+    if (hoveredKey !== dwellTargetKey || movedFar) {
+        resetDwellProgress();
+        dwellTargetKey = hoveredKey;
+        dwellStartAt = now;
+        dwellAnchorX = pointerX;
+        dwellAnchorY = pointerY;
+    }
+    dwellLeftAt = 0;
+
+    const targetBtn = document.querySelector(".h-btn.hover");
+    if (!targetBtn) return;
+    targetBtn.classList.add("dwelling");
+
+    const requiredMs = isSimplePaused
+        ? Math.max(dwellTimeMs * SIMPLE_RESUME_DWELL_RATIO, SIMPLE_RESUME_DWELL_MIN_MS)
+        : dwellTimeMs;
+    const progress = clamp((now - dwellStartAt) / requiredMs, 0, 1);
+    if (dwellIndicator) {
+        dwellIndicator.style.setProperty("--dwell-x", `${pointerX}px`);
+        dwellIndicator.style.setProperty("--dwell-y", `${pointerY}px`);
+        dwellIndicator.style.setProperty("--dwell-progress", progress.toFixed(3));
+        dwellIndicator.classList.toggle("active", progress >= DWELL_INDICATOR_SHOW_RATIO);
+    }
+
+    if (progress >= 1) {
+        resetDwellProgress();
+        dwellLockedKey = hoveredKey;
+        lastConfirmedAt = Date.now();
+        targetBtn.click();
+    }
+}
+
+// 休憩中は口ジェスチャーでも再開パネル以外を確定しない
+function isSimpleClickBlocked(targetKey) {
+    return isSimpleMode() && isSimplePaused && targetKey !== getSimpleRowKey(SIMPLE_CTRL_REST);
+}
+
+function setAppMode(mode) {
+    const nextMode = mode === APP_MODE_SIMPLE ? APP_MODE_SIMPLE : APP_MODE_SYMPTOM;
+    if (nextMode === appMode) return;
+
+    appMode = nextMode;
+    localStorage.setItem(APP_MODE_KEY, appMode);
+    resetDwellProgress();
+    dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+    isSimplePaused = false;
+    simplePage = 0;
+    resetSymptomModeState();
+
+    if (isSimpleMode()) {
+        // グリッド中央へ乗せ直す
+        const bounds = getSimplePanelPointerBounds();
+        if (bounds) {
+            targetX = pointerX = bounds.centerX;
+            targetY = pointerY = bounds.centerY;
+        }
+    }
+}
+
+// ---------------------------------------------------------
+// 設定画面: シンプルモードのパネル選択・任意パネル追加
+// ---------------------------------------------------------
+let simpleEditorDraft = [];   // [{ id, enabled }] 表示順
+let simpleEditorFilter = "all";
+const SIMPLE_FILTER_ALL = "all";
+const SIMPLE_FILTER_ENABLED = "enabled";
+const SIMPLE_GROUP_BASE = "基本";
+const SIMPLE_GROUP_CUSTOM = "任意";
+
+function getSimplePanelGroup(item) {
+    if (item.custom) return SIMPLE_GROUP_CUSTOM;
+    return item.group || SIMPLE_GROUP_BASE;
+}
+
+function matchesSimpleFilter(item, entry, filter = simpleEditorFilter) {
+    if (filter === SIMPLE_FILTER_ALL) return true;
+    if (filter === SIMPLE_FILTER_ENABLED) return entry.enabled;
+    return getSimplePanelGroup(item) === filter;
+}
+
+function renderSimplePanelFilter(byId) {
+    if (!simplePanelFilter) return;
+
+    const groups = [];
+    simpleEditorDraft.forEach(entry => {
+        const item = byId.get(entry.id);
+        if (!item) return;
+        const group = getSimplePanelGroup(item);
+        if (!groups.includes(group)) groups.push(group);
+    });
+    const filters = [
+        { key: SIMPLE_FILTER_ALL, label: "すべて" },
+        { key: SIMPLE_FILTER_ENABLED, label: "表示中" },
+        ...groups.map(group => ({ key: group, label: group }))
+    ];
+    if (!filters.some(f => f.key === simpleEditorFilter)) simpleEditorFilter = SIMPLE_FILTER_ALL;
+
+    simplePanelFilter.innerHTML = "";
+    filters.forEach(({ key, label }) => {
+        const isActive = key === simpleEditorFilter;
+        const count = simpleEditorDraft.filter(entry => byId.has(entry.id) && matchesSimpleFilter(byId.get(entry.id), entry, key)).length;
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "filter-chip" + (isActive ? " active" : "");
+        chip.setAttribute("role", "tab");
+        chip.setAttribute("aria-selected", isActive ? "true" : "false");
+        chip.innerHTML = "";
+        chip.append(label, Object.assign(document.createElement("span"), { className: "filter-chip-count", textContent: String(count) }));
+        chip.addEventListener("click", () => {
+            simpleEditorFilter = key;
+            renderSimplePanelEditor();
+        });
+        simplePanelFilter.appendChild(chip);
+    });
+}
+let simpleCustomDraft = [];   // 保存前の任意パネル
+
+function openSimplePanelEditor() {
+    simpleCustomDraft = simpleCustomPanels.map(p => ({ ...p }));
+    const catalogIds = getSimpleCatalog(simpleCustomDraft).map(p => p.id);
+    const enabledIds = simpleConfig.panelIds.filter(id => catalogIds.includes(id));
+    simpleEditorDraft = [
+        ...enabledIds.map(id => ({ id, enabled: true })),
+        ...catalogIds.filter(id => !enabledIds.includes(id)).map(id => ({ id, enabled: false }))
+    ];
+
+    if (simpleGridSizeSelect) simpleGridSizeSelect.value = simpleConfig.gridSize;
+    if (simpleShowRestInput) simpleShowRestInput.checked = simpleConfig.showRest;
+    if (simpleConfirmSoundInput) simpleConfirmSoundInput.checked = simpleConfig.confirmSound;
+    simpleEditorFilter = SIMPLE_FILTER_ALL;
+    resetSimpleCustomForm();
+    renderSimplePanelEditor();
+}
+
+function renderSimplePanelEditor() {
+    if (!simplePanelList) return;
+
+    const byId = new Map(getSimpleCatalog(simpleCustomDraft).map(p => [p.id, p]));
+    simplePanelList.innerHTML = "";
+    renderSimplePanelFilter(byId);
+    // 並び替えは表示順が連続して見える「すべて」「表示中」のときだけ
+    const canReorder = simpleEditorFilter === SIMPLE_FILTER_ALL || simpleEditorFilter === SIMPLE_FILTER_ENABLED;
+
+    const enabledCount = simpleEditorDraft.filter(d => d.enabled).length;
+    if (simplePanelSummary) {
+        const { cols, rows } = SIMPLE_GRID_SIZES[simpleGridSizeSelect?.value] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
+        const pages = Math.max(1, Math.ceil(enabledCount / (cols * rows)));
+        simplePanelSummary.textContent = `表示中 ${enabledCount} 枚 ・ ${pages} ページ`;
+    }
+
+    simpleEditorDraft.forEach((entry, index) => {
+        const item = byId.get(entry.id);
+        if (!item || !matchesSimpleFilter(item, entry)) return;
+
+        const row = document.createElement("div");
+        row.className = "simple-editor-row" + (entry.enabled ? "" : " is-disabled");
+
+        const check = document.createElement("input");
+        check.type = "checkbox";
+        check.checked = entry.enabled;
+        check.title = "表示する";
+        check.addEventListener("change", () => {
+            entry.enabled = check.checked;
+            // 表示ONにしたものは表示中の末尾へ、OFFにしたものは非表示側の先頭へ寄せる
+            simpleEditorDraft.splice(index, 1);
+            const firstDisabled = simpleEditorDraft.findIndex(d => !d.enabled);
+            const insertAt = firstDisabled === -1 ? simpleEditorDraft.length : firstDisabled;
+            simpleEditorDraft.splice(insertAt, 0, entry);
+            renderSimplePanelEditor();
+        });
+        row.appendChild(check);
+
+        const thumb = document.createElement("div");
+        thumb.className = "simple-editor-thumb";
+        if (item.image || item.icon) {
+            const img = document.createElement("img");
+            img.src = item.image || item.icon;
+            thumb.appendChild(img);
+        } else {
+            thumb.textContent = item.emoji || "💬";
+        }
+        row.appendChild(thumb);
+
+        const text = document.createElement("div");
+        text.className = "simple-editor-text";
+        const name = document.createElement("strong");
+        name.textContent = item.name;
+        const badge = document.createElement("span");
+        badge.className = "simple-editor-group";
+        badge.textContent = getSimplePanelGroup(item);
+        name.appendChild(badge);
+        const sentence = document.createElement("small");
+        sentence.textContent = buildSimpleSentence(item);
+        text.append(name, sentence);
+        row.appendChild(text);
+
+        const actions = document.createElement("div");
+        actions.className = "simple-editor-actions";
+        const addAction = (label, title, disabled, handler) => {
+            const btn = document.createElement("button");
+            btn.type = "button";
+            btn.className = "ctrl-btn secondary";
+            btn.textContent = label;
+            btn.title = title;
+            btn.disabled = disabled;
+            btn.addEventListener("click", handler);
+            actions.appendChild(btn);
+        };
+        const prev = simpleEditorDraft[index - 1];
+        const next = simpleEditorDraft[index + 1];
+        if (canReorder) addAction("▲", "前へ", !entry.enabled || !prev || !prev.enabled, () => {
+            [simpleEditorDraft[index - 1], simpleEditorDraft[index]] = [simpleEditorDraft[index], simpleEditorDraft[index - 1]];
+            renderSimplePanelEditor();
+        });
+        if (canReorder) addAction("▼", "後ろへ", !entry.enabled || !next || !next.enabled, () => {
+            [simpleEditorDraft[index + 1], simpleEditorDraft[index]] = [simpleEditorDraft[index], simpleEditorDraft[index + 1]];
+            renderSimplePanelEditor();
+        });
+        if (item.custom) {
+            addAction("削除", "この任意パネルを削除", false, () => {
+                simpleCustomDraft = simpleCustomDraft.filter(p => p.id !== item.id);
+                simpleEditorDraft = simpleEditorDraft.filter(d => d.id !== item.id);
+                renderSimplePanelEditor();
+            });
+        }
+        row.appendChild(actions);
+
+        simplePanelList.appendChild(row);
+    });
+}
+
+let simpleCustomImageData = "";
+
+function resetSimpleCustomForm() {
+    simpleCustomImageData = "";
+    if (simpleCustomNameInput) simpleCustomNameInput.value = "";
+    if (simpleCustomSentenceInput) simpleCustomSentenceInput.value = "";
+    if (simpleCustomEmojiInput) simpleCustomEmojiInput.value = "";
+    if (simpleCustomImageInput) simpleCustomImageInput.value = "";
+    if (simpleCustomImagePreview) {
+        simpleCustomImagePreview.removeAttribute("src");
+        simpleCustomImagePreview.style.display = "none";
+    }
+}
+
+// localStorage を圧迫しないよう、画像は縮小してから保存する
+function readImageAsResizedDataUrl(file) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+            const scale = Math.min(1, CUSTOM_IMAGE_MAX_PX / Math.max(img.width, img.height));
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.max(1, Math.round(img.width * scale));
+            canvas.height = Math.max(1, Math.round(img.height * scale));
+            canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
+            URL.revokeObjectURL(url);
+            resolve(canvas.toDataURL("image/webp", 0.85));
+        };
+        img.onerror = () => {
+            URL.revokeObjectURL(url);
+            reject(new Error("画像を読み込めませんでした"));
+        };
+        img.src = url;
+    });
+}
+
+function addSimpleCustomPanel() {
+    const name = simpleCustomNameInput?.value.trim() || "";
+    if (!name) {
+        alert("表示名を入力してください。");
+        return;
+    }
+    const sentence = simpleCustomSentenceInput?.value.trim() || "";
+    const emoji = simpleCustomEmojiInput?.value.trim() || "";
+    const panel = {
+        id: `c-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+        name,
+        sentence: sentence || `${name}。`
+    };
+    if (simpleCustomImageData) panel.image = simpleCustomImageData;
+    else if (emoji) panel.emoji = emoji;
+
+    simpleCustomDraft.push(panel);
+    // 追加したパネルは表示中の末尾に入れる
+    const firstDisabled = simpleEditorDraft.findIndex(d => !d.enabled);
+    simpleEditorDraft.splice(firstDisabled === -1 ? simpleEditorDraft.length : firstDisabled, 0, { id: panel.id, enabled: true });
+    // 追加結果が一覧で見えるよう「任意」に切り替える
+    simpleEditorFilter = SIMPLE_GROUP_CUSTOM;
+    resetSimpleCustomForm();
+    renderSimplePanelEditor();
+}
+
+// 今のフィルタで見えている分だけまとめて切り替える
+function setAllSimplePanelsEnabled(enabled) {
+    const byId = new Map(getSimpleCatalog(simpleCustomDraft).map(p => [p.id, p]));
+    simpleEditorDraft
+        .filter(d => byId.has(d.id) && matchesSimpleFilter(byId.get(d.id), d))
+        .forEach(d => { d.enabled = enabled; });
+    // 「表示中が先頭に連続」を保つ
+    simpleEditorDraft = [...simpleEditorDraft.filter(d => d.enabled), ...simpleEditorDraft.filter(d => !d.enabled)];
+    renderSimplePanelEditor();
+}
+
+function resetSimplePanelSelection() {
+    const baseIds = new Set(getSimpleBasePanels().map(p => p.id));
+    const catalogIds = getSimpleCatalog(simpleCustomDraft).map(p => p.id);
+    simpleEditorDraft = [
+        ...catalogIds.filter(id => baseIds.has(id)).map(id => ({ id, enabled: true })),
+        ...catalogIds.filter(id => !baseIds.has(id)).map(id => ({ id, enabled: false }))
+    ];
+    renderSimplePanelEditor();
+}
+
+// 保存に失敗したら false（画像が多すぎて容量超過など）
+function saveSimplePanelEditor() {
+    const nextConfig = {
+        gridSize: SIMPLE_GRID_SIZES[simpleGridSizeSelect?.value] ? simpleGridSizeSelect.value : simpleConfig.gridSize,
+        panelIds: simpleEditorDraft.filter(d => d.enabled).map(d => d.id),
+        showRest: simpleShowRestInput ? simpleShowRestInput.checked : simpleConfig.showRest,
+        confirmSound: simpleConfirmSoundInput ? simpleConfirmSoundInput.checked : simpleConfig.confirmSound
+    };
+    try {
+        localStorage.setItem(SIMPLE_CUSTOM_PANELS_KEY, JSON.stringify(simpleCustomDraft));
+        localStorage.setItem(SIMPLE_CONFIG_KEY, JSON.stringify(nextConfig));
+    } catch (error) {
+        console.error("simple panel save failed:", error);
+        alert("パネル設定を保存できませんでした。画像付きの任意パネルを減らしてください。");
+        return false;
+    }
+    simpleCustomPanels = simpleCustomDraft.map(p => ({ ...p }));
+    simpleConfig = nextConfig;
+    // 休憩パネルを消したときに休憩中のまま戻れなくならないようにする
+    if (!simpleConfig.showRest) isSimplePaused = false;
+    return true;
 }
 
 // =========================================================
@@ -1316,6 +2138,10 @@ async function prefetchAllAudio() {
         });
     });
 
+    getSimpleCatalog().forEach(panel => {
+        phrases.push(buildSimpleSentence(panel));
+    });
+
     Object.values(mouseClickSpeech).forEach(p => {
         if (p) phrases.push(p.trim());
     });
@@ -1477,6 +2303,7 @@ async function predictWebcam() {
     if (!hasFace && calibrationWizard.isActive()) calibrationWizard.onNoFace();
 
     checkPointerCollision();
+    updateDwellSelection(hasFace);
     if (hasFace) {
         updateVerticalStageTransition();
     }
@@ -1973,6 +2800,10 @@ function triggerClick() {
     const activeBtn = document.querySelector(".h-btn.hover");
     if (activeBtn && !activeBtn.classList.contains("h-btn--empty")) {
         const targetKey = `${activeBtn.dataset.row}|${activeBtn.dataset.name}`;
+        if (isSimpleClickBlocked(targetKey)) {
+            logClickDebug("click_blocked_simple_paused", { targetKey });
+            return false;
+        }
 
         if (pendingClickTimer) {
             logClickDebug("click_pending_replaced", { replacedTargetKey: pendingClickTargetKey, newTargetKey: targetKey });
@@ -2400,6 +3231,41 @@ const jawOpenThresholdSlider = document.getElementById("jaw-open-threshold-slide
 const noseGainSlider = document.getElementById("nose-gain-slider");
 const yawGainSlider = document.getElementById("yaw-gain-slider");
 const iconStyleSelect = document.getElementById("icon-style-select");
+// ラジオボタン群を <select> と同じ感覚(value / change)で扱う
+function radioGroup(name) {
+    const inputs = () => Array.from(document.querySelectorAll(`input[type="radio"][name="${name}"]`));
+    if (inputs().length === 0) return null;
+    return {
+        get value() {
+            return inputs().find(input => input.checked)?.value ?? "";
+        },
+        set value(next) {
+            inputs().forEach(input => { input.checked = input.value === String(next); });
+        },
+        addEventListener(type, handler) {
+            inputs().forEach(input => input.addEventListener(type, handler));
+        }
+    };
+}
+
+const modeSelect = radioGroup("app-mode");
+const dwellTimeSelect = radioGroup("dwell-time");
+const simpleGridSizeSelect = radioGroup("simple-grid-size");
+const simplePanelFilter = document.getElementById("simple-panel-filter");
+const settingsCloseX = document.getElementById("settings-close-x");
+const apiKeyRevealBtn = document.getElementById("api-key-reveal-btn");
+const simpleShowRestInput = document.getElementById("simple-show-rest-input");
+const simpleConfirmSoundInput = document.getElementById("simple-confirm-sound-input");
+const simplePanelList = document.getElementById("simple-panel-list");
+const simplePanelSummary = document.getElementById("simple-panel-summary");
+const simpleCustomNameInput = document.getElementById("simple-custom-name-input");
+const simpleCustomSentenceInput = document.getElementById("simple-custom-sentence-input");
+const simpleCustomEmojiInput = document.getElementById("simple-custom-emoji-input");
+const simpleCustomImageInput = document.getElementById("simple-custom-image-input");
+const simpleCustomImagePreview = document.getElementById("simple-custom-image-preview");
+const simpleCustomAddBtn = document.getElementById("simple-custom-add-btn");
+const settingsTabButtons = document.querySelectorAll(".settings-tab-btn");
+const settingsTabContents = document.querySelectorAll(".settings-tab-content");
 const jawOpenThresholdValue = document.getElementById("jaw-open-threshold-value");
 const noseGainValue = document.getElementById("nose-gain-value");
 const yawGainValue = document.getElementById("yaw-gain-value");
@@ -2414,13 +3280,14 @@ const controlsCollapseBtn = document.getElementById("controls-collapse-btn");
 const calibWizardBtn = document.getElementById("calib-wizard-btn");
 
 let isParamPanelVisible = localStorage.getItem(PARAM_PANEL_VISIBLE_KEY) !== "0";
-let isControlsCollapsed = localStorage.getItem(CONTROLS_COLLAPSED_KEY) === "1";
+// 利用者の画面を隠さないよう、介助者メニューは既定で閉じておく
+let isControlsCollapsed = localStorage.getItem(CONTROLS_COLLAPSED_KEY) !== "0";
 
 function applyControlsCollapsed() {
     if (!controlsRoot || !controlsCollapseBtn) return;
     controlsRoot.classList.toggle("collapsed", isControlsCollapsed);
     controlsCollapseBtn.textContent = isControlsCollapsed ? "⚙" : "✕";
-    controlsCollapseBtn.title = isControlsCollapsed ? "パネルを開く" : "パネルを閉じる";
+    controlsCollapseBtn.title = isControlsCollapsed ? "介助者メニューを開く" : "介助者メニューを閉じる";
     controlsCollapseBtn.setAttribute("aria-expanded", isControlsCollapsed ? "false" : "true");
 }
 
@@ -2434,9 +3301,18 @@ if (controlsCollapseBtn) {
 
 applyControlsCollapsed();
 
+// 設定画面・キャリブレーションの裏にメニューが残らないよう閉じる
+function collapseControls() {
+    if (isControlsCollapsed) return;
+    isControlsCollapsed = true;
+    localStorage.setItem(CONTROLS_COLLAPSED_KEY, "1");
+    applyControlsCollapsed();
+}
+
 if (calibWizardBtn) {
     calibWizardBtn.addEventListener("click", () => {
         if (calibrationWizard.isActive()) return;
+        collapseControls();
         calibrationWizard.start();
     });
 }
@@ -2446,7 +3322,6 @@ function applyVerticalMoveToggleState() {
 
     verticalMoveToggleBtn.classList.toggle("is-off", !isVerticalMoveEnabled);
     verticalMoveToggleBtn.setAttribute("aria-pressed", isVerticalMoveEnabled ? "true" : "false");
-    verticalMoveToggleBtn.textContent = isVerticalMoveEnabled ? "上下移動 ON" : "上下移動 OFF";
 }
 
 if (verticalMoveToggleBtn) {
@@ -2468,7 +3343,6 @@ function applyParamPanelVisibility() {
 
     paramsToggleBtn.classList.toggle("is-off", !isParamPanelVisible);
     paramsToggleBtn.setAttribute("aria-pressed", isParamPanelVisible ? "true" : "false");
-    paramsToggleBtn.textContent = isParamPanelVisible ? "パラメータ ON" : "パラメータ OFF";
 }
 
 if (paramsToggleBtn) {
@@ -2588,8 +3462,14 @@ document.addEventListener("mousedown", (event) => {
 });
 
 settingsBtn.addEventListener("click", () => {
+    collapseControls();
     apiKeyInput.value = GEMINI_API_KEY;
+    apiKeyInput.type = "password";
+    if (apiKeyRevealBtn) apiKeyRevealBtn.textContent = "表示";
     if (iconStyleSelect) iconStyleSelect.value = iconStyle;
+    if (modeSelect) modeSelect.value = appMode;
+    if (dwellTimeSelect) dwellTimeSelect.value = String(dwellTimeMs);
+    openSimplePanelEditor();
     if (mouseLeftInput) mouseLeftInput.value = mouseClickSpeech.left;
     if (mouseMiddleInput) mouseMiddleInput.value = mouseClickSpeech.middle;
     if (mouseRightInput) mouseRightInput.value = mouseClickSpeech.right;
@@ -2601,7 +3481,21 @@ closeSettingsBtn.addEventListener("click", () => {
     settingsModal.classList.remove("active");
 });
 
+if (settingsCloseX) {
+    settingsCloseX.addEventListener("click", () => settingsModal.classList.remove("active"));
+}
+
+if (apiKeyRevealBtn) {
+    apiKeyRevealBtn.addEventListener("click", () => {
+        const isHidden = apiKeyInput.type === "password";
+        apiKeyInput.type = isHidden ? "text" : "password";
+        apiKeyRevealBtn.textContent = isHidden ? "隠す" : "表示";
+    });
+}
+
 saveSettingsBtn.addEventListener("click", () => {
+    if (!saveSimplePanelEditor()) return;
+
     const newKey = apiKeyInput.value.trim();
     GEMINI_API_KEY = newKey;
     geminiAuthBlocked = false;
@@ -2621,10 +3515,49 @@ saveSettingsBtn.addEventListener("click", () => {
         iconStyle = iconStyleSelect.value;
         localStorage.setItem(ICON_STYLE_KEY, iconStyle);
     }
+    if (dwellTimeSelect) {
+        dwellTimeMs = readStoredNumberFromValue(dwellTimeSelect.value, DWELL_TIME_DEFAULT_MS, 0, DWELL_TIME_MAX_MS);
+        localStorage.setItem(DWELL_TIME_KEY, String(dwellTimeMs));
+    }
 
     renderAll();
+    if (modeSelect) setAppMode(modeSelect.value);
     settingsModal.classList.remove("active");
 });
+
+function activateSettingsTab(tabId) {
+    settingsTabButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tabId));
+    settingsTabContents.forEach(content => content.classList.toggle("active", content.id === tabId));
+}
+
+settingsTabButtons.forEach(btn => {
+    btn.addEventListener("click", () => activateSettingsTab(btn.dataset.tab));
+});
+
+if (simpleGridSizeSelect) simpleGridSizeSelect.addEventListener("change", renderSimplePanelEditor);
+if (simpleCustomAddBtn) simpleCustomAddBtn.addEventListener("click", addSimpleCustomPanel);
+document.getElementById("simple-enable-all-btn")?.addEventListener("click", () => setAllSimplePanelsEnabled(true));
+document.getElementById("simple-disable-all-btn")?.addEventListener("click", () => setAllSimplePanelsEnabled(false));
+document.getElementById("simple-reset-panels-btn")?.addEventListener("click", resetSimplePanelSelection);
+
+if (simpleCustomImageInput) {
+    simpleCustomImageInput.addEventListener("change", async () => {
+        const file = simpleCustomImageInput.files?.[0];
+        simpleCustomImageData = "";
+        if (simpleCustomImagePreview) simpleCustomImagePreview.style.display = "none";
+        if (!file) return;
+        try {
+            simpleCustomImageData = await readImageAsResizedDataUrl(file);
+            if (simpleCustomImagePreview) {
+                simpleCustomImagePreview.src = simpleCustomImageData;
+                simpleCustomImagePreview.style.display = "";
+            }
+        } catch (error) {
+            alert(error.message);
+            simpleCustomImageInput.value = "";
+        }
+    });
+}
 
 settingsModal.addEventListener("click", (e) => {
     if (e.target === settingsModal) {
