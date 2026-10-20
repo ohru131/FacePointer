@@ -3018,7 +3018,7 @@ function renderTalkEditor() {
             chip.type = "button";
             chip.className = "filter-chip" + (topic.id === talkEditorFilter ? " active" : "")
                 + (talkHiddenDraft.has(topic.id) ? " is-disabled" : "");
-            chip.append(`${topic.emoji} ${topic.label}`, Object.assign(document.createElement("span"), {
+            chip.append(`${topic.emoji || ""} ${topic.label}`.trim(), Object.assign(document.createElement("span"), {
                 className: "filter-chip-count", textContent: String(countTalkNodes(topic.children || []))
             }));
             chip.addEventListener("click", () => {
@@ -3117,7 +3117,14 @@ let isTalkAiBusy = false;
 // 使うパターンを切り替える。相手や途中の位置は前のパターンのものなので最初に戻す
 function setActiveTalkSet(id) {
     talkActiveSetId = getTalkSets().some(set => set.id === id) ? id : DEFAULT_TALK_SET.id;
-    localStorage.setItem(TALK_ACTIVE_SET_KEY, talkActiveSetId);
+    try {
+        localStorage.setItem(TALK_ACTIVE_SET_KEY, talkActiveSetId);
+    } catch (error) {
+        // 保存容量が足りなくても、今の画面では切り替える
+        console.warn("talk active set save failed:", error);
+    }
+    // 引き継ぐ回答は使うパターンごとに違うので、作りかけのインタビューは捨てる
+    talkInterviewDraft = [];
     talkPartnerId = "";
     talkPath = [];
     talkTab = TALK_TAB_TREE;
@@ -3179,7 +3186,9 @@ function renderTalkSetList() {
             setActiveTalkSet(set.id);
             talkEditorFilter = "";
             renderTalkSetList();
+            renderTalkInterview();
             renderTalkEditor();
+            updateTalkAiButtons();
         });
         const body = document.createElement("span");
         body.className = "talk-set-body";
@@ -3219,7 +3228,9 @@ function renderTalkSetList() {
                 if (set.id === talkActiveSetId) setActiveTalkSet(DEFAULT_TALK_SET.id);
                 talkEditorFilter = "";
                 renderTalkSetList();
+                renderTalkInterview();
                 renderTalkEditor();
+                updateTalkAiButtons();
             });
             row.append(rename, del);
         }
@@ -3241,15 +3252,12 @@ function renderTalkInterview() {
         a.placeholder = "わかる範囲で（空欄でもよい）";
         a.addEventListener("input", () => {
             item.a = a.value;
+            item.carried = false;
             updateTalkAiButtons();
         });
         field.append(q, a);
         talkInterviewList.appendChild(field);
     });
-}
-
-function getAnsweredTalkInterview() {
-    return talkInterviewDraft.filter(item => item.a.trim()).map(item => ({ q: item.q, a: item.a.trim() }));
 }
 
 // 今のパターンを作ったときの回答（引き継ぐ設定のとき）
@@ -3258,12 +3266,25 @@ function getCarriedTalkInterview() {
     return (getActiveTalkSet().interview || []).map(item => ({ q: item.q, a: item.a }));
 }
 
+// 引き継いだ回答と画面で答えた内容を合わせる（同じ質問は画面の答えを優先）。
+// 引き継ぎOFFなら、引き継いだまま手を加えていない回答は使わない
+function mergeTalkInterview({ includeUnanswered = false } = {}) {
+    const carryOn = !talkInterviewCarryInput || talkInterviewCarryInput.checked;
+    const merged = getCarriedTalkInterview();
+    talkInterviewDraft.forEach((item) => {
+        if (item.carried && !carryOn) return;
+        const existing = merged.find(m => m.q === item.q);
+        if (existing) existing.a = item.a;
+        else merged.push({ q: item.q, a: item.a });
+    });
+    return merged
+        .map(item => ({ q: item.q, a: (item.a || "").trim() }))
+        .filter(item => includeUnanswered || item.a);
+}
+
 function updateTalkAiButtons() {
     if (talkInterviewStartBtn) talkInterviewStartBtn.disabled = isTalkAiBusy;
-    if (talkGenerateBtn) {
-        const hasAnswers = getAnsweredTalkInterview().length > 0 || getCarriedTalkInterview().some(item => item.a);
-        talkGenerateBtn.disabled = isTalkAiBusy || !hasAnswers;
-    }
+    if (talkGenerateBtn) talkGenerateBtn.disabled = isTalkAiBusy || mergeTalkInterview().length === 0;
 }
 
 function setTalkAiStatus(text, isError = false) {
@@ -3275,13 +3296,8 @@ function setTalkAiStatus(text, isError = false) {
 async function startTalkInterview() {
     if (isTalkAiBusy) return;
     saveTalkProfileForm();
-    // 引き継ぐ回答に、画面で答えた内容を重ねる（同じ質問は画面の答えを優先）
-    const base = getCarriedTalkInterview();
-    talkInterviewDraft.forEach((item) => {
-        const existing = base.find(b => b.q === item.q);
-        if (existing) existing.a = item.a;
-        else base.push({ q: item.q, a: item.a });
-    });
+    // 未回答の質問も渡して、同じ質問をくり返させない
+    const base = mergeTalkInterview({ includeUnanswered: true });
     isTalkAiBusy = true;
     updateTalkAiButtons();
     setTalkAiStatus("質問を考えています…");
@@ -3291,9 +3307,13 @@ async function startTalkInterview() {
         });
         const asked = new Set(base.map(item => item.q));
         const fresh = questions.filter(q => !asked.has(q)).map(q => ({ q, a: "" }));
-        const answered = base.filter(item => item.a && item.a.trim() && item.q !== TALK_INTERVIEW_FREE_QUESTION);
+        const carriedQuestions = new Set(getCarriedTalkInterview().map(item => item.q));
+        // 前回までの質問は下に続ける。引き継いだまま手を加えていない回答には印を付ける
+        const previous = base
+            .filter(item => item.q !== TALK_INTERVIEW_FREE_QUESTION)
+            .map(item => ({ ...item, carried: carriedQuestions.has(item.q) && !talkInterviewDraft.some(d => d.q === item.q && !d.carried) }));
         const free = base.find(item => item.q === TALK_INTERVIEW_FREE_QUESTION) || { q: TALK_INTERVIEW_FREE_QUESTION, a: "" };
-        talkInterviewDraft = [...fresh, ...answered, free];
+        talkInterviewDraft = [...fresh, ...previous, free];
         renderTalkInterview();
         setTalkAiStatus(`${fresh.length} 個の質問を作りました。答えてから「会話パターンを作る」を押してください。前回の回答は下に続いています。`);
     } catch (error) {
@@ -3308,9 +3328,8 @@ async function startTalkInterview() {
 async function generateTalkSetFromInterview() {
     if (isTalkAiBusy) return;
     saveTalkProfileForm();
-    const interview = getAnsweredTalkInterview();
-    // 画面で質問を出していなければ、今のパターンの回答から作り直す
-    const source = interview.length > 0 ? interview : getCarriedTalkInterview().filter(item => item.a);
+    // 画面で質問を出していなければ、今のパターンの回答（引き継ぎON時）から作り直す
+    const source = mergeTalkInterview();
     if (source.length === 0) {
         setTalkAiStatus("質問に1つ以上答えてください。", true);
         return;
@@ -3337,13 +3356,17 @@ async function generateTalkSetFromInterview() {
             setTalkAiStatus("保存できませんでした。使わないパターンを削除してから、もう一度お試しください。", true);
             return;
         }
-        setActiveTalkSet(id);
-        talkInterviewDraft = [];
+        // 作っている間に設定を閉じて会話を始めていたら、途中で切り替えない（保存だけ）
+        const isSettingsStillOpen = settingsModal.classList.contains("active");
+        if (isSettingsStillOpen) setActiveTalkSet(id);
+        else talkInterviewDraft = [];
         talkEditorFilter = "";
         renderTalkSetList();
         renderTalkInterview();
         renderTalkEditor();
-        setTalkAiStatus(`「${set.name}」を作って保存し、使う設定にしました（${countTalkTreeNodes(set.tree)} 項目）。`);
+        setTalkAiStatus(isSettingsStillOpen
+            ? `「${set.name}」を作って保存し、使う設定にしました（${countTalkTreeNodes(set.tree)} 項目）。`
+            : `「${set.name}」を作って保存しました（${countTalkTreeNodes(set.tree)} 項目）。上の一覧で選ぶと使えます。`);
     } catch (error) {
         console.error("talk set generation failed:", error);
         setTalkAiStatus(error.message, true);
