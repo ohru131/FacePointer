@@ -1066,7 +1066,6 @@ function checkPointerCollision() {
                 currentHoveredBtn = btn;
             }
         }
-        btn.classList.remove("hover");
     });
 
     if (hoveredBtn && currentHoveredBtn) {
@@ -1086,8 +1085,12 @@ function checkPointerCollision() {
         hoveredBtn = findNearestSimplePanel();
     }
 
+    // 付け外しを毎フレーム行うと CSS トランジションが始まり直して強調が見えないため、変化分だけ更新する
+    allBtns.forEach(btn => {
+        if (btn !== hoveredBtn && btn.classList.contains("hover")) btn.classList.remove("hover");
+    });
     if (hoveredBtn) {
-        hoveredBtn.classList.add("hover");
+        if (!hoveredBtn.classList.contains("hover")) hoveredBtn.classList.add("hover");
         lastHoveredButtonKey = `${hoveredBtn.dataset.row}|${hoveredBtn.dataset.name}`;
     } else {
         lastHoveredButtonKey = "";
@@ -1438,7 +1441,7 @@ function renderSimpleMode() {
         }));
     }
     if (simpleConfig.showRest) {
-        simpleBarContainer.appendChild(createSimpleButton(SIMPLE_CTRL_REST, isSimplePaused ? "▶ 再開" : "⏸ 休憩", {
+        simpleBarContainer.appendChild(createSimpleButton(SIMPLE_CTRL_REST, isSimplePaused ? "▶️ 再開" : "⏸️ 休憩", {
             className: "simple-ctrl simple-ctrl--rest",
             onClick: () => handleSimpleControl(SIMPLE_CTRL_REST)
         }));
@@ -1637,6 +1640,58 @@ function setAppMode(mode) {
 // 設定画面: シンプルモードのパネル選択・任意パネル追加
 // ---------------------------------------------------------
 let simpleEditorDraft = [];   // [{ id, enabled }] 表示順
+let simpleEditorFilter = "all";
+const SIMPLE_FILTER_ALL = "all";
+const SIMPLE_FILTER_ENABLED = "enabled";
+const SIMPLE_GROUP_BASE = "基本";
+const SIMPLE_GROUP_CUSTOM = "任意";
+
+function getSimplePanelGroup(item) {
+    if (item.custom) return SIMPLE_GROUP_CUSTOM;
+    return item.group || SIMPLE_GROUP_BASE;
+}
+
+function matchesSimpleFilter(item, entry, filter = simpleEditorFilter) {
+    if (filter === SIMPLE_FILTER_ALL) return true;
+    if (filter === SIMPLE_FILTER_ENABLED) return entry.enabled;
+    return getSimplePanelGroup(item) === filter;
+}
+
+function renderSimplePanelFilter(byId) {
+    if (!simplePanelFilter) return;
+
+    const groups = [];
+    simpleEditorDraft.forEach(entry => {
+        const item = byId.get(entry.id);
+        if (!item) return;
+        const group = getSimplePanelGroup(item);
+        if (!groups.includes(group)) groups.push(group);
+    });
+    const filters = [
+        { key: SIMPLE_FILTER_ALL, label: "すべて" },
+        { key: SIMPLE_FILTER_ENABLED, label: "表示中" },
+        ...groups.map(group => ({ key: group, label: group }))
+    ];
+    if (!filters.some(f => f.key === simpleEditorFilter)) simpleEditorFilter = SIMPLE_FILTER_ALL;
+
+    simplePanelFilter.innerHTML = "";
+    filters.forEach(({ key, label }) => {
+        const isActive = key === simpleEditorFilter;
+        const count = simpleEditorDraft.filter(entry => byId.has(entry.id) && matchesSimpleFilter(byId.get(entry.id), entry, key)).length;
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "filter-chip" + (isActive ? " active" : "");
+        chip.setAttribute("role", "tab");
+        chip.setAttribute("aria-selected", isActive ? "true" : "false");
+        chip.innerHTML = "";
+        chip.append(label, Object.assign(document.createElement("span"), { className: "filter-chip-count", textContent: String(count) }));
+        chip.addEventListener("click", () => {
+            simpleEditorFilter = key;
+            renderSimplePanelEditor();
+        });
+        simplePanelFilter.appendChild(chip);
+    });
+}
 let simpleCustomDraft = [];   // 保存前の任意パネル
 
 function openSimplePanelEditor() {
@@ -1651,6 +1706,7 @@ function openSimplePanelEditor() {
     if (simpleGridSizeSelect) simpleGridSizeSelect.value = simpleConfig.gridSize;
     if (simpleShowRestInput) simpleShowRestInput.checked = simpleConfig.showRest;
     if (simpleConfirmSoundInput) simpleConfirmSoundInput.checked = simpleConfig.confirmSound;
+    simpleEditorFilter = SIMPLE_FILTER_ALL;
     resetSimpleCustomForm();
     renderSimplePanelEditor();
 }
@@ -1660,17 +1716,20 @@ function renderSimplePanelEditor() {
 
     const byId = new Map(getSimpleCatalog(simpleCustomDraft).map(p => [p.id, p]));
     simplePanelList.innerHTML = "";
+    renderSimplePanelFilter(byId);
+    // 並び替えは表示順が連続して見える「すべて」「表示中」のときだけ
+    const canReorder = simpleEditorFilter === SIMPLE_FILTER_ALL || simpleEditorFilter === SIMPLE_FILTER_ENABLED;
 
     const enabledCount = simpleEditorDraft.filter(d => d.enabled).length;
     if (simplePanelSummary) {
         const { cols, rows } = SIMPLE_GRID_SIZES[simpleGridSizeSelect?.value] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
         const pages = Math.max(1, Math.ceil(enabledCount / (cols * rows)));
-        simplePanelSummary.textContent = `表示中 ${enabledCount} 枚 / ${pages} ページ（1ページ ${cols * rows} 枚）`;
+        simplePanelSummary.textContent = `表示中 ${enabledCount} 枚 ・ ${pages} ページ`;
     }
 
     simpleEditorDraft.forEach((entry, index) => {
         const item = byId.get(entry.id);
-        if (!item) return;
+        if (!item || !matchesSimpleFilter(item, entry)) return;
 
         const row = document.createElement("div");
         row.className = "simple-editor-row" + (entry.enabled ? "" : " is-disabled");
@@ -1704,8 +1763,11 @@ function renderSimplePanelEditor() {
         const text = document.createElement("div");
         text.className = "simple-editor-text";
         const name = document.createElement("strong");
-        const groupLabel = item.custom ? "任意" : (item.group || "基本");
-        name.textContent = `${item.name}【${groupLabel}】`;
+        name.textContent = item.name;
+        const badge = document.createElement("span");
+        badge.className = "simple-editor-group";
+        badge.textContent = getSimplePanelGroup(item);
+        name.appendChild(badge);
         const sentence = document.createElement("small");
         sentence.textContent = buildSimpleSentence(item);
         text.append(name, sentence);
@@ -1725,11 +1787,11 @@ function renderSimplePanelEditor() {
         };
         const prev = simpleEditorDraft[index - 1];
         const next = simpleEditorDraft[index + 1];
-        addAction("▲", "前へ", !entry.enabled || !prev || !prev.enabled, () => {
+        if (canReorder) addAction("▲", "前へ", !entry.enabled || !prev || !prev.enabled, () => {
             [simpleEditorDraft[index - 1], simpleEditorDraft[index]] = [simpleEditorDraft[index], simpleEditorDraft[index - 1]];
             renderSimplePanelEditor();
         });
-        addAction("▼", "後ろへ", !entry.enabled || !next || !next.enabled, () => {
+        if (canReorder) addAction("▼", "後ろへ", !entry.enabled || !next || !next.enabled, () => {
             [simpleEditorDraft[index + 1], simpleEditorDraft[index]] = [simpleEditorDraft[index], simpleEditorDraft[index + 1]];
             renderSimplePanelEditor();
         });
@@ -1806,8 +1868,14 @@ function addSimpleCustomPanel() {
     renderSimplePanelEditor();
 }
 
+// 今のフィルタで見えている分だけまとめて切り替える
 function setAllSimplePanelsEnabled(enabled) {
-    simpleEditorDraft.forEach(d => { d.enabled = enabled; });
+    const byId = new Map(getSimpleCatalog(simpleCustomDraft).map(p => [p.id, p]));
+    simpleEditorDraft
+        .filter(d => byId.has(d.id) && matchesSimpleFilter(byId.get(d.id), d))
+        .forEach(d => { d.enabled = enabled; });
+    // 「表示中が先頭に連続」を保つ
+    simpleEditorDraft = [...simpleEditorDraft.filter(d => d.enabled), ...simpleEditorDraft.filter(d => !d.enabled)];
     renderSimplePanelEditor();
 }
 
@@ -3161,9 +3229,29 @@ const jawOpenThresholdSlider = document.getElementById("jaw-open-threshold-slide
 const noseGainSlider = document.getElementById("nose-gain-slider");
 const yawGainSlider = document.getElementById("yaw-gain-slider");
 const iconStyleSelect = document.getElementById("icon-style-select");
-const modeSelect = document.getElementById("mode-select");
-const dwellTimeSelect = document.getElementById("dwell-time-select");
-const simpleGridSizeSelect = document.getElementById("simple-grid-size-select");
+// ラジオボタン群を <select> と同じ感覚(value / change)で扱う
+function radioGroup(name) {
+    const inputs = () => Array.from(document.querySelectorAll(`input[type="radio"][name="${name}"]`));
+    if (inputs().length === 0) return null;
+    return {
+        get value() {
+            return inputs().find(input => input.checked)?.value ?? "";
+        },
+        set value(next) {
+            inputs().forEach(input => { input.checked = input.value === String(next); });
+        },
+        addEventListener(type, handler) {
+            inputs().forEach(input => input.addEventListener(type, handler));
+        }
+    };
+}
+
+const modeSelect = radioGroup("app-mode");
+const dwellTimeSelect = radioGroup("dwell-time");
+const simpleGridSizeSelect = radioGroup("simple-grid-size");
+const simplePanelFilter = document.getElementById("simple-panel-filter");
+const settingsCloseX = document.getElementById("settings-close-x");
+const apiKeyRevealBtn = document.getElementById("api-key-reveal-btn");
 const simpleShowRestInput = document.getElementById("simple-show-rest-input");
 const simpleConfirmSoundInput = document.getElementById("simple-confirm-sound-input");
 const simplePanelList = document.getElementById("simple-panel-list");
@@ -3190,13 +3278,14 @@ const controlsCollapseBtn = document.getElementById("controls-collapse-btn");
 const calibWizardBtn = document.getElementById("calib-wizard-btn");
 
 let isParamPanelVisible = localStorage.getItem(PARAM_PANEL_VISIBLE_KEY) !== "0";
-let isControlsCollapsed = localStorage.getItem(CONTROLS_COLLAPSED_KEY) === "1";
+// 利用者の画面を隠さないよう、介助者メニューは既定で閉じておく
+let isControlsCollapsed = localStorage.getItem(CONTROLS_COLLAPSED_KEY) !== "0";
 
 function applyControlsCollapsed() {
     if (!controlsRoot || !controlsCollapseBtn) return;
     controlsRoot.classList.toggle("collapsed", isControlsCollapsed);
     controlsCollapseBtn.textContent = isControlsCollapsed ? "⚙" : "✕";
-    controlsCollapseBtn.title = isControlsCollapsed ? "パネルを開く" : "パネルを閉じる";
+    controlsCollapseBtn.title = isControlsCollapsed ? "介助者メニューを開く" : "介助者メニューを閉じる";
     controlsCollapseBtn.setAttribute("aria-expanded", isControlsCollapsed ? "false" : "true");
 }
 
@@ -3210,9 +3299,18 @@ if (controlsCollapseBtn) {
 
 applyControlsCollapsed();
 
+// 設定画面・キャリブレーションの裏にメニューが残らないよう閉じる
+function collapseControls() {
+    if (isControlsCollapsed) return;
+    isControlsCollapsed = true;
+    localStorage.setItem(CONTROLS_COLLAPSED_KEY, "1");
+    applyControlsCollapsed();
+}
+
 if (calibWizardBtn) {
     calibWizardBtn.addEventListener("click", () => {
         if (calibrationWizard.isActive()) return;
+        collapseControls();
         calibrationWizard.start();
     });
 }
@@ -3222,7 +3320,6 @@ function applyVerticalMoveToggleState() {
 
     verticalMoveToggleBtn.classList.toggle("is-off", !isVerticalMoveEnabled);
     verticalMoveToggleBtn.setAttribute("aria-pressed", isVerticalMoveEnabled ? "true" : "false");
-    verticalMoveToggleBtn.textContent = isVerticalMoveEnabled ? "上下移動 ON" : "上下移動 OFF";
 }
 
 if (verticalMoveToggleBtn) {
@@ -3244,7 +3341,6 @@ function applyParamPanelVisibility() {
 
     paramsToggleBtn.classList.toggle("is-off", !isParamPanelVisible);
     paramsToggleBtn.setAttribute("aria-pressed", isParamPanelVisible ? "true" : "false");
-    paramsToggleBtn.textContent = isParamPanelVisible ? "パラメータ ON" : "パラメータ OFF";
 }
 
 if (paramsToggleBtn) {
@@ -3364,7 +3460,10 @@ document.addEventListener("mousedown", (event) => {
 });
 
 settingsBtn.addEventListener("click", () => {
+    collapseControls();
     apiKeyInput.value = GEMINI_API_KEY;
+    apiKeyInput.type = "password";
+    if (apiKeyRevealBtn) apiKeyRevealBtn.textContent = "表示";
     if (iconStyleSelect) iconStyleSelect.value = iconStyle;
     if (modeSelect) modeSelect.value = appMode;
     if (dwellTimeSelect) dwellTimeSelect.value = String(dwellTimeMs);
@@ -3379,6 +3478,18 @@ settingsBtn.addEventListener("click", () => {
 closeSettingsBtn.addEventListener("click", () => {
     settingsModal.classList.remove("active");
 });
+
+if (settingsCloseX) {
+    settingsCloseX.addEventListener("click", () => settingsModal.classList.remove("active"));
+}
+
+if (apiKeyRevealBtn) {
+    apiKeyRevealBtn.addEventListener("click", () => {
+        const isHidden = apiKeyInput.type === "password";
+        apiKeyInput.type = isHidden ? "text" : "password";
+        apiKeyRevealBtn.textContent = isHidden ? "隠す" : "表示";
+    });
+}
 
 saveSettingsBtn.addEventListener("click", () => {
     if (!saveSimplePanelEditor()) return;
