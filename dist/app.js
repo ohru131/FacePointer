@@ -1587,9 +1587,10 @@ async function handleSimpleClick(item) {
         return;
     }
 
-    const isAnswer = activeQuestion !== null;
+    const answeredQuestionId = activeQuestion?.id ?? null;
     await speakSimpleSentence(sentence);
-    if (isAnswer) endQuestion();
+    // 発話中に別の質問へ切り替わっていたら、そちらは閉じない
+    if (answeredQuestionId && activeQuestion?.id === answeredQuestionId) endQuestion();
 }
 
 async function speakSimpleSentence(sentence) {
@@ -1787,7 +1788,11 @@ function setAppMode(mode) {
     isSimplePaused = false;
     simplePage = 0;
     messageParts = [];
+    // 質問中に切り替えたら質問は終える（終了後に古いページへ戻らないようにする）
+    activeQuestion = null;
+    pageBeforeQuestion = 0;
     resetSymptomModeState();
+    renderQuestionButtons();
 
     // グリッド中央へ乗せ直す
     if (isSimpleMode()) centerPointerOnSimpleGrid();
@@ -1962,7 +1967,8 @@ function startQuestion(questionId) {
 }
 
 function endQuestion() {
-    if (!activeQuestion) return;
+    // 回答の確認表示中は閉じない（表示が消えた後に handleSimpleClick が閉じる）
+    if (!activeQuestion || isConfirmInProgress) return;
 
     activeQuestion = null;
     simplePage = pageBeforeQuestion;
@@ -2019,7 +2025,8 @@ function renderQuestionButtons() {
 function parseQuestionAnswers(text) {
     return text.split(/\r?\n/).map(line => line.trim()).filter(Boolean).map((line) => {
         let emoji = "";
-        const match = line.match(/^(\p{Extended_Pictographic}(?:️|⃣|‍\p{Extended_Pictographic})*)\s*(.*)$/u);
+        // 絵文字（異体字セレクタ・肌色・ZWJ連結）、国旗、キーキャップ(1️⃣)を先頭の絵文字として扱う
+        const match = line.match(/^((?:\p{Extended_Pictographic}[\u{FE0F}\u{1F3FB}-\u{1F3FF}]*(?:\u{200D}\p{Extended_Pictographic}[\u{FE0F}\u{1F3FB}-\u{1F3FF}]*)*)|\p{Regional_Indicator}{2}|[0-9#*]\u{FE0F}?\u{20E3})\s*(.*)$/u);
         if (match) {
             emoji = match[1];
             line = match[2];
@@ -3341,7 +3348,7 @@ function triggerClick() {
     const activeBtn = document.querySelector(".h-btn.hover");
     if (activeBtn && !activeBtn.classList.contains("h-btn--empty")) {
         const targetKey = `${activeBtn.dataset.row}|${activeBtn.dataset.name}`;
-        if (isSimpleClickBlocked(targetKey)) {
+        if (isSimpleClickBlocked(targetKey) || activeBtn.classList.contains("is-disabled")) {
             logClickDebug("click_blocked_simple_paused", { targetKey });
             return false;
         }
@@ -4044,8 +4051,9 @@ if (apiKeyRevealBtn) {
 }
 
 saveSettingsBtn.addEventListener("click", () => {
-    if (!saveSimplePanelEditor()) return;
+    // 画像を含み容量超過しやすいパネル設定を後にして、部分保存になりにくくする
     if (!saveQuestionEditor()) return;
+    if (!saveSimplePanelEditor()) return;
 
     const newKey = apiKeyInput.value.trim();
     GEMINI_API_KEY = newKey;
