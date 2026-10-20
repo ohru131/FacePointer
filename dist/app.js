@@ -1212,33 +1212,64 @@ const SIMPLE_RESUME_DWELL_MIN_MS = 2000;
 const CUSTOM_IMAGE_MAX_PX = 256;
 
 // 既存の症状モード16フレーズに加えて選べるプリセット
+// 想定利用者: 40代女性・未婚、両親と姉・兄が1人ずつ。気管切開・胃ろう・カテーテル装着で入院/療養中
+// group は設定画面の一覧で分類表示に使う
 const SIMPLE_EXTRA_PRESETS = [
-    { id: "p-yes", name: "はい", emoji: "⭕", sentence: "はい。" },
-    { id: "p-no", name: "いいえ", emoji: "❌", sentence: "いいえ。" },
-    { id: "p-wait", name: "ちょっと待って", emoji: "✋", sentence: "ちょっと待ってください。" },
-    { id: "p-dont-know", name: "わからない", emoji: "❓", sentence: "わからないです。" },
-    { id: "p-again", name: "もう一度言って", emoji: "🔁", sentence: "もう一度言ってください。" },
-    { id: "p-cold", name: "寒い", icon: "media/symptom-cold.png", sentence: "寒いです。" },
-    { id: "p-hot", name: "暑い", icon: "media/symptom-hot.png", sentence: "暑いです。" },
-    { id: "p-feel-bad", name: "気分が悪い", icon: "media/symptom-feel.png", sentence: "気分が悪いです。" },
-    { id: "p-itch", name: "かゆい", icon: "media/symptom-itch.png", sentence: "かゆいです。" },
-    { id: "p-pain", name: "痛い", icon: "media/symptom-pain.png", sentence: "痛いです。" },
-    { id: "p-head-pain", name: "頭が痛い", icon: "media/body-head.png", sentence: "頭が痛いです。" },
-    { id: "p-body-pain", name: "体が痛い", icon: "media/body-body.png", sentence: "体が痛いです。" },
-    { id: "p-hand-pain", name: "手が痛い", icon: "media/body-hand.png", sentence: "手が痛いです。" },
-    { id: "p-leg-pain", name: "足が痛い", icon: "media/body-leg.png", sentence: "足が痛いです。" },
-    { id: "p-breath", name: "息が苦しい", emoji: "😮‍💨", sentence: "息が苦しいです。" },
-    { id: "p-call", name: "看護師さん呼んで", emoji: "🔔", sentence: "看護師さんを呼んでください。" },
-    { id: "p-stay", name: "そばにいて", emoji: "🤝", sentence: "そばにいてください。" },
-    { id: "p-hold-hand", name: "手をにぎって", emoji: "🤲", sentence: "手をにぎってください。" },
-    { id: "p-light", name: "電気", emoji: "💡", sentence: "電気をつけてください。" },
-    { id: "p-dark", name: "暗くして", emoji: "🌙", sentence: "暗くしてください。" },
-    { id: "p-window", name: "窓をあけて", emoji: "🪟", sentence: "窓をあけてください。" },
-    { id: "p-sleepy", name: "ねむい", emoji: "😴", sentence: "ねむいです。" },
-    { id: "p-good-morning", name: "おはよう", emoji: "🌅", sentence: "おはようございます。" },
-    { id: "p-hello", name: "こんにちは", emoji: "👋", sentence: "こんにちは。" },
-    { id: "p-good-night", name: "おやすみ", emoji: "🛌", sentence: "おやすみなさい。" },
-    { id: "p-happy", name: "うれしい", emoji: "😊", sentence: "うれしいです。" }
+    // 返事（はい/いいえで答えられる質問への即答）
+    { id: "p-yes", group: "返事", name: "はい", emoji: "⭕", sentence: "はい。" },
+    { id: "p-no", group: "返事", name: "いいえ", emoji: "❌", sentence: "いいえ。" },
+    { id: "p-not-that", group: "返事", name: "そうじゃない", emoji: "🙅‍♀️", sentence: "そうじゃないです。" },
+    { id: "p-wait", group: "返事", name: "ちょっと待って", emoji: "✋", sentence: "ちょっと待ってください。" },
+    { id: "p-dont-know", group: "返事", name: "わからない", emoji: "❓", sentence: "わからないです。" },
+    { id: "p-again", group: "返事", name: "もう一度言って", emoji: "🔁", sentence: "もう一度言ってください。" },
+    // 家族（両親・姉・兄）
+    { id: "p-mother", group: "家族", name: "お母さん", emoji: "👩", sentence: "お母さんに会いたいです。" },
+    { id: "p-father", group: "家族", name: "お父さん", emoji: "👨", sentence: "お父さんに会いたいです。" },
+    { id: "p-sister", group: "家族", name: "お姉ちゃん", emoji: "👱‍♀️", sentence: "お姉ちゃんに会いたいです。" },
+    { id: "p-brother", group: "家族", name: "お兄ちゃん", emoji: "🧑", sentence: "お兄ちゃんに会いたいです。" },
+    { id: "p-call-family", group: "家族", name: "家族に電話", emoji: "📞", sentence: "家族に電話してください。" },
+    { id: "p-family-ok", group: "家族", name: "家族は元気？", emoji: "🏠", sentence: "家族はみんな元気ですか？" },
+    { id: "p-tell-thanks", group: "家族", name: "ありがとうと伝えて", emoji: "💐", sentence: "家族にありがとうと伝えてください。" },
+    // 体調
+    { id: "p-head-pain", group: "体調", name: "頭が痛い", icon: "media/body-head.png", sentence: "頭が痛いです。" },
+    { id: "p-body-pain", group: "体調", name: "体が痛い", icon: "media/body-body.png", sentence: "体が痛いです。" },
+    { id: "p-hand-pain", group: "体調", name: "手が痛い", icon: "media/body-hand.png", sentence: "手が痛いです。" },
+    { id: "p-leg-pain", group: "体調", name: "足が痛い", icon: "media/body-leg.png", sentence: "足が痛いです。" },
+    { id: "p-cold", group: "体調", name: "寒い", icon: "media/symptom-cold.png", sentence: "寒いです。" },
+    { id: "p-hot", group: "体調", name: "暑い", icon: "media/symptom-hot.png", sentence: "暑いです。" },
+    { id: "p-feel-bad", group: "体調", name: "気分が悪い", icon: "media/symptom-feel.png", sentence: "気分が悪いです。" },
+    { id: "p-breath", group: "体調", name: "息が苦しい", emoji: "😮‍💨", sentence: "息が苦しいです。" },
+    { id: "p-dry-mouth", group: "体調", name: "口が乾く", emoji: "💧", sentence: "口が乾いています。しめらせてください。" },
+    { id: "p-period", group: "体調", name: "生理かも", emoji: "🩸", sentence: "生理が来たかもしれません。" },
+    { id: "p-cant-sleep", group: "体調", name: "眠れない", emoji: "😣", sentence: "眠れません。" },
+    // ケア・身だしなみ
+    { id: "p-call", group: "ケア", name: "看護師さん呼んで", emoji: "🔔", sentence: "看護師さんを呼んでください。" },
+    { id: "p-female-staff", group: "ケア", name: "女性の方に", emoji: "👩‍⚕️", sentence: "女性の方にお願いしたいです。" },
+    { id: "p-curtain", group: "ケア", name: "カーテン閉めて", emoji: "🙈", sentence: "カーテンを閉めてください。" },
+    { id: "p-hair", group: "ケア", name: "髪をとかして", emoji: "💇‍♀️", sentence: "髪をとかしてください。" },
+    { id: "p-face", group: "ケア", name: "顔をふいて", emoji: "🧼", sentence: "顔をふいてください。" },
+    { id: "p-cream", group: "ケア", name: "クリームぬって", emoji: "🧴", sentence: "クリームをぬってください。" },
+    { id: "p-nails", group: "ケア", name: "爪を切って", emoji: "💅", sentence: "爪を切ってください。" },
+    { id: "p-mirror", group: "ケア", name: "鏡を見たい", emoji: "🤳", sentence: "鏡を見たいです。" },
+    // 過ごし方
+    { id: "p-phone", group: "過ごし方", name: "スマホ見たい", emoji: "📱", sentence: "スマホを見たいです。" },
+    { id: "p-video", group: "過ごし方", name: "動画が見たい", emoji: "📺", sentence: "動画を見たいです。" },
+    { id: "p-news", group: "過ごし方", name: "今日のこと", emoji: "🗞️", sentence: "今日の出来事を教えてください。" },
+    { id: "p-weather", group: "過ごし方", name: "外の様子", emoji: "🌤️", sentence: "外の様子を教えてください。" },
+    { id: "p-time", group: "過ごし方", name: "いま何時？", emoji: "🕐", sentence: "いま何時ですか？" },
+    { id: "p-light", group: "過ごし方", name: "電気つけて", emoji: "💡", sentence: "電気をつけてください。" },
+    { id: "p-dark", group: "過ごし方", name: "暗くして", emoji: "🌙", sentence: "暗くしてください。" },
+    { id: "p-alone", group: "過ごし方", name: "一人にして", emoji: "🚶‍♀️", sentence: "少し一人にしてください。" },
+    // 気持ち（気持ち＋してほしいことをセットで伝える）
+    { id: "p-anxious", group: "気持ち", name: "不安", emoji: "😟", sentence: "不安なので、そばにいてください。" },
+    { id: "p-stay", group: "気持ち", name: "そばにいて", emoji: "🤝", sentence: "そばにいてください。" },
+    { id: "p-hold-hand", group: "気持ち", name: "手をにぎって", emoji: "🤲", sentence: "手をにぎってください。" },
+    { id: "p-happy", group: "気持ち", name: "うれしい", emoji: "😊", sentence: "うれしいです。" },
+    { id: "p-sleepy", group: "気持ち", name: "ねむい", emoji: "😴", sentence: "ねむいです。" },
+    // あいさつ
+    { id: "p-good-morning", group: "あいさつ", name: "おはよう", emoji: "🌅", sentence: "おはようございます。" },
+    { id: "p-good-night", group: "あいさつ", name: "おやすみ", emoji: "🛌", sentence: "おやすみなさい。" },
+    { id: "p-see-you", group: "あいさつ", name: "また来てね", emoji: "👋", sentence: "また来てくださいね。" }
 ];
 
 function loadSimpleCustomPanels() {
@@ -1673,7 +1704,8 @@ function renderSimplePanelEditor() {
         const text = document.createElement("div");
         text.className = "simple-editor-text";
         const name = document.createElement("strong");
-        name.textContent = item.name + (item.custom ? "（任意）" : "");
+        const groupLabel = item.custom ? "任意" : (item.group || "基本");
+        name.textContent = `${item.name}【${groupLabel}】`;
         const sentence = document.createElement("small");
         sentence.textContent = buildSimpleSentence(item);
         text.append(name, sentence);
