@@ -117,7 +117,7 @@
                         <button id="calib-wizard-btn" class="drawer-action" type="button"><span class="drawer-action-icon">🎯</span>キャリブレーション</button>
                         <button id="recapture-front-btn" class="drawer-action" type="button" title="今の姿勢を正面として取り直します（感度・揺れの計測値はそのまま）"><span class="drawer-action-icon">◎</span>正面取り直し</button>
                         <button id="calibrate-btn" class="drawer-action" type="button"><span class="drawer-action-icon">↺</span>校正リセット</button>
-                        <button id="audio-cache-btn" class="drawer-action" type="button"><span class="drawer-action-icon">🔊</span>音声データを更新</button>
+                        <button id="audio-cache-btn" class="drawer-action" type="button"><span class="drawer-action-icon">🔊</span>音声データを作成</button>
                     </div>
                     <div id="audio-status" class="status-info" style="display:none;">
                         <div class="status-label"></div>
@@ -449,7 +449,7 @@
                                     <input type="password" id="api-key-input" placeholder="AIza..." autocomplete="off">
                                     <button id="api-key-reveal-btn" class="ctrl-btn secondary" type="button">表示</button>
                                 </div>
-                                <p class="settings-help">ブラウザに保存されます。未設定・通信エラー時は OS 標準の日本語音声で読み上げます。オフライン用の音声は介助者メニューの「音声データを更新」で作成。</p>
+                                <p class="settings-help">ブラウザに保存されます。未設定・通信エラー時は OS 標準の日本語音声で読み上げます。介助者メニューの「音声データを作成」で、まだ音声にしていない文を前もって作っておくと、遅延なく話せます。</p>
                             </section>
 
                             <section class="settings-section">
@@ -459,7 +459,21 @@
                                     <button id="tts-model-fetch-btn" class="ctrl-btn secondary" type="button">モデル一覧を取得</button>
                                 </div>
                                 <small id="tts-model-status"></small>
-                                <p class="settings-help">モデル変更後は「音声データを更新」で再生成してください。</p>
+                                <small id="tts-credit-note" class="tts-credit-note"></small>
+                                <p class="settings-help">
+                                    <b>ブラウザ内蔵</b>: 無料・通信なし・遅延なし（Web版を Edge で開くと「Nanami」など自然な声。デスクトップ版は Windows に入っている日本語の声）。
+                                    <b>VOICEVOX</b>: 無料・PC内で合成（下で話者を取得）。
+                                    <b>Cloud TTS</b>: 無料枠内でほぼ無料。前もって作れば遅延なし。
+                                    <b>Gemini</b>: 高品質だが1文数秒かかり回数制限あり。
+                                    Cloud TTS / VOICEVOX に変えて保存すると、まだ音声にしていない文を裏で作り始めます。
+                                </p>
+                                <h4><label for="voicevox-url-input">VOICEVOX（無料の音声合成ソフト）</label></h4>
+                                <div class="tts-model-row">
+                                    <input type="text" id="voicevox-url-input" placeholder="http://127.0.0.1:50021">
+                                    <button id="voicevox-fetch-btn" class="ctrl-btn secondary" type="button">話者を取得</button>
+                                </div>
+                                <small id="voicevox-status" aria-live="polite"></small>
+                                <p class="settings-help">このPCで VOICEVOX を起動してから「話者を取得」を押すと、TTSモデルの一覧に話者が増えます。Web版（github.io）やデスクトップ版から使うには、VOICEVOX の設定（ブラウザで http://127.0.0.1:50021/setting）の「Allow Origin」に <code>https://ohru131.github.io</code> と <code>http://tauri.localhost</code> を追加し、VOICEVOX を再起動してください。ブラウザが「ローカルネットワークへのアクセス」を確認してきたら許可します（Safari からは使えません）。</p>
                                 <h4><label for="gemini-voice-select">Gemini 話者（Geminiモデル選択時）</label></h4>
                                 <select id="gemini-voice-select"></select>
                                 <h4><label for="gemini-style-input">Gemini 口調指示</label></h4>
@@ -467,7 +481,15 @@
                                     <input type="text" id="gemini-style-input" placeholder="例: 明るく、はきはきと読み上げてください">
                                     <button id="gemini-style-reset-btn" class="ctrl-btn secondary" type="button">既定に戻す</button>
                                 </div>
-                                <p class="settings-help">空欄なら口調指示なし。変更後は「音声データを更新」で再生成してください。</p>
+                                <p class="settings-help">空欄なら口調指示なし。変更後は「音声データを作成」で作り直してください。</p>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4>前もって作った音声</h4>
+                                <div class="settings-section-head">
+                                    <span class="settings-help">音声・話者・口調ごとに保存されます。容量が気になるときは消去できます。<b id="audio-cache-clear-result"></b></span>
+                                    <button id="audio-cache-clear-btn" class="ctrl-btn secondary" type="button">音声を消去</button>
+                                </div>
                             </section>
 
                             <section class="settings-section">

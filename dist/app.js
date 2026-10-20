@@ -1726,9 +1726,28 @@ function getTalkChildren(node) {
 }
 
 // 文頭の「{呼}、」を相手の呼び名にする（相手を決めていなければ省く）
-function resolveTalkSentence(say) {
-    const partner = getTalkPartner();
+function resolveTalkSentence(say, partner = getTalkPartner()) {
     return say.replace(TALK_CALL_PLACEHOLDER, partner ? `${partner.name}、` : "").replaceAll("{呼}", partner ? partner.name : "");
+}
+
+// 音声を前もって作るための、今のパターンで話しうる全文。呼びかけのある文は「相手なし」と各相手の分を作る
+// （その相手のときだけ出る言葉は、その相手の分だけ）
+function collectTalkSentences() {
+    const partners = getActiveTalkSet().partners;
+    const sentences = TALK_AIZUCHI.map(item => item.sentence);
+    const visit = (nodes, allowed) => {
+        nodes.forEach((node) => {
+            if (talkConfig.hiddenIds.includes(node.id)) return;
+            const nodeAllowed = Array.isArray(node.for) ? allowed.filter(p => node.for.includes(p.id)) : allowed;
+            if (node.say) {
+                sentences.push(resolveTalkSentence(node.say, null));
+                if (TALK_CALL_PLACEHOLDER.test(node.say)) nodeAllowed.forEach(p => sentences.push(resolveTalkSentence(node.say, p)));
+            }
+            if (node.children) visit(node.children, nodeAllowed);
+        });
+    };
+    visit(getTalkTree(), partners);
+    return sentences;
 }
 
 function getTalkCurrentNode() {
@@ -3360,6 +3379,8 @@ async function generateTalkSetFromInterview() {
         const isSettingsStillOpen = settingsModal.classList.contains("active");
         if (isSettingsStillOpen) setActiveTalkSet(id);
         else talkInterviewDraft = [];
+        // 新しい文の音声を裏で作っておく（Gemini TTS は遅く回数制限があるので自動では作らない）
+        if (isSettingsStillOpen && getTtsProvider() !== "gemini") void prefetchAllAudio({ quiet: true });
         talkEditorFilter = "";
         renderTalkSetList();
         renderTalkInterview();
@@ -3570,7 +3591,12 @@ function loadMouseClickSpeech() {
 loadMouseClickSpeech();
 
 // TTSモデル: "cloud:<voice名>" (Google Cloud TTS) / "gemini:<モデル名>" (Gemini API TTS)
+//   / "voicevox:<話者スタイルID>" (PCで起動した VOICEVOX) / "browser:" (ブラウザ内蔵の音声。通信なし)
 const TTS_MODEL_KEY = "tts_model";
+const TTS_BROWSER_MODEL = "browser:";
+const VOICEVOX_URL_KEY = "voicevox_url";
+const VOICEVOX_SPEAKERS_KEY = "voicevox_speakers";
+const DEFAULT_VOICEVOX_URL = "http://127.0.0.1:50021";
 const TTS_MODEL_LIST_KEY = "tts_model_list";
 const DEFAULT_TTS_MODEL = "cloud:ja-JP-Neural2-B";
 const GEMINI_VOICE_KEY = "gemini_tts_voice";
@@ -3599,15 +3625,102 @@ const GEMINI_VOICES = [
 const GEMINI_TTS_SAMPLE_RATE = 24000;
 
 let ttsModel = localStorage.getItem(TTS_MODEL_KEY) || DEFAULT_TTS_MODEL;
+let voicevoxUrl = localStorage.getItem(VOICEVOX_URL_KEY) || DEFAULT_VOICEVOX_URL;
 let geminiVoice = localStorage.getItem(GEMINI_VOICE_KEY) || DEFAULT_GEMINI_VOICE;
 let geminiStyle = localStorage.getItem(GEMINI_STYLE_KEY) ?? DEFAULT_GEMINI_STYLE;
 
-function loadTtsModelList() {
+function readStoredList(key) {
     try {
-        const list = JSON.parse(localStorage.getItem(TTS_MODEL_LIST_KEY) || "[]");
-        if (Array.isArray(list) && list.length) return list;
-    } catch (_) { /* 破損時は既定値 */ }
-    return [{ value: DEFAULT_TTS_MODEL, label: "Cloud TTS: ja-JP-Neural2-B" }];
+        const list = JSON.parse(localStorage.getItem(key) || "[]");
+        return Array.isArray(list) ? list.filter(m => m && typeof m.value === "string") : [];
+    } catch (_) {
+        return []; // 破損時は空
+    }
+}
+
+// 選べる音声: ブラウザ内蔵（常に）+ VOICEVOX の話者（取得済みなら）+ Google の一覧（取得済みなら既定のみ）
+function loadTtsModelList() {
+    const google = readStoredList(TTS_MODEL_LIST_KEY);
+    return [
+        { value: TTS_BROWSER_MODEL, label: "ブラウザ内蔵の音声（無料・通信なし・遅延なし）" },
+        ...readStoredList(VOICEVOX_SPEAKERS_KEY),
+        ...(google.length ? google : [{ value: DEFAULT_TTS_MODEL, label: "Cloud TTS: ja-JP-Neural2-B" }])
+    ];
+}
+
+function getTtsProvider(model = ttsModel) {
+    return model.split(":")[0];
+}
+
+function getVoicevoxBaseUrl(url = voicevoxUrl) {
+    return (url || DEFAULT_VOICEVOX_URL).trim().replace(/\/+$/, "");
+}
+
+// VOICEVOX ENGINE: audio_query で読み方を作り、synthesis で WAV にする
+async function requestVoicevoxTts(text, speaker, signal, opts = {}) {
+    const base = getVoicevoxBaseUrl(opts.voicevoxUrl);
+    const speakerId = encodeURIComponent(speaker);
+    let queryResponse;
+    try {
+        queryResponse = await fetch(`${base}/audio_query?text=${encodeURIComponent(text)}&speaker=${speakerId}`, { method: "POST", signal });
+    } catch (error) {
+        if (error.name === "AbortError") throw error;
+        throw new Error(`VOICEVOX に接続できません（${base}）。VOICEVOX を起動し、CORS の許可を確認してください。`);
+    }
+    if (!queryResponse.ok) throw new Error(`VOICEVOX Error: ${queryResponse.status}`);
+    const query = await queryResponse.json();
+    let response;
+    try {
+        response = await fetch(`${base}/synthesis?speaker=${speakerId}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(query),
+            signal
+        });
+    } catch (error) {
+        if (error.name === "AbortError") throw error;
+        throw new Error(`VOICEVOX との通信が切れました（${base}）。VOICEVOX が起動しているか確認してください。`);
+    }
+    if (!response.ok) throw new Error(`VOICEVOX Error: ${response.status}`);
+    return new Blob([await response.arrayBuffer()], { type: "audio/wav" });
+}
+
+async function fetchVoicevoxSpeakers(url) {
+    const base = getVoicevoxBaseUrl(url);
+    let response;
+    try {
+        response = await fetch(`${base}/speakers`);
+    } catch {
+        throw new Error(`VOICEVOX に接続できません（${base}）。VOICEVOX を起動し、CORS の許可を確認してください。`);
+    }
+    if (!response.ok) throw new Error(`VOICEVOX Error: ${response.status}`);
+    const speakers = await response.json();
+    // 歌唱用などの話せないスタイルは除く（type が無い古いエンジンは話す用とみなす）
+    return (Array.isArray(speakers) ? speakers : []).flatMap(speaker => (speaker.styles || [])
+        .filter(style => !style.type || style.type === "talk")
+        .map(style => ({
+        value: `voicevox:${style.id}`,
+        label: `VOICEVOX: ${speaker.name}（${style.name}）`,
+        credit: `VOICEVOX:${speaker.name}`
+    })));
+}
+
+// 選んでいる音声で1文を合成する（キャッシュは見ない）。ブラウザ内蔵は合成しない
+async function synthesizeSpeech(phrase, signal, opts = {}) {
+    const model = opts.model ?? ttsModel;
+    const provider = getTtsProvider(model);
+    const name = model.slice(provider.length + 1);
+    if (provider === "voicevox") return requestVoicevoxTts(phrase, name, signal, opts);
+    if (provider === "gemini") return requestGeminiTts(phrase, name, signal, opts);
+    return requestCloudTts(phrase, name || "ja-JP-Neural2-B", signal, opts);
+}
+
+// 今の音声設定で合成できるか（ブラウザ内蔵、キー未設定、認証エラー後は不可）
+function canSynthesizeSpeech() {
+    const provider = getTtsProvider();
+    if (provider === "browser") return false;
+    if (provider === "voicevox") return true;
+    return Boolean(GEMINI_API_KEY) && !geminiAuthBlocked;
 }
 
 function getCloudTtsUrl(apiKey) {
@@ -3619,10 +3732,12 @@ function getGeminiTtsUrl(model, apiKey) {
 }
 
 // 既定モデルは従来どおりテキストのみをキーにし、既存キャッシュを活かす
-function audioCacheKey(text) {
-    if (ttsModel === DEFAULT_TTS_MODEL) return text;
-    if (ttsModel.startsWith("gemini:")) return `${ttsModel}|${geminiVoice}|${geminiStyle}|${text}`;
-    return `${ttsModel}|${text}`;
+// VOICEVOX は接続先（別のPC・互換エンジン）で同じ番号が別の声になるので、接続先も含める
+function audioCacheKey(text, model = ttsModel) {
+    if (model === DEFAULT_TTS_MODEL) return text;
+    if (model.startsWith("gemini:")) return `${model}|${geminiVoice}|${geminiStyle}|${text}`;
+    if (model.startsWith("voicevox:")) return `${model}@${getVoicevoxBaseUrl()}|${text}`;
+    return `${model}|${text}`;
 }
 
 async function fetchAvailableTtsModels(apiKey) {
@@ -3800,20 +3915,39 @@ async function getCachedAudio(text) {
         const tx = db.transaction(STORE_NAME, "readonly");
         const store = tx.objectStore(STORE_NAME);
         const request = store.get(text);
-        request.onsuccess = () => resolve(request.result);
+        request.onsuccess = () => resolve(request.result && request.result.size >= AUDIO_MIN_BYTES ? request.result : null);
         request.onerror = () => resolve(null);
     });
 }
 
+// 容量不足などで保存できなくても待ち続けない（待ち続けると以後の発話が止まる）
 async function setCachedAudio(text, blob) {
-    if (!db) return;
+    if (!db) return false;
     return new Promise((resolve) => {
-        const tx = db.transaction(STORE_NAME, "readwrite");
-        const store = tx.objectStore(STORE_NAME);
-        store.put(blob, text);
-        tx.oncomplete = () => resolve();
+        try {
+            const tx = db.transaction(STORE_NAME, "readwrite");
+            tx.objectStore(STORE_NAME).put(blob, text);
+            tx.oncomplete = () => resolve(true);
+            tx.onerror = () => resolve(false);
+            tx.onabort = () => resolve(false);
+        } catch (error) {
+            console.warn("audio cache save failed:", error);
+            resolve(false);
+        }
     });
 }
+
+function deleteCachedAudio(text) {
+    if (!db) return;
+    try {
+        db.transaction(STORE_NAME, "readwrite").objectStore(STORE_NAME).delete(text);
+    } catch (error) {
+        console.warn("audio cache delete failed:", error);
+    }
+}
+
+// 壊れた・空の音声は使わない（再生できずに無音になるのを防ぐ）
+const AUDIO_MIN_BYTES = 100;
 
 function clearAudioCache() {
     if (!db) return;
@@ -3823,30 +3957,33 @@ function clearAudioCache() {
 
 function initVoices() {
     voices = window.speechSynthesis.getVoices();
-    preferredVoice = voices.find(v => v.name.includes("Nanami") || v.name.includes("Natural") || v.name.includes("Online")) ||
-        voices.find(v => v.lang === "ja-JP") ||
-        voices[0];
+    // 日本語の声の中から、自然な声（Edge の Nanami / Natural / Online）を優先する
+    const japanese = voices.filter(v => (v.lang || "").toLowerCase().replace("_", "-").startsWith("ja"));
+    preferredVoice = japanese.find(v => v.name.includes("Nanami"))
+        || japanese.find(v => v.name.includes("Natural") || v.name.includes("Online"))
+        || japanese[0]
+        || null;
 }
 window.speechSynthesis.onvoiceschanged = initVoices;
 initVoices();
 
 async function speakGemini(text, silent = false) {
     if (isSpeechFetching) return true;
+    // ブラウザ内蔵の音声を選んでいれば、合成もキャッシュも使わない
+    if (getTtsProvider() === "browser") return false;
 
     const phrase = text.trim();
     const cacheKey = audioCacheKey(phrase);
     const cachedBlob = await getCachedAudio(cacheKey);
     if (cachedBlob) {
-        if (!silent) await playBlob(cachedBlob);
-        return true;
+        if (silent) return true;
+        // 読めない音声は消して、ブラウザ内蔵の音声で話す（次は作り直す）
+        if (await playBlob(cachedBlob) !== "invalid") return true;
+        deleteCachedAudio(cacheKey);
+        return false;
     }
 
-    if (!GEMINI_API_KEY) {
-        return false;
-    }
-    if (geminiAuthBlocked) {
-        return false;
-    }
+    if (!canSynthesizeSpeech()) return false;
 
     if (currentSpeechController) {
         currentSpeechController.abort();
@@ -3855,12 +3992,8 @@ async function speakGemini(text, silent = false) {
 
     isSpeechFetching = true;
     try {
-        const [provider, ...rest] = ttsModel.split(":");
-        const modelName = rest.join(":");
-        const blob = provider === "gemini"
-            ? await requestGeminiTts(phrase, modelName, currentSpeechController.signal)
-            : await requestCloudTts(phrase, modelName || "ja-JP-Neural2-B", currentSpeechController.signal);
-        await setCachedAudio(cacheKey, blob);
+        const blob = await synthesizeSpeech(phrase, currentSpeechController.signal);
+        if (blob.size >= AUDIO_MIN_BYTES) await setCachedAudio(cacheKey, blob);
 
         if (!silent) {
             await playBlob(blob);
@@ -3890,25 +4023,30 @@ function playBlob(blob) {
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         let settled = false;
-        const finish = () => {
+        // 結果: "ended"（再生した・止められた）/ "invalid"（音声データとして読めない）/ "blocked"（再生を許可されなかった等）
+        const finish = (result = "ended") => {
             if (settled) return;
             settled = true;
             URL.revokeObjectURL(url);
             if (currentAudio === audio) currentAudio = null;
             if (currentAudioResolve === finish) currentAudioResolve = null;
-            resolve();
+            resolve(result);
         };
 
         currentAudio = audio;
         currentAudioResolve = finish;
-        audio.onended = finish;
-        audio.onerror = () => finish();
-        audio.play().catch(() => finish());
+        audio.onended = () => finish("ended");
+        audio.onerror = () => {
+            const code = audio.error?.code;
+            finish(code === 3 || code === 4 ? "invalid" : "blocked");
+        };
+        audio.play().catch((error) => finish(error?.name === "NotSupportedError" ? "invalid" : "blocked"));
     });
 }
 
 const audioStatus = document.getElementById("audio-status");
-async function prefetchAllAudio() {
+// 前もって音声にしておく文（すべてのモードの文 + お話モードの全文・呼び名違い・相づち）
+function collectPrefetchPhrases() {
     const phrases = [];
 
     symptomChoices.forEach(category => {
@@ -3931,52 +4069,108 @@ async function prefetchAllAudio() {
         if (p) phrases.push(p.trim());
     });
 
-    const uniquePhrases = Array.from(new Set(phrases));
+    phrases.push(...collectTalkSentences());
 
-    audioStatus.style.display = "block";
+    return Array.from(new Set(phrases.map(p => (p || "").trim()).filter(Boolean)));
+}
+
+// 音声の作成は1つずつ。作成中に呼ばれたら、終わってからもう一度（増えた文だけ）作る
+let isPrefetchRunning = false;
+let prefetchQueued = null; // 次に作るときの { quiet }
+
+// 合成の間隔: Gemini TTS は回数制限が厳しいので空ける。VOICEVOX は手元の PC で1つずつ合成するので、話す分の余裕を少し空ける
+function getPrefetchIntervalMs() {
+    const provider = getTtsProvider();
+    if (provider === "gemini") return 600;
+    return 150;
+}
+
+// まだ音声にしていない文
+async function getMissingPrefetchPhrases(model = ttsModel) {
+    const missing = [];
+    for (const text of collectPrefetchPhrases()) {
+        if (!(await getCachedAudio(audioCacheKey(text, model)))) missing.push(text);
+    }
+    return missing;
+}
+
+// 話している・話す音声を作っている間は、裏の作成を待つ（VOICEVOX は1つずつしか合成できず、発話が遅れるため）
+async function waitForSpeechIdle() {
+    while (isSpeechFetching || currentAudio) await new Promise(r => setTimeout(r, 200));
+}
+
+// まだ音声にしていない文だけ作る。話すときの合成（speakGemini）とは別に動くので、作成中も話せる
+// quiet: 作るものが無ければ何も表示しない（自動で作るとき）
+async function prefetchAllAudio({ quiet = false } = {}) {
+    if (!canSynthesizeSpeech()) return;
+    if (isPrefetchRunning) {
+        // 手動で押されたら、次の回は進み具合を表示する
+        prefetchQueued = { quiet: (prefetchQueued?.quiet ?? true) && quiet };
+        if (!quiet) {
+            audioStatus.style.display = "block";
+            const label = audioStatus.querySelector(".status-label");
+            if (label) label.textContent = "音声を作成中です（終わったら続けて残りを作ります）";
+        }
+        return;
+    }
+    isPrefetchRunning = true;
+
     const statusLabel = audioStatus.querySelector(".status-label");
     const statusFill = audioStatus.querySelector(".status-progress-fill");
-    let successCount = 0;
+    const showStatus = (text, pct) => {
+        audioStatus.style.display = "block";
+        if (statusLabel) statusLabel.textContent = text;
+        if (statusFill && pct !== undefined) statusFill.style.width = `${pct}%`;
+    };
+    const hideStatus = (ms) => setTimeout(() => { if (!isPrefetchRunning) audioStatus.style.display = "none"; }, ms);
+    // 途中で設定が変わっても、作り始めた音声の設定で作り、その設定のキーで保存する
+    const model = ttsModel;
+    let missing = [];
+    let createdCount = 0;
+    let failed = null;
+    let stopped = false;
 
-    for (let i = 0; i < uniquePhrases.length; i++) {
-        const text = uniquePhrases[i];
-
-        const cached = await getCachedAudio(audioCacheKey(text));
-        if (cached) {
-            successCount++;
-            const pct = (successCount / uniquePhrases.length) * 100;
-            if (statusLabel) statusLabel.textContent = `音声生成中: ${successCount}/${uniquePhrases.length}`;
-            if (statusFill) statusFill.style.width = `${pct}%`;
-            continue;
+    try {
+        missing = await getMissingPrefetchPhrases(model);
+        for (const text of missing) {
+            if (ttsModel !== model || !canSynthesizeSpeech()) {
+                stopped = true;
+                break;
+            }
+            showStatus(`音声を作成中: ${createdCount}/${missing.length}`, (createdCount / missing.length) * 100);
+            await waitForSpeechIdle();
+            try {
+                const blob = await synthesizeSpeech(text, undefined, { model });
+                if (blob.size >= AUDIO_MIN_BYTES) await setCachedAudio(audioCacheKey(text, model), blob);
+                createdCount++;
+            } catch (error) {
+                console.error("audio prefetch failed:", error);
+                failed = error;
+                break;
+            }
+            const interval = getPrefetchIntervalMs();
+            if (interval > 0) await new Promise(r => setTimeout(r, interval));
         }
-
-        const pct = (i / uniquePhrases.length) * 100;
-        if (statusLabel) statusLabel.textContent = `音声生成中: ${successCount}/${uniquePhrases.length}`;
-        if (statusFill) statusFill.style.width = `${pct}%`;
-
-        const success = await speakGemini(text, true);
-        if (success) {
-            successCount++;
-            const nextPct = (successCount / uniquePhrases.length) * 100;
-            if (statusLabel) statusLabel.textContent = `音声生成中: ${successCount}/${uniquePhrases.length}`;
-            if (statusFill) statusFill.style.width = `${nextPct}%`;
-        } else {
-            if (statusLabel) statusLabel.textContent = "⚠ 通信エラーのため中断しました。設定を確認してください。";
-            if (statusFill) statusFill.style.width = "0%";
-            setTimeout(() => { audioStatus.style.display = "none"; }, 5000);
-            return;
-        }
-
-        await new Promise(r => setTimeout(r, 600));
+    } finally {
+        isPrefetchRunning = false;
     }
 
-    if (successCount === uniquePhrases.length) {
-        if (statusLabel) statusLabel.textContent = "✓ 全ての音声が準備できました";
-        if (statusFill) statusFill.style.width = "100%";
-    } else {
-        if (statusLabel) statusLabel.textContent = `⚠ 一部の生成に失敗しました (${successCount}/${uniquePhrases.length})`;
+    if (failed) {
+        showStatus(`⚠ 音声の作成を中断しました（${createdCount}/${missing.length}）: ${String(failed.message || failed).slice(0, 80)}`, 0);
+        hideStatus(8000);
+    } else if (stopped) {
+        showStatus("音声の設定が変わったため、作成を止めました", 0);
+        hideStatus(3000);
+    } else if (createdCount > 0 || !quiet) {
+        showStatus(createdCount > 0 ? `✓ 音声を ${createdCount} 件作りました（すべてそろっています）` : "✓ すべての文の音声がそろっています", 100);
+        hideStatus(4000);
     }
-    setTimeout(() => { audioStatus.style.display = "none"; }, 4000);
+
+    if (prefetchQueued) {
+        const next = prefetchQueued;
+        prefetchQueued = null;
+        void prefetchAllAudio(next);
+    }
 }
 
 async function speak(text) {
@@ -5420,15 +5614,30 @@ if (recaptureFrontBtn) {
 
 const audioCacheBtn = document.getElementById("audio-cache-btn");
 audioCacheBtn.addEventListener("click", () => {
-    if (!GEMINI_API_KEY) {
-        alert("音声データを更新するには設定画面から Gemini API Key を入力してください。");
-        settingsModal.classList.add("active");
+    const provider = getTtsProvider();
+    if (provider === "browser") {
+        alert("今はブラウザ内蔵の音声を使っています（前もって作る必要はありません）。\n設定 → 音声 で音声を変えると、ここで作れます。");
         return;
     }
-    if (confirm("音声データを全て再生成し、キャッシュを更新しますか？\n(少し時間がかかります)")) {
-        clearAudioCache();
-        prefetchAllAudio();
+    if (provider !== "voicevox" && !GEMINI_API_KEY) {
+        alert("音声データを作るには、設定画面から Gemini API Key を入力してください。");
+        settingsBtn.click();
+        return;
     }
+    if (geminiAuthBlocked && provider !== "voicevox") geminiAuthBlocked = false;
+    void (async () => {
+        const missing = (await getMissingPrefetchPhrases()).length;
+        if (missing === 0) {
+            alert("すべての文の音声がそろっています。");
+            return;
+        }
+        const geminiNote = provider === "gemini"
+            ? "\n※ Gemini TTS は1文に数秒かかり、1日の回数制限で途中で止まることがあります（Cloud TTS・VOICEVOX がおすすめ）。"
+            : "";
+        if (confirm(`まだ音声にしていない ${missing} 文の音声を作ります（作成済みの文はそのまま）。\n作成中も話せます。${geminiNote}`)) {
+            void prefetchAllAudio();
+        }
+    })();
 });
 
 // 全画面表示の切り替え（ブラウザ版向け。Escでも解除される）
@@ -5762,12 +5971,53 @@ if (ttsModelFetchBtn) {
             return;
         }
         localStorage.setItem(TTS_MODEL_LIST_KEY, JSON.stringify(models));
-        renderTtsModelOptions(models, current);
+        renderTtsModelOptions(loadTtsModelList(), current);
         if (ttsModelStatus) {
             ttsModelStatus.textContent = `${models.length} 件取得` + (errors.length ? ` (一部失敗: ${errors.join(" / ")})` : "");
         }
     });
 }
+
+const voicevoxUrlInput = document.getElementById("voicevox-url-input");
+const voicevoxFetchBtn = document.getElementById("voicevox-fetch-btn");
+const voicevoxStatus = document.getElementById("voicevox-status");
+const ttsCreditNote = document.getElementById("tts-credit-note");
+
+// VOICEVOX の話者を選んでいるときは、利用規約に沿ってクレジットを表示する
+function updateTtsCreditNote() {
+    if (!ttsCreditNote) return;
+    const model = ttsModelSelect ? ttsModelSelect.value : ttsModel;
+    const speaker = readStoredList(VOICEVOX_SPEAKERS_KEY).find(m => m.value === model);
+    ttsCreditNote.textContent = speaker ? `音声: ${speaker.credit}（VOICEVOX を使って作った音声を公開するときはこのクレジットを表記）` : "";
+}
+
+if (ttsModelSelect) ttsModelSelect.addEventListener("change", updateTtsCreditNote);
+
+if (voicevoxFetchBtn) {
+    voicevoxFetchBtn.addEventListener("click", async () => {
+        voicevoxFetchBtn.disabled = true;
+        if (voicevoxStatus) voicevoxStatus.textContent = "取得中...";
+        const current = ttsModelSelect ? ttsModelSelect.value : ttsModel;
+        try {
+            const speakers = await fetchVoicevoxSpeakers(voicevoxUrlInput ? voicevoxUrlInput.value : voicevoxUrl);
+            localStorage.setItem(VOICEVOX_SPEAKERS_KEY, JSON.stringify(speakers));
+            renderTtsModelOptions(loadTtsModelList(), current);
+            if (voicevoxStatus) voicevoxStatus.textContent = `${speakers.length} 件の話者を取得しました。上の「TTSモデル」から選んでください。`;
+        } catch (error) {
+            if (voicevoxStatus) voicevoxStatus.textContent = `取得失敗: ${error.message}`;
+        } finally {
+            voicevoxFetchBtn.disabled = false;
+            updateTtsCreditNote();
+        }
+    });
+}
+
+document.getElementById("audio-cache-clear-btn")?.addEventListener("click", () => {
+    if (!confirm("前もって作った音声をすべて消去しますか？（次に話すときに作り直します）")) return;
+    clearAudioCache();
+    const status = document.getElementById("audio-cache-clear-result");
+    if (status) status.textContent = "消去しました。";
+});
 
 // 設定画面の未保存の値 (API Key / モデル / 話者 / 口調) でキャッシュを使わず即時発話する
 const ttsPreviewStatus = document.getElementById("tts-preview-status");
@@ -5778,30 +6028,41 @@ async function previewTts(text, button) {
     const apiKey = apiKeyInput.value.trim();
     const setStatus = (msg) => { if (ttsPreviewStatus) ttsPreviewStatus.textContent = msg; };
     if (!phrase) { setStatus("文言が空です。"); return; }
-    if (!apiKey) { setStatus("API Key を入力してください。"); return; }
 
     const model = (ttsModelSelect && ttsModelSelect.value) || ttsModel;
-    const [provider, ...rest] = model.split(":");
-    const modelName = rest.join(":");
+    const provider = getTtsProvider(model);
+    const modelName = model.slice(provider.length + 1) || "ブラウザ内蔵";
+    if (!apiKey && (provider === "cloud" || provider === "gemini")) { setStatus("API Key を入力してください。"); return; }
 
     if (ttsPreviewController) ttsPreviewController.abort();
     const controller = new AbortController();
     ttsPreviewController = controller;
     window.speechSynthesis.cancel();
 
+    if (provider === "browser") {
+        ttsPreviewController = null;
+        const uttr = new SpeechSynthesisUtterance(phrase);
+        if (preferredVoice) uttr.voice = preferredVoice;
+        uttr.lang = "ja-JP";
+        uttr.rate = 0.95;
+        window.speechSynthesis.speak(uttr);
+        setStatus(`再生中: ${preferredVoice ? preferredVoice.name : "ブラウザ内蔵の音声"}`);
+        return;
+    }
+
     document.querySelectorAll(".tts-preview-btn").forEach(b => b.classList.remove("is-loading"));
     button.classList.add("is-loading");
     setStatus(`合成中: ${modelName}`);
     try {
         const opts = {
+            model,
             apiKey,
             voice: geminiVoiceSelect ? geminiVoiceSelect.value : geminiVoice,
             style: geminiStyleInput ? geminiStyleInput.value.trim() : geminiStyle,
+            voicevoxUrl: voicevoxUrlInput ? voicevoxUrlInput.value : voicevoxUrl,
             preview: true
         };
-        const blob = provider === "gemini"
-            ? await requestGeminiTts(phrase, modelName, controller.signal, opts)
-            : await requestCloudTts(phrase, modelName || "ja-JP-Neural2-B", controller.signal, opts);
+        const blob = await synthesizeSpeech(phrase, controller.signal, opts);
         if (ttsPreviewController !== controller) return;
         button.classList.remove("is-loading");
         setStatus(`再生中: ${modelName}`);
@@ -5892,6 +6153,11 @@ settingsBtn.addEventListener("click", () => {
     apiKeyInput.type = "password";
     if (apiKeyRevealBtn) apiKeyRevealBtn.textContent = "表示";
     renderTtsModelOptions(loadTtsModelList(), ttsModel);
+    if (voicevoxUrlInput) voicevoxUrlInput.value = voicevoxUrl;
+    if (voicevoxStatus) voicevoxStatus.textContent = "";
+    const cacheClearStatus = document.getElementById("audio-cache-clear-result");
+    if (cacheClearStatus) cacheClearStatus.textContent = "";
+    updateTtsCreditNote();
     if (ttsModelStatus) ttsModelStatus.textContent = "";
     if (geminiVoiceSelect) geminiVoiceSelect.value = geminiVoice;
     if (geminiStyleInput) geminiStyleInput.value = geminiStyle;
@@ -5935,9 +6201,14 @@ saveSettingsBtn.addEventListener("click", () => {
     GEMINI_API_KEY = newKey;
     geminiAuthBlocked = false;
     localStorage.setItem("gemini_api_key", newKey);
+    const previousTtsModel = ttsModel;
     if (ttsModelSelect && ttsModelSelect.value) {
         ttsModel = ttsModelSelect.value;
         localStorage.setItem(TTS_MODEL_KEY, ttsModel);
+    }
+    if (voicevoxUrlInput) {
+        voicevoxUrl = getVoicevoxBaseUrl(voicevoxUrlInput.value);
+        localStorage.setItem(VOICEVOX_URL_KEY, voicevoxUrl);
     }
     if (geminiVoiceSelect && geminiVoiceSelect.value) {
         geminiVoice = geminiVoiceSelect.value;
@@ -5970,6 +6241,9 @@ saveSettingsBtn.addEventListener("click", () => {
     renderAll();
     if (modeSelect) setAppMode(modeSelect.value);
     settingsModal.classList.remove("active");
+    // 音声を変えたら、新しい音声で前もって作り始める（Gemini TTS は遅く回数制限があるので手動）。
+    // 保存した文言で作るよう最後に呼ぶ
+    if (ttsModel !== previousTtsModel && ["cloud", "voicevox"].includes(getTtsProvider())) void prefetchAllAudio({ quiet: true });
 });
 
 function activateSettingsTab(tabId) {
