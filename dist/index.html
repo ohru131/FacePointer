@@ -62,17 +62,27 @@
 
         <!-- Calibration Wizard -->
         <div id="calib-wizard" aria-live="polite">
+            <!-- 指示は画面上部に出し、中央のワイヤーフレームと○に重ねない -->
+            <div id="calib-topbar">
+                <div id="calib-topbar-text">
+                    <div id="calib-step-count"></div>
+                    <div id="calib-instruction"><span id="calib-arrow"></span><span id="calib-instruction-text"></span></div>
+                    <div id="calib-sub"></div>
+                    <div id="calib-progress"><div id="calib-progress-bar"></div></div>
+                </div>
+                <div id="calib-topbar-actions">
+                    <button id="calib-skip-btn" class="ctrl-btn secondary" type="button" hidden>離れた位置を省略</button>
+                    <button id="calib-cancel-btn" class="ctrl-btn secondary" type="button">中止</button>
+                </div>
+            </div>
+            <div id="calib-target" aria-hidden="true"></div>
+            <div id="calib-cursor" aria-hidden="true"></div>
             <div id="calib-box">
-                <div id="calib-step-count"></div>
-                <div id="calib-arrow"></div>
-                <div id="calib-instruction"></div>
-                <div id="calib-sub"></div>
-                <div id="calib-progress"><div id="calib-progress-bar"></div></div>
                 <pre id="calib-result"></pre>
                 <div id="calib-actions">
                     <button id="calib-save-btn" class="ctrl-btn primary" type="button">保存</button>
                     <button id="calib-retry-btn" class="ctrl-btn secondary" type="button">やり直し</button>
-                    <button id="calib-cancel-btn" class="ctrl-btn secondary" type="button">中止</button>
+                    <button id="calib-close-btn" class="ctrl-btn secondary" type="button">保存しない</button>
                 </div>
             </div>
         </div>
@@ -103,6 +113,7 @@
                     <div class="drawer-actions">
                         <button id="settings-btn" class="drawer-action" type="button"><span class="drawer-action-icon">⚙️</span>設定</button>
                         <button id="calib-wizard-btn" class="drawer-action" type="button"><span class="drawer-action-icon">🎯</span>キャリブレーション</button>
+                        <button id="recapture-front-btn" class="drawer-action" type="button" title="今の姿勢を正面として取り直します（感度・揺れの計測値はそのまま）"><span class="drawer-action-icon">◎</span>正面取り直し</button>
                         <button id="calibrate-btn" class="drawer-action" type="button"><span class="drawer-action-icon">↺</span>校正リセット</button>
                         <button id="audio-cache-btn" class="drawer-action" type="button"><span class="drawer-action-icon">🔊</span>音声データを更新</button>
                     </div>
@@ -124,6 +135,8 @@
                     <h4 class="drawer-heading">表示</h4>
                     <button id="params-toggle-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true">調整・計測値</button>
                     <button id="vertical-move-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true">上下移動（症状モード）</button>
+                    <button id="distance-comp-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true" title="画面からの距離が変わっても、同じ向きで同じ位置を指せるように移動量を補正します">距離補正</button>
+                    <button id="recenter-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true" title="顔が正面付近にあるとき、顔を動かしている間だけポインタのずれを少しずつ戻します">中央補正</button>
                 </section>
             </div>
 
