@@ -19,6 +19,8 @@ const confirmZone = document.getElementById("confirm-zone");
 const confirmZonePreview = document.getElementById("confirm-zone-preview");
 const appRoot = document.getElementById("app");
 const modePrompt = document.getElementById("mode-prompt");
+const simplePanelContainer = document.getElementById("simple-panel");
+const dwellIndicator = document.getElementById("dwell-indicator");
 
 let faceLandmarker;
 let lastVideoTime = -1;
@@ -125,6 +127,26 @@ const SYMPTOM_IDLE_RESET_MS = 30000;
 
 const SYMPTOM_FLOW_DIRECT = "direct";
 
+// 操作モード: 2段階の症状モード / パネルを選ぶだけのシンプルモード
+const APP_MODE_KEY = "app_mode";
+const APP_MODE_SYMPTOM = "symptom";
+const APP_MODE_SIMPLE = "simple";
+const SIMPLE_GRID_COLUMNS = 4;
+const SIMPLE_ROW_ID = "s";
+const SIMPLE_CONFIRM_DISPLAY_MS = 2200;
+// 滞留(dwell)選択: 同じパネル上でしばらく動かなければ確定する
+const DWELL_TIME_KEY = "dwell_time_ms";
+const DWELL_TIME_DEFAULT_MS = 1500;
+const DWELL_TIME_MAX_MS = 5000;
+// この距離以上ポインタが動いたら「動いた」とみなして滞留をやり直す
+const DWELL_MOVE_TOLERANCE_PX = 48;
+// ジッタでパネル境界を一瞬外れても進捗を保つ猶予
+const DWELL_LEAVE_GRACE_MS = 200;
+// 一瞬通過しただけでインジケータが出ないよう、少し溜まってから表示する
+const DWELL_INDICATOR_SHOW_RATIO = 0.08;
+// 起動・モード切替直後は、最初にホバーしたパネルから一度外れるまで滞留しない
+const DWELL_LOCK_FIRST_HOVER = "*";
+
 const symptomChoices = [
     {
         name: "身体",
@@ -173,7 +195,10 @@ const symptomChoices = [
 ];
 
 function readStoredNumber(key, fallback, min, max) {
-    const raw = localStorage.getItem(key);
+    return readStoredNumberFromValue(localStorage.getItem(key), fallback, min, max);
+}
+
+function readStoredNumberFromValue(raw, fallback, min, max) {
     const parsed = Number.parseFloat(raw);
     if (!Number.isFinite(parsed)) return fallback;
     return Math.max(min, Math.min(max, parsed));
@@ -206,6 +231,21 @@ let jawOpenThreshold = readStoredNumber(JAW_OPEN_THRESHOLD_KEY, JAW_OPEN_THRESHO
 let noseGain = readStoredNumber(NOSE_GAIN_KEY, NOSE_GAIN_DEFAULT, 0, NOSE_GAIN_MAX);
 let yawGain = readStoredNumber(YAW_GAIN_KEY, YAW_GAIN_DEFAULT, 0, YAW_GAIN_MAX);
 let iconStyle = localStorage.getItem(ICON_STYLE_KEY) || ICON_STYLE_DEFAULT;
+let appMode = localStorage.getItem(APP_MODE_KEY) === APP_MODE_SIMPLE ? APP_MODE_SIMPLE : APP_MODE_SYMPTOM;
+let dwellTimeMs = readStoredNumber(DWELL_TIME_KEY, DWELL_TIME_DEFAULT_MS, 0, DWELL_TIME_MAX_MS); // 0 = 滞留確定OFF
+
+// Dwell state
+let dwellTargetKey = "";
+let dwellStartAt = 0;
+let dwellAnchorX = 0;
+let dwellAnchorY = 0;
+let dwellLeftAt = 0;
+// 確定済みパネル。一度外れるまで再選択しない（TD Snap の Look away before reselecting 相当）
+let dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+
+function isSimpleMode() {
+    return appMode === APP_MODE_SIMPLE;
+}
 
 // Symptom state
 let symptomStage = SYMPTOM_STAGE_SYMPTOM;
@@ -284,6 +324,8 @@ function resetPointerMotionHistory() {
 }
 
 function getSymptomRowPointerBounds() {
+    if (isSimpleMode()) return getSimplePanelPointerBounds();
+
     // 選択中の階層（未選択なら row1、選択後は row2）にポインタを追従させる
     const activeContainer = symptomStage === SYMPTOM_STAGE_BODY_PART ? row2Container : row1Container;
     const buttons = Array.from(activeContainer.querySelectorAll(".h-btn:not(.h-btn--empty):not(.h-btn--static)"));
@@ -302,6 +344,23 @@ function getSymptomRowPointerBounds() {
     const centerX = centers.reduce((sum, c) => sum + c.x, 0) / centers.length;
     const centerY = centers.reduce((sum, c) => sum + c.y, 0) / centers.length;
     return { minX, maxX, centerX, centerY };
+}
+
+// シンプルモード: グリッド全体の各パネル中央の範囲でポインタを動かす
+function getSimplePanelPointerBounds() {
+    if (!simplePanelContainer) return null;
+
+    const buttons = Array.from(simplePanelContainer.querySelectorAll(".h-btn:not(.h-btn--empty)"));
+    const rects = buttons.map(btn => btn.getBoundingClientRect()).filter(rect => rect.width > 0 && rect.height > 0);
+    if (rects.length === 0) return null;
+
+    const xs = rects.map(rect => rect.left + rect.width / 2);
+    const ys = rects.map(rect => rect.top + rect.height / 2);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    return { minX, maxX, minY, maxY, centerX: (minX + maxX) / 2, centerY: (minY + maxY) / 2 };
 }
 
 // 表示中の行の縦位置。パンくず表示・プレビュー表示（h-btn--static）も対象にする
@@ -331,6 +390,12 @@ function getRowGeometry(container) {
 
 // 上下移動の限界は上段/下段それぞれのボタン中央
 function getVerticalPointerBounds() {
+    if (isSimpleMode()) {
+        // シンプルモードは上下移動ONに関係なく縦横に動かす
+        const bounds = getSimplePanelPointerBounds();
+        if (!bounds || bounds.maxY - bounds.minY < VERTICAL_MIN_TRAVEL_PX) return null;
+        return { minY: bounds.minY, maxY: bounds.maxY };
+    }
     if (!isVerticalMoveEnabled) return null;
 
     const upper = getRowGeometry(row1Container);
@@ -381,6 +446,24 @@ function findRow1ButtonByPointerX() {
         if (pointerX >= rect.left && pointerX <= rect.right) return btn;
 
         const distance = Math.abs(pointerX - (rect.left + (rect.width / 2)));
+        if (distance < bestDistance) {
+            bestDistance = distance;
+            nearest = btn;
+        }
+    }
+    return nearest;
+}
+
+function findNearestSimplePanel() {
+    if (!simplePanelContainer) return null;
+
+    let nearest = null;
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const btn of simplePanelContainer.querySelectorAll(".h-btn:not(.h-btn--empty)")) {
+        const rect = btn.getBoundingClientRect();
+        const dx = Math.max(rect.left - pointerX, 0, pointerX - rect.right);
+        const dy = Math.max(rect.top - pointerY, 0, pointerY - rect.bottom);
+        const distance = dx * dx + dy * dy;
         if (distance < bestDistance) {
             bestDistance = distance;
             nearest = btn;
@@ -625,7 +708,9 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex,
         lastYaw = filteredYaw;
         lastPitch = filteredPitch;
         targetX = clamp(targetX, bounds.minX, bounds.maxX);
-        if (isVerticalMoveEnabled) {
+        if (isSimpleMode()) {
+            targetY = clamp(targetY, bounds.minY, bounds.maxY);
+        } else if (isVerticalMoveEnabled) {
             // 校正直後は必ず上段の高さから始める
             snapPointerToUpperRow();
         } else {
@@ -735,7 +820,7 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex,
 
 // 上下移動で行を跨いだら階層を進める/戻す
 function updateVerticalStageTransition() {
-    if (!isVerticalMoveEnabled) return;
+    if (isSimpleMode() || !isVerticalMoveEnabled) return;
     if (isCalibrating || isConfirmInProgress) return;
     if (pendingClickTimer) return;
     if (Date.now() - lastVerticalStageSwitchAt < VERTICAL_STAGE_SWITCH_LOCKOUT_MS) return;
@@ -936,7 +1021,7 @@ function renderRow(container, items, rowNumber, onClick, options = {}) {
     });
 }
 
-function showConfirm(sentence) {
+function showConfirm(sentence, displayMs = 3500) {
     if (confirmOverlay.classList.contains("active") && confirmText.textContent === sentence) {
         return;
     }
@@ -949,7 +1034,7 @@ function showConfirm(sentence) {
     window.confirmTimer = setTimeout(() => {
         confirmOverlay.classList.remove("active");
         resolveConfirmOverlayHideWaiters();
-    }, 3500);
+    }, displayMs);
 }
 
 function checkPointerCollision() {
@@ -991,8 +1076,13 @@ function checkPointerCollision() {
     }
 
     // 上下移動で行間を通過中も、上段の選択対象とプレビューを保持する
-    if (!hoveredBtn && isVerticalMoveEnabled && symptomStage === SYMPTOM_STAGE_SYMPTOM) {
+    if (!hoveredBtn && !isSimpleMode() && isVerticalMoveEnabled && symptomStage === SYMPTOM_STAGE_SYMPTOM) {
         hoveredBtn = findRow1ButtonByPointerX();
+    }
+
+    // シンプルモードはパネル間の隙間も最寄りパネル扱いにし、選択が途切れないようにする
+    if (!hoveredBtn && isSimpleMode()) {
+        hoveredBtn = findNearestSimplePanel();
     }
 
     if (hoveredBtn) {
@@ -1023,7 +1113,7 @@ function checkPointerCollision() {
 
 function updateSymptomPreview(hoveredBtn) {
     // 上位階層選択前（symptom段階）のみ、ホバー中の項目の次階層を下段にプレビュー表示する
-    if (symptomStage !== SYMPTOM_STAGE_SYMPTOM || !row2Container) return;
+    if (isSimpleMode() || symptomStage !== SYMPTOM_STAGE_SYMPTOM || !row2Container) return;
 
     const isRow1Hover = hoveredBtn && hoveredBtn.dataset.row === "1";
     const name = isRow1Hover ? hoveredBtn.dataset.name : null;
@@ -1047,6 +1137,12 @@ function updateSymptomPreview(hoveredBtn) {
 }
 
 function renderAll() {
+    if (isSimpleMode()) {
+        renderSimpleMode();
+        return;
+    }
+    if (simplePanelContainer) simplePanelContainer.innerHTML = "";
+
     if (appRoot) {
         appRoot.dataset.mode = "symptom";
         appRoot.dataset.symptomStage = symptomStage;
@@ -1089,6 +1185,148 @@ function renderAll() {
     if (row3Container) {
         row3Container.innerHTML = "";
         row3Container.style.display = "none";
+    }
+}
+
+// =========================================================
+// Simple mode (パネルを選ぶと即発話。滞留またはジェスチャーで確定)
+// =========================================================
+function getSimplePanelItems() {
+    return symptomChoices.flatMap(category => category.options || []);
+}
+
+function buildSimpleSentence(item) {
+    if (item.sentence && item.sentence.trim()) return item.sentence.trim();
+    return `${item.name}です。`;
+}
+
+function renderSimpleMode() {
+    if (appRoot) {
+        appRoot.dataset.mode = APP_MODE_SIMPLE;
+        delete appRoot.dataset.symptomStage;
+    }
+    if (modePrompt) modePrompt.textContent = "";
+    if (confirmZone) confirmZone.style.display = "none";
+    [row1Container, row2Container, row3Container].forEach((container) => {
+        if (!container) return;
+        container.innerHTML = "";
+        container.style.display = "none";
+    });
+    previewSymptomName = null;
+
+    if (!simplePanelContainer) return;
+    renderRow(simplePanelContainer, getSimplePanelItems(), SIMPLE_ROW_ID, handleSimpleClick);
+    simplePanelContainer.style.gridTemplateColumns = `repeat(${SIMPLE_GRID_COLUMNS}, 1fr)`;
+    refitAllButtonText();
+}
+
+async function handleSimpleClick(item) {
+    if (isConfirmInProgress) return;
+
+    const sentence = buildSimpleSentence(item);
+    if (!sentence) return;
+
+    // 口ジェスチャー・滞留のどちらで確定しても、外れるまで同じパネルは再選択しない
+    dwellLockedKey = `${SIMPLE_ROW_ID}|${item.name}`;
+    resetDwellProgress();
+
+    showConfirm(sentence, SIMPLE_CONFIRM_DISPLAY_MS);
+    isConfirmInProgress = true;
+    void speak(sentence);
+
+    try {
+        await waitForConfirmOverlayToHide();
+    } finally {
+        isConfirmInProgress = false;
+    }
+}
+
+function resetDwellProgress() {
+    if (dwellTargetKey) {
+        const btn = document.querySelector(".h-btn.dwelling");
+        if (btn) btn.classList.remove("dwelling");
+    }
+    dwellTargetKey = "";
+    dwellStartAt = 0;
+    dwellLeftAt = 0;
+    if (dwellIndicator) {
+        dwellIndicator.classList.remove("active");
+        dwellIndicator.style.setProperty("--dwell-progress", "0");
+    }
+}
+
+function updateDwellSelection(hasFace) {
+    if (!isSimpleMode() || dwellTimeMs <= 0 || !hasFace || isCalibrating
+        || calibrationWizard.isActive() || isConfirmInProgress || pendingClickTimer) {
+        resetDwellProgress();
+        return;
+    }
+
+    const now = performance.now();
+    const hoveredKey = lastHoveredButtonKey;
+
+    if (dwellLockedKey === DWELL_LOCK_FIRST_HOVER && hoveredKey) dwellLockedKey = hoveredKey;
+    if (dwellLockedKey && dwellLockedKey !== DWELL_LOCK_FIRST_HOVER && hoveredKey !== dwellLockedKey) {
+        dwellLockedKey = "";
+    }
+
+    if (!hoveredKey || hoveredKey === dwellLockedKey) {
+        // 境界のジッタで一瞬外れただけなら進捗を保持する
+        if (dwellTargetKey && !hoveredKey) {
+            if (!dwellLeftAt) dwellLeftAt = now;
+            if (now - dwellLeftAt < DWELL_LEAVE_GRACE_MS) return;
+        }
+        resetDwellProgress();
+        return;
+    }
+
+    const movedFar = Math.hypot(pointerX - dwellAnchorX, pointerY - dwellAnchorY) > DWELL_MOVE_TOLERANCE_PX;
+    if (hoveredKey !== dwellTargetKey || movedFar) {
+        resetDwellProgress();
+        dwellTargetKey = hoveredKey;
+        dwellStartAt = now;
+        dwellAnchorX = pointerX;
+        dwellAnchorY = pointerY;
+    }
+    dwellLeftAt = 0;
+
+    const targetBtn = document.querySelector(".h-btn.hover");
+    if (!targetBtn) return;
+    targetBtn.classList.add("dwelling");
+
+    const progress = clamp((now - dwellStartAt) / dwellTimeMs, 0, 1);
+    if (dwellIndicator) {
+        dwellIndicator.style.setProperty("--dwell-x", `${pointerX}px`);
+        dwellIndicator.style.setProperty("--dwell-y", `${pointerY}px`);
+        dwellIndicator.style.setProperty("--dwell-progress", progress.toFixed(3));
+        dwellIndicator.classList.toggle("active", progress >= DWELL_INDICATOR_SHOW_RATIO);
+    }
+
+    if (progress >= 1) {
+        resetDwellProgress();
+        dwellLockedKey = hoveredKey;
+        lastConfirmedAt = Date.now();
+        targetBtn.click();
+    }
+}
+
+function setAppMode(mode) {
+    const nextMode = mode === APP_MODE_SIMPLE ? APP_MODE_SIMPLE : APP_MODE_SYMPTOM;
+    if (nextMode === appMode) return;
+
+    appMode = nextMode;
+    localStorage.setItem(APP_MODE_KEY, appMode);
+    resetDwellProgress();
+    dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+    resetSymptomModeState();
+
+    if (isSimpleMode()) {
+        // グリッド中央へ乗せ直す
+        const bounds = getSimplePanelPointerBounds();
+        if (bounds) {
+            targetX = pointerX = bounds.centerX;
+            targetY = pointerY = bounds.centerY;
+        }
     }
 }
 
@@ -1477,6 +1715,7 @@ async function predictWebcam() {
     if (!hasFace && calibrationWizard.isActive()) calibrationWizard.onNoFace();
 
     checkPointerCollision();
+    updateDwellSelection(hasFace);
     if (hasFace) {
         updateVerticalStageTransition();
     }
@@ -2400,6 +2639,8 @@ const jawOpenThresholdSlider = document.getElementById("jaw-open-threshold-slide
 const noseGainSlider = document.getElementById("nose-gain-slider");
 const yawGainSlider = document.getElementById("yaw-gain-slider");
 const iconStyleSelect = document.getElementById("icon-style-select");
+const modeSelect = document.getElementById("mode-select");
+const dwellTimeSelect = document.getElementById("dwell-time-select");
 const jawOpenThresholdValue = document.getElementById("jaw-open-threshold-value");
 const noseGainValue = document.getElementById("nose-gain-value");
 const yawGainValue = document.getElementById("yaw-gain-value");
@@ -2590,6 +2831,8 @@ document.addEventListener("mousedown", (event) => {
 settingsBtn.addEventListener("click", () => {
     apiKeyInput.value = GEMINI_API_KEY;
     if (iconStyleSelect) iconStyleSelect.value = iconStyle;
+    if (modeSelect) modeSelect.value = appMode;
+    if (dwellTimeSelect) dwellTimeSelect.value = String(dwellTimeMs);
     if (mouseLeftInput) mouseLeftInput.value = mouseClickSpeech.left;
     if (mouseMiddleInput) mouseMiddleInput.value = mouseClickSpeech.middle;
     if (mouseRightInput) mouseRightInput.value = mouseClickSpeech.right;
@@ -2621,8 +2864,13 @@ saveSettingsBtn.addEventListener("click", () => {
         iconStyle = iconStyleSelect.value;
         localStorage.setItem(ICON_STYLE_KEY, iconStyle);
     }
+    if (dwellTimeSelect) {
+        dwellTimeMs = readStoredNumberFromValue(dwellTimeSelect.value, DWELL_TIME_DEFAULT_MS, 0, DWELL_TIME_MAX_MS);
+        localStorage.setItem(DWELL_TIME_KEY, String(dwellTimeMs));
+    }
 
     renderAll();
+    if (modeSelect) setAppMode(modeSelect.value);
     settingsModal.classList.remove("active");
 });
 

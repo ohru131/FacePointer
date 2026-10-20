@@ -20,6 +20,8 @@
         </div>
         <!-- Pointer lives above ALL layers -->
         <div id="pointer"></div>
+        <!-- Dwell (滞留確定) progress pie, follows the pointer -->
+        <div id="dwell-indicator" aria-hidden="true"></div>
 
         <!-- UI Layer -->
         <div id="ui-layer">
@@ -38,6 +40,9 @@
                 <div class="row-label">③ 決定</div>
                 <div id="row3" class="btn-row btn-row--confirm"></div>
             </div>
+
+            <!-- Simple mode: panel grid (select to speak) -->
+            <div id="simple-panel" class="simple-grid"></div>
         </div>
 
         <!-- Confirm Overlay -->
@@ -132,11 +137,23 @@
                     <div class="setting-item">
                         <label for="mode-select">操作モード</label>
                         <select id="mode-select">
-                            <option value="symptom-relative">新モード（横移動）</option>
-                            <option value="symptom">症状モード</option>
-                            <option value="hierarchy">階層モード</option>
+                            <option value="symptom">症状モード（2段階）</option>
+                            <option value="simple">シンプルモード（パネルを選んで発話）</option>
                         </select>
                         <small>調整スライダーはメイン画面右下で即時反映されます。</small>
+                    </div>
+                    <div class="setting-item">
+                        <label for="dwell-time-select">滞留で確定（シンプルモード）</label>
+                        <select id="dwell-time-select">
+                            <option value="0">OFF（口を開けて確定のみ）</option>
+                            <option value="800">0.8秒</option>
+                            <option value="1000">1.0秒</option>
+                            <option value="1500">1.5秒</option>
+                            <option value="2000">2.0秒</option>
+                            <option value="2500">2.5秒</option>
+                            <option value="3000">3.0秒</option>
+                        </select>
+                        <small>パネル上でポインタを止めると円が埋まり、満タンで発話します。</small>
                     </div>
                     <div class="setting-item">
                         <label for="icon-style-select">アイコンスタイル</label>
