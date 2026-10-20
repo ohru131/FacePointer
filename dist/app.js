@@ -3197,8 +3197,203 @@ function loadMouseClickSpeech() {
 
 loadMouseClickSpeech();
 
-function getGeminiUrl() {
-    return `https://texttospeech.googleapis.com/v1beta1/text:synthesize?key=${GEMINI_API_KEY}`;
+// TTSモデル: "cloud:<voice名>" (Google Cloud TTS) / "gemini:<モデル名>" (Gemini API TTS)
+const TTS_MODEL_KEY = "tts_model";
+const TTS_MODEL_LIST_KEY = "tts_model_list";
+const DEFAULT_TTS_MODEL = "cloud:ja-JP-Neural2-B";
+const GEMINI_VOICE_KEY = "gemini_tts_voice";
+const GEMINI_STYLE_KEY = "gemini_tts_style";
+const DEFAULT_GEMINI_VOICE = "Zephyr";
+const DEFAULT_GEMINI_STYLE = "明るく、はきはきと、元気な若い日本人女性の声で、聞き取りやすく読み上げてください";
+// Gemini TTS のプリセット話者 (日本語も発話可)。女性声を先頭に並べる
+const GEMINI_VOICES = [
+    { name: "Zephyr", label: "Zephyr (女性・明るい)" },
+    { name: "Autonoe", label: "Autonoe (女性・明るい)" },
+    { name: "Laomedeia", label: "Laomedeia (女性・アップビート)" },
+    { name: "Leda", label: "Leda (女性・若々しい)" },
+    { name: "Aoede", label: "Aoede (女性・軽やか)" },
+    { name: "Erinome", label: "Erinome (女性・クリア)" },
+    { name: "Kore", label: "Kore (女性・しっかり)" },
+    { name: "Callirrhoe", label: "Callirrhoe (女性・おおらか)" },
+    { name: "Despina", label: "Despina (女性・なめらか)" },
+    { name: "Vindemiatrix", label: "Vindemiatrix (女性・やさしい)" },
+    { name: "Sulafat", label: "Sulafat (女性・温かい)" },
+    { name: "Achernar", label: "Achernar (女性・柔らかい)" },
+    { name: "Puck", label: "Puck (男性・アップビート)" },
+    { name: "Fenrir", label: "Fenrir (男性・興奮気味)" },
+    { name: "Charon", label: "Charon (男性・情報的)" },
+    { name: "Orus", label: "Orus (男性・しっかり)" }
+];
+const GEMINI_TTS_SAMPLE_RATE = 24000;
+
+let ttsModel = localStorage.getItem(TTS_MODEL_KEY) || DEFAULT_TTS_MODEL;
+let geminiVoice = localStorage.getItem(GEMINI_VOICE_KEY) || DEFAULT_GEMINI_VOICE;
+let geminiStyle = localStorage.getItem(GEMINI_STYLE_KEY) ?? DEFAULT_GEMINI_STYLE;
+
+function loadTtsModelList() {
+    try {
+        const list = JSON.parse(localStorage.getItem(TTS_MODEL_LIST_KEY) || "[]");
+        if (Array.isArray(list) && list.length) return list;
+    } catch (_) { /* 破損時は既定値 */ }
+    return [{ value: DEFAULT_TTS_MODEL, label: "Cloud TTS: ja-JP-Neural2-B" }];
+}
+
+function getCloudTtsUrl(apiKey) {
+    return `https://texttospeech.googleapis.com/v1beta1/text:synthesize?key=${apiKey}`;
+}
+
+function getGeminiTtsUrl(model, apiKey) {
+    return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${apiKey}`;
+}
+
+// 既定モデルは従来どおりテキストのみをキーにし、既存キャッシュを活かす
+function audioCacheKey(text) {
+    if (ttsModel === DEFAULT_TTS_MODEL) return text;
+    if (ttsModel.startsWith("gemini:")) return `${ttsModel}|${geminiVoice}|${geminiStyle}|${text}`;
+    return `${ttsModel}|${text}`;
+}
+
+async function fetchAvailableTtsModels(apiKey) {
+    const models = [];
+    const errors = [];
+
+    try {
+        const res = await fetch(`https://texttospeech.googleapis.com/v1/voices?languageCode=ja-JP&key=${apiKey}`);
+        if (!res.ok) throw new Error(`Cloud TTS ${res.status}`);
+        const data = await res.json();
+        (data.voices || [])
+            .map(v => v.name)
+            .sort()
+            .forEach(name => models.push({ value: `cloud:${name}`, label: `Cloud TTS: ${name}` }));
+    } catch (err) {
+        errors.push(err.message);
+    }
+
+    try {
+        let pageToken = "";
+        do {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=${apiKey}` +
+                (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : "");
+            const res = await fetch(url);
+            if (!res.ok) throw new Error(`Gemini ${res.status}`);
+            const data = await res.json();
+            (data.models || [])
+                .filter(m => /tts/i.test(m.name) && (m.supportedGenerationMethods || []).includes("generateContent"))
+                .forEach(m => {
+                    const id = m.name.replace(/^models\//, "");
+                    models.push({ value: `gemini:${id}`, label: `Gemini: ${m.displayName || id} (${id})` });
+                });
+            pageToken = data.nextPageToken || "";
+        } while (pageToken);
+    } catch (err) {
+        errors.push(err.message);
+    }
+
+    return { models, errors };
+}
+
+function pcm16ToWavBlob(pcmBytes, sampleRate) {
+    const header = new ArrayBuffer(44);
+    const view = new DataView(header);
+    const writeStr = (offset, str) => { for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i)); };
+    writeStr(0, "RIFF");
+    view.setUint32(4, 36 + pcmBytes.length, true);
+    writeStr(8, "WAVE");
+    writeStr(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, "data");
+    view.setUint32(40, pcmBytes.length, true);
+    return new Blob([header, pcmBytes], { type: "audio/wav" });
+}
+
+function base64ToBytes(base64) {
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+}
+
+async function throwIfTtsError(response, blockOnAuthError) {
+    if (response.ok) return;
+    const errorBody = await response.text().catch(() => "");
+    if (blockOnAuthError && (response.status === 401 || response.status === 403)) {
+        geminiAuthBlocked = true;
+    }
+    throw new Error(`API Error: ${response.status}${errorBody ? ` ${errorBody}` : ""}`);
+}
+
+// opts: { apiKey, voice, style, preview } — 省略時は保存済み設定を使う。preview は試聴用で認証エラー時も発話をブロックしない
+async function requestCloudTts(text, voiceName, signal, opts = {}) {
+    const requestBody = {
+        audioConfig: {
+            audioEncoding: "LINEAR16",
+            pitch: 0,
+            speakingRate: 1.05
+        },
+        input: {
+            text
+        },
+        voice: {
+            languageCode: "ja-JP",
+            name: voiceName
+        }
+    };
+
+    const response = await fetch(getCloudTtsUrl(opts.apiKey ?? GEMINI_API_KEY), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+        signal
+    });
+    await throwIfTtsError(response, !opts.preview);
+
+    const data = await response.json();
+    const base64Audio = data.audioContent || data.audio;
+    if (!base64Audio) {
+        throw new Error("No audio content in response");
+    }
+    return new Blob([base64ToBytes(base64Audio)], { type: "audio/wav" });
+}
+
+async function requestGeminiTts(text, model, signal, opts = {}) {
+    const style = opts.style ?? geminiStyle;
+    const voice = opts.voice ?? geminiVoice;
+    const requestBody = {
+        // 口調は自然文で指示する (例: "明るく読み上げてください: こんにちは")
+        contents: [{ parts: [{ text: style ? `${style}:\n${text}` : text }] }],
+        generationConfig: {
+            responseModalities: ["AUDIO"],
+            speechConfig: {
+                voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } }
+            }
+        }
+    };
+
+    const response = await fetch(getGeminiTtsUrl(model, opts.apiKey ?? GEMINI_API_KEY), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+        signal
+    });
+    await throwIfTtsError(response, !opts.preview);
+
+    const data = await response.json();
+    const part = (data.candidates?.[0]?.content?.parts || []).find(p => p.inlineData?.data);
+    if (!part) {
+        throw new Error("No audio content in response");
+    }
+    // Gemini は audio/L16;codec=pcm;rate=24000 の生PCMを返すため WAV ヘッダを付与
+    const mime = part.inlineData.mimeType || "";
+    const bytes = base64ToBytes(part.inlineData.data);
+    if (/wav/i.test(mime)) return new Blob([bytes], { type: "audio/wav" });
+    const rate = Number.parseInt((mime.match(/rate=(\d+)/) || [])[1], 10) || GEMINI_TTS_SAMPLE_RATE;
+    return pcm16ToWavBlob(bytes, rate);
 }
 
 let currentAudio = null;
@@ -3266,7 +3461,8 @@ initVoices();
 async function speakGemini(text, silent = false) {
     if (isSpeechFetching) return true;
 
-    const cacheKey = text.trim();
+    const phrase = text.trim();
+    const cacheKey = audioCacheKey(phrase);
     const cachedBlob = await getCachedAudio(cacheKey);
     if (cachedBlob) {
         if (!silent) await playBlob(cachedBlob);
@@ -3287,50 +3483,11 @@ async function speakGemini(text, silent = false) {
 
     isSpeechFetching = true;
     try {
-        const requestBody = {
-            audioConfig: {
-                audioEncoding: "LINEAR16",
-                pitch: 0,
-                speakingRate: 1.05
-            },
-            input: {
-                text: cacheKey
-            },
-            voice: {
-                languageCode: "ja-JP",
-                name: "ja-JP-Neural2-B"
-            }
-        };
-
-        const response = await fetch(getGeminiUrl(), {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(requestBody),
-            signal: currentSpeechController.signal
-        });
-
-        if (!response.ok) {
-            const errorBody = await response.text().catch(() => "");
-            if (response.status === 401 || response.status === 403) {
-                geminiAuthBlocked = true;
-            }
-            throw new Error(`API Error: ${response.status}${errorBody ? ` ${errorBody}` : ""}`);
-        }
-
-        const data = await response.json();
-        const base64Audio = data.audioContent || data.audio;
-        if (!base64Audio) {
-            throw new Error("No audio content in response");
-        }
-
-        const binaryAudio = atob(base64Audio);
-        const arrayBuffer = new ArrayBuffer(binaryAudio.length);
-        const uint8Array = new Uint8Array(arrayBuffer);
-        for (let i = 0; i < binaryAudio.length; i++) {
-            uint8Array[i] = binaryAudio.charCodeAt(i);
-        }
-
-        const blob = new Blob([arrayBuffer], { type: "audio/wav" });
+        const [provider, ...rest] = ttsModel.split(":");
+        const modelName = rest.join(":");
+        const blob = provider === "gemini"
+            ? await requestGeminiTts(phrase, modelName, currentSpeechController.signal)
+            : await requestCloudTts(phrase, modelName || "ja-JP-Neural2-B", currentSpeechController.signal);
         await setCachedAudio(cacheKey, blob);
 
         if (!silent) {
@@ -3412,7 +3569,7 @@ async function prefetchAllAudio() {
     for (let i = 0; i < uniquePhrases.length; i++) {
         const text = uniquePhrases[i];
 
-        const cached = await getCachedAudio(text);
+        const cached = await getCachedAudio(audioCacheKey(text));
         if (cached) {
             successCount++;
             const pct = (successCount / uniquePhrases.length) * 100;
@@ -4495,6 +4652,27 @@ audioCacheBtn.addEventListener("click", () => {
 const settingsBtn = document.getElementById("settings-btn");
 const settingsModal = document.getElementById("settings-modal");
 const apiKeyInput = document.getElementById("api-key-input");
+const ttsModelSelect = document.getElementById("tts-model-select");
+const ttsModelFetchBtn = document.getElementById("tts-model-fetch-btn");
+const ttsModelStatus = document.getElementById("tts-model-status");
+const geminiVoiceSelect = document.getElementById("gemini-voice-select");
+const geminiStyleInput = document.getElementById("gemini-style-input");
+const geminiStyleResetBtn = document.getElementById("gemini-style-reset-btn");
+
+if (geminiVoiceSelect) {
+    GEMINI_VOICES.forEach(v => {
+        const opt = document.createElement("option");
+        opt.value = v.name;
+        opt.textContent = v.label;
+        geminiVoiceSelect.appendChild(opt);
+    });
+}
+
+if (geminiStyleResetBtn && geminiStyleInput) {
+    geminiStyleResetBtn.addEventListener("click", () => {
+        geminiStyleInput.value = DEFAULT_GEMINI_STYLE;
+    });
+}
 const mouseLeftInput = document.getElementById("mouse-left-input");
 const mouseMiddleInput = document.getElementById("mouse-middle-input");
 const mouseRightInput = document.getElementById("mouse-right-input");
@@ -4693,6 +4871,101 @@ function syncTuningSliders() {
 
 syncTuningSliders();
 
+function renderTtsModelOptions(list, selected) {
+    if (!ttsModelSelect) return;
+    const options = list.some(m => m.value === selected)
+        ? list
+        : [{ value: selected, label: `${selected} (一覧に無し)` }, ...list];
+    ttsModelSelect.innerHTML = "";
+    options.forEach(m => {
+        const opt = document.createElement("option");
+        opt.value = m.value;
+        opt.textContent = m.label;
+        ttsModelSelect.appendChild(opt);
+    });
+    ttsModelSelect.value = selected;
+}
+
+if (ttsModelFetchBtn) {
+    ttsModelFetchBtn.addEventListener("click", async () => {
+        const key = apiKeyInput.value.trim();
+        if (!key) {
+            if (ttsModelStatus) ttsModelStatus.textContent = "API Key を入力してください。";
+            return;
+        }
+        ttsModelFetchBtn.disabled = true;
+        if (ttsModelStatus) ttsModelStatus.textContent = "取得中...";
+        const current = ttsModelSelect ? ttsModelSelect.value : ttsModel;
+        const { models, errors } = await fetchAvailableTtsModels(key);
+        ttsModelFetchBtn.disabled = false;
+
+        if (!models.length) {
+            if (ttsModelStatus) ttsModelStatus.textContent = `取得失敗: ${errors.join(" / ")}`;
+            return;
+        }
+        localStorage.setItem(TTS_MODEL_LIST_KEY, JSON.stringify(models));
+        renderTtsModelOptions(models, current);
+        if (ttsModelStatus) {
+            ttsModelStatus.textContent = `${models.length} 件取得` + (errors.length ? ` (一部失敗: ${errors.join(" / ")})` : "");
+        }
+    });
+}
+
+// 設定画面の未保存の値 (API Key / モデル / 話者 / 口調) でキャッシュを使わず即時発話する
+const ttsPreviewStatus = document.getElementById("tts-preview-status");
+let ttsPreviewController = null;
+
+async function previewTts(text, button) {
+    const phrase = (text || "").trim();
+    const apiKey = apiKeyInput.value.trim();
+    const setStatus = (msg) => { if (ttsPreviewStatus) ttsPreviewStatus.textContent = msg; };
+    if (!phrase) { setStatus("文言が空です。"); return; }
+    if (!apiKey) { setStatus("API Key を入力してください。"); return; }
+
+    const model = (ttsModelSelect && ttsModelSelect.value) || ttsModel;
+    const [provider, ...rest] = model.split(":");
+    const modelName = rest.join(":");
+
+    if (ttsPreviewController) ttsPreviewController.abort();
+    const controller = new AbortController();
+    ttsPreviewController = controller;
+    window.speechSynthesis.cancel();
+
+    document.querySelectorAll(".tts-preview-btn").forEach(b => b.classList.remove("is-loading"));
+    button.classList.add("is-loading");
+    setStatus(`合成中: ${modelName}`);
+    try {
+        const opts = {
+            apiKey,
+            voice: geminiVoiceSelect ? geminiVoiceSelect.value : geminiVoice,
+            style: geminiStyleInput ? geminiStyleInput.value.trim() : geminiStyle,
+            preview: true
+        };
+        const blob = provider === "gemini"
+            ? await requestGeminiTts(phrase, modelName, controller.signal, opts)
+            : await requestCloudTts(phrase, modelName || "ja-JP-Neural2-B", controller.signal, opts);
+        if (ttsPreviewController !== controller) return;
+        button.classList.remove("is-loading");
+        setStatus(`再生中: ${modelName}`);
+        await playBlob(blob);
+        if (ttsPreviewController === controller) setStatus("");
+    } catch (err) {
+        if (err.name === "AbortError") return;
+        console.error("TTS preview error:", err);
+        setStatus(`発話失敗: ${err.message.slice(0, 200)}`);
+    } finally {
+        button.classList.remove("is-loading");
+        if (ttsPreviewController === controller) ttsPreviewController = null;
+    }
+}
+
+document.querySelectorAll(".tts-preview-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+        const input = document.getElementById(btn.dataset.target);
+        previewTts(input ? input.value : "", btn);
+    });
+});
+
 function showMouseClickFeedback(button, text) {
     if (!mouseClickFeedback) return;
 
@@ -4760,6 +5033,11 @@ settingsBtn.addEventListener("click", () => {
     apiKeyInput.value = GEMINI_API_KEY;
     apiKeyInput.type = "password";
     if (apiKeyRevealBtn) apiKeyRevealBtn.textContent = "表示";
+    renderTtsModelOptions(loadTtsModelList(), ttsModel);
+    if (ttsModelStatus) ttsModelStatus.textContent = "";
+    if (geminiVoiceSelect) geminiVoiceSelect.value = geminiVoice;
+    if (geminiStyleInput) geminiStyleInput.value = geminiStyle;
+    if (ttsPreviewStatus) ttsPreviewStatus.textContent = "";
     if (iconStyleSelect) iconStyleSelect.value = iconStyle;
     if (modeSelect) modeSelect.value = appMode;
     if (dwellTimeSelect) dwellTimeSelect.value = String(dwellTimeMs);
@@ -4799,6 +5077,18 @@ saveSettingsBtn.addEventListener("click", () => {
     GEMINI_API_KEY = newKey;
     geminiAuthBlocked = false;
     localStorage.setItem("gemini_api_key", newKey);
+    if (ttsModelSelect && ttsModelSelect.value) {
+        ttsModel = ttsModelSelect.value;
+        localStorage.setItem(TTS_MODEL_KEY, ttsModel);
+    }
+    if (geminiVoiceSelect && geminiVoiceSelect.value) {
+        geminiVoice = geminiVoiceSelect.value;
+        localStorage.setItem(GEMINI_VOICE_KEY, geminiVoice);
+    }
+    if (geminiStyleInput) {
+        geminiStyle = geminiStyleInput.value.trim();
+        localStorage.setItem(GEMINI_STYLE_KEY, geminiStyle);
+    }
 
     const newLeft = normalizedPhrase(mouseLeftInput ? mouseLeftInput.value : "", DEFAULT_MOUSE_CLICK_SPEECH.left);
     const newMiddle = normalizedPhrase(mouseMiddleInput ? mouseMiddleInput.value : "", DEFAULT_MOUSE_CLICK_SPEECH.middle);
