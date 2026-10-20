@@ -67,8 +67,15 @@ const NOSE_EURO_BETA = 20;
 const ANGLE_EURO_MIN_CUTOFF = 0.8;
 const ANGLE_EURO_BETA = 4;
 const EURO_DERIVATIVE_CUTOFF = 1.0;
-// キャリブレーションで計測した静止時の揺れ(標準偏差)からデッドゾーン下限を決める係数
+// キャリブレーションで計測した静止時の揺れ(標準偏差)からデッドゾーンを決める係数
 const NOISE_DEADZONE_FACTOR = 1.5;
+// 中央補正: 顔が正面付近にあるとき、顔を動かしている間だけ「正面ならここ」という位置へ少しずつ寄せる。
+// 止まっている間は動かさないので滞留選択の邪魔をせず、端では効かないので端で入力に逆らわない
+const RECENTER_KEY = "recenter_enabled";
+// 正面付近とみなす範囲（移動範囲の半幅に対する割合）
+const RECENTER_ZONE_RATIO = 0.35;
+// 1フレームの補正量の上限（そのフレームの移動量に対する割合）。顔の動きより十分ゆっくり戻す
+const RECENTER_RATE = 0.3;
 const NOSE_NOISE_KEY = "nose_noise";
 const ANGLE_NOISE_KEY = "angle_noise";
 const VERTICAL_GAIN_RATIO_KEY = "vertical_gain_ratio";
@@ -242,6 +249,8 @@ let angleNoise = readStoredNumber(ANGLE_NOISE_KEY, 0, 0, 0.05);
 let verticalGainRatio = readStoredNumber(VERTICAL_GAIN_RATIO_KEY, 1, 0.3, 4);
 let isVerticalMoveEnabled = localStorage.getItem(VERTICAL_MOVE_KEY) !== "0";
 let isDistanceCompEnabled = localStorage.getItem(DISTANCE_COMP_KEY) !== "0";
+let isRecenterEnabled = localStorage.getItem(RECENTER_KEY) !== "0";
+let debugRecenterDrift = 0;
 // キャリブレーションで決めた基準距離（0 = 未計測。その間は正面を取り直した時点の距離を基準にする）
 let distanceRef = readStoredNumber(DISTANCE_REF_KEY, 0, 0, 1000);
 let distanceExponent = readStoredNumber(DISTANCE_EXPONENT_KEY, DISTANCE_EXPONENT_DEFAULT, 0, 2);
@@ -613,16 +622,36 @@ function getYawScale(gain = yawGain) {
     return YAW_SCALE_MIN + ((YAW_SCALE_MAX - YAW_SCALE_MIN) * curved);
 }
 
+// デッドゾーン（バックラッシュ幅）。往復するたびにこの幅の2倍だけ取りこぼし、顔の向きとポインタがずれていく。
+// キャリブレーションで静止時の揺れを計測済みなら、揺れに見合った幅だけにして取りこぼしを減らす。
+// 未計測（揺れ=0）の間は、ゲインが低いほど広い従来の幅で揺れを抑える
 function getNoseDeadzone(gain = noseGain, noise = noseNoise) {
+    if (noise > 0) return Math.max(NOSE_DEADZONE_MIN, noise * NOISE_DEADZONE_FACTOR);
     const curved = gainCurve(gain, NOSE_GAIN_MAX, NOSE_GAIN_EXPONENT);
-    const byGain = NOSE_DEADZONE_MAX - ((NOSE_DEADZONE_MAX - NOSE_DEADZONE_MIN) * curved);
-    return Math.max(byGain, noise * NOISE_DEADZONE_FACTOR);
+    return NOSE_DEADZONE_MAX - ((NOSE_DEADZONE_MAX - NOSE_DEADZONE_MIN) * curved);
 }
 
 function getYawDeadzone(gain = yawGain, noise = angleNoise) {
+    if (noise > 0) return Math.max(YAW_DEADZONE_MIN, noise * NOISE_DEADZONE_FACTOR);
     const curved = gainCurve(gain, YAW_GAIN_MAX, YAW_GAIN_EXPONENT);
-    const byGain = YAW_DEADZONE_MAX - ((YAW_DEADZONE_MAX - YAW_DEADZONE_MIN) * curved);
-    return Math.max(byGain, noise * NOISE_DEADZONE_FACTOR);
+    return YAW_DEADZONE_MAX - ((YAW_DEADZONE_MAX - YAW_DEADZONE_MIN) * curved);
+}
+
+// 正面(校正位置)から今の顔の位置・向きまでを、ランタイムと同じ式で積算したときのポインタの変位(px)
+function getExpectedPointerOffset(distanceRatio) {
+    const sample = { noseX: filteredNoseControlX, noseY: filteredNoseControlY, yaw: filteredYaw, pitch: filteredPitch };
+    const center = { noseX: calibratedNoseX, noseY: calibratedNoseY, yaw: calibratedYaw, pitch: calibratedPitch };
+    const noise = { nose: noseNoise, angle: angleNoise };
+    return {
+        x: horizontalTravel(sample, center, noseGain, distanceRatio, noise, yawGain),
+        y: verticalTravel(sample, center, noseGain, distanceRatio, noise, yawGain) * verticalGainRatio
+    };
+}
+
+// position を expected の方向へ、このフレームの移動量 |delta| × RECENTER_RATE を上限に寄せる
+function recenterToward(position, expected, delta) {
+    const limit = Math.abs(delta) * RECENTER_RATE;
+    return position + clamp(expected - position, -limit, limit);
 }
 
 function getAngleOffsetAcceleration(currentAngle, calibratedAngle) {
@@ -650,7 +679,8 @@ function updateTelemetryPanel(hasFace) {
         `傾き寄与px: ${f2(debugPixY)}`,
         `横移動px: ${f2(debugDeltaX)}`,
         `口(実/閾): ${f3(jawOpenFilteredScore)}/${f3(debugJawOpenThreshold)}`,
-        `距離比: ${isDistanceCompEnabled ? f2(debugDistanceRatio) : "補正OFF"}`
+        `距離比: ${isDistanceCompEnabled ? f2(debugDistanceRatio) : "補正OFF"}`,
+        `中央補正ずれpx: ${isRecenterEnabled ? f2(debugRecenterDrift) : "OFF"}`
     ];
 
     if (isVerticalMoveEnabled) {
@@ -882,10 +912,26 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex,
     debugDeltaX = deltaX;
     targetX = clamp(targetX + deltaX, bounds.minX, bounds.maxX);
 
+    const expected = isRecenterEnabled ? getExpectedPointerOffset(distanceRatio) : null;
+    if (expected) {
+        const halfWidth = (bounds.maxX - bounds.minX) / 2;
+        const expectedX = ((bounds.minX + bounds.maxX) / 2) + expected.x;
+        debugRecenterDrift = targetX - expectedX;
+        if (halfWidth > 0 && Math.abs(expected.x) <= halfWidth * RECENTER_ZONE_RATIO) {
+            targetX = clamp(recenterToward(targetX, expectedX, deltaX), bounds.minX, bounds.maxX);
+        }
+    }
+
     if (verticalBounds) {
         const deltaY = clamp(axisLockDominant === "x" ? 0 : rawDeltaY, -maxDelta, maxDelta);
         debugDeltaYPx = deltaY;
         targetY = clamp(targetY + deltaY, verticalBounds.minY, verticalBounds.maxY);
+        // 症状モードの縦は行の切替でポインタを行中央へ乗せ直すため、中央補正はシンプルモードだけ
+        const halfHeight = (verticalBounds.maxY - verticalBounds.minY) / 2;
+        if (expected && isSimpleMode() && halfHeight > 0 && Math.abs(expected.y) <= halfHeight * RECENTER_ZONE_RATIO) {
+            const expectedY = ((verticalBounds.minY + verticalBounds.maxY) / 2) + expected.y;
+            targetY = clamp(recenterToward(targetY, expectedY, deltaY), verticalBounds.minY, verticalBounds.maxY);
+        }
     } else {
         debugDeltaYPx = 0;
         targetY = bounds.centerY;
@@ -4513,18 +4559,25 @@ function backlashAcceleratedAngle(from, to, deadzone) {
 }
 
 // 正面(center)→sample の顔の動きが、ランタイムで何px の移動になるか（ランタイムの差分合成と同じ式）
-function horizontalTravel(sample, center, gain, ratio, noise) {
-    const nose = shrinkByDeadzone(sample.noseX - center.noseX, getNoseDeadzone(gain, noise.nose)) * getNoseScale(gain);
-    const yaw = backlashAcceleratedAngle(center.yaw, sample.yaw, getYawDeadzone(gain, noise.angle))
-        * YAW_MIRROR_SIGN * getYawScale(gain);
+// ゲイン 0 の経路はランタイム同様に無効
+function horizontalTravel(sample, center, gain, ratio, noise, yawG = gain) {
+    const nose = gain > 0
+        ? shrinkByDeadzone(sample.noseX - center.noseX, getNoseDeadzone(gain, noise.nose)) * getNoseScale(gain)
+        : 0;
+    const yaw = yawG > 0
+        ? backlashAcceleratedAngle(center.yaw, sample.yaw, getYawDeadzone(yawG, noise.angle)) * YAW_MIRROR_SIGN * getYawScale(yawG)
+        : 0;
     return (nose + yaw) * ratio;
 }
 
-function verticalTravel(sample, center, gain, ratio, noise) {
-    const nose = shrinkByDeadzone(sample.noseY - center.noseY, getNoseDeadzone(gain, noise.nose))
-        * getNoseScale(gain) * VERTICAL_NOSE_SCALE_RATIO;
-    const pitch = backlashAcceleratedAngle(center.pitch, sample.pitch, getYawDeadzone(gain, noise.angle))
-        * PITCH_MIRROR_SIGN * getYawScale(gain) * VERTICAL_PITCH_SCALE_RATIO;
+function verticalTravel(sample, center, gain, ratio, noise, yawG = gain) {
+    const nose = gain > 0
+        ? shrinkByDeadzone(sample.noseY - center.noseY, getNoseDeadzone(gain, noise.nose)) * getNoseScale(gain) * VERTICAL_NOSE_SCALE_RATIO
+        : 0;
+    const pitch = yawG > 0
+        ? backlashAcceleratedAngle(center.pitch, sample.pitch, getYawDeadzone(yawG, noise.angle))
+            * PITCH_MIRROR_SIGN * getYawScale(yawG) * VERTICAL_PITCH_SCALE_RATIO
+        : 0;
     return (nose + pitch) * ratio;
 }
 
@@ -5276,6 +5329,25 @@ if (distanceCompToggleBtn) {
 }
 
 applyDistanceCompToggleState();
+
+const recenterToggleBtn = document.getElementById("recenter-btn");
+
+function applyRecenterToggleState() {
+    if (!recenterToggleBtn) return;
+
+    recenterToggleBtn.classList.toggle("is-off", !isRecenterEnabled);
+    recenterToggleBtn.setAttribute("aria-pressed", isRecenterEnabled ? "true" : "false");
+}
+
+if (recenterToggleBtn) {
+    recenterToggleBtn.addEventListener("click", () => {
+        isRecenterEnabled = !isRecenterEnabled;
+        localStorage.setItem(RECENTER_KEY, isRecenterEnabled ? "1" : "0");
+        applyRecenterToggleState();
+    });
+}
+
+applyRecenterToggleState();
 
 function applyParamPanelVisibility() {
     if (!controlsRoot) return;
