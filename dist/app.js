@@ -72,6 +72,10 @@ const NOISE_DEADZONE_FACTOR = 1.5;
 // 中央補正: 顔が正面付近にあるとき、顔を動かしている間だけ「正面ならここ」という位置へ少しずつ寄せる。
 // 止まっている間は動かさないので滞留選択の邪魔をせず、端では効かないので端で入力に逆らわない
 const RECENTER_KEY = "recenter_enabled";
+// 揺れからデッドゾーンを決める新しいキャリブレーションで保存したかどうか。
+// 旧キャリブレーションの感度は広いデッドゾーン前提で決めたので、やり直すまでは従来の幅を使う
+const CALIB_VERSION_KEY = "calibration_version";
+const CALIB_VERSION_NOISE_DEADZONE = "2";
 // 正面付近とみなす範囲（移動範囲の半幅に対する割合）
 const RECENTER_ZONE_RATIO = 0.35;
 // 1フレームの補正量の上限（そのフレームの移動量に対する割合）。顔の動きより十分ゆっくり戻す
@@ -250,6 +254,7 @@ let verticalGainRatio = readStoredNumber(VERTICAL_GAIN_RATIO_KEY, 1, 0.3, 4);
 let isVerticalMoveEnabled = localStorage.getItem(VERTICAL_MOVE_KEY) !== "0";
 let isDistanceCompEnabled = localStorage.getItem(DISTANCE_COMP_KEY) !== "0";
 let isRecenterEnabled = localStorage.getItem(RECENTER_KEY) !== "0";
+let isNoiseDeadzone = localStorage.getItem(CALIB_VERSION_KEY) === CALIB_VERSION_NOISE_DEADZONE;
 let debugRecenterDrift = 0;
 // キャリブレーションで決めた基準距離（0 = 未計測。その間は正面を取り直した時点の距離を基準にする）
 let distanceRef = readStoredNumber(DISTANCE_REF_KEY, 0, 0, 1000);
@@ -625,23 +630,25 @@ function getYawScale(gain = yawGain) {
 // デッドゾーン（バックラッシュ幅）。往復するたびにこの幅の2倍だけ取りこぼし、顔の向きとポインタがずれていく。
 // キャリブレーションで静止時の揺れを計測済みなら、揺れに見合った幅だけにして取りこぼしを減らす。
 // 未計測（揺れ=0）の間は、ゲインが低いほど広い従来の幅で揺れを抑える
-function getNoseDeadzone(gain = noseGain, noise = noseNoise) {
-    if (noise > 0) return Math.max(NOSE_DEADZONE_MIN, noise * NOISE_DEADZONE_FACTOR);
+function getNoseDeadzone(gain = noseGain, noise = noseNoise, noiseOnly = isNoiseDeadzone) {
+    if (noiseOnly && noise > 0) return Math.max(NOSE_DEADZONE_MIN, noise * NOISE_DEADZONE_FACTOR);
     const curved = gainCurve(gain, NOSE_GAIN_MAX, NOSE_GAIN_EXPONENT);
-    return NOSE_DEADZONE_MAX - ((NOSE_DEADZONE_MAX - NOSE_DEADZONE_MIN) * curved);
+    const byGain = NOSE_DEADZONE_MAX - ((NOSE_DEADZONE_MAX - NOSE_DEADZONE_MIN) * curved);
+    return Math.max(byGain, noise * NOISE_DEADZONE_FACTOR);
 }
 
-function getYawDeadzone(gain = yawGain, noise = angleNoise) {
-    if (noise > 0) return Math.max(YAW_DEADZONE_MIN, noise * NOISE_DEADZONE_FACTOR);
+function getYawDeadzone(gain = yawGain, noise = angleNoise, noiseOnly = isNoiseDeadzone) {
+    if (noiseOnly && noise > 0) return Math.max(YAW_DEADZONE_MIN, noise * NOISE_DEADZONE_FACTOR);
     const curved = gainCurve(gain, YAW_GAIN_MAX, YAW_GAIN_EXPONENT);
-    return YAW_DEADZONE_MAX - ((YAW_DEADZONE_MAX - YAW_DEADZONE_MIN) * curved);
+    const byGain = YAW_DEADZONE_MAX - ((YAW_DEADZONE_MAX - YAW_DEADZONE_MIN) * curved);
+    return Math.max(byGain, noise * NOISE_DEADZONE_FACTOR);
 }
 
 // 正面(校正位置)から今の顔の位置・向きまでを、ランタイムと同じ式で積算したときのポインタの変位(px)
 function getExpectedPointerOffset(distanceRatio) {
     const sample = { noseX: filteredNoseControlX, noseY: filteredNoseControlY, yaw: filteredYaw, pitch: filteredPitch };
     const center = { noseX: calibratedNoseX, noseY: calibratedNoseY, yaw: calibratedYaw, pitch: calibratedPitch };
-    const noise = { nose: noseNoise, angle: angleNoise };
+    const noise = { nose: noseNoise, angle: angleNoise, noiseOnly: isNoiseDeadzone };
     return {
         x: horizontalTravel(sample, center, noseGain, distanceRatio, noise, yawGain),
         y: verticalTravel(sample, center, noseGain, distanceRatio, noise, yawGain) * verticalGainRatio
@@ -4431,6 +4438,8 @@ const CALIB_SETTLE_MS = 600;
 const CALIB_MIN_MOVE_ANGLE = 0.05;
 const CALIB_MIN_MOVE_NOSE = 0.015;
 const CALIB_MOVE_GIVEUP_MS = 5000;
+// 止まりきれなくても、この時間が経ったら直近の平均で記録して先へ進む（結果に警告を出す）
+const CALIB_CAPTURE_GIVEUP_MS = 15000;
 const CALIB_MATCH_SHOW_MS = 700;
 // 記録する値は静止中の直近この時間の平均
 const CALIB_SAMPLE_AVERAGE_MS = 600;
@@ -4562,20 +4571,20 @@ function backlashAcceleratedAngle(from, to, deadzone) {
 // ゲイン 0 の経路はランタイム同様に無効
 function horizontalTravel(sample, center, gain, ratio, noise, yawG = gain) {
     const nose = gain > 0
-        ? shrinkByDeadzone(sample.noseX - center.noseX, getNoseDeadzone(gain, noise.nose)) * getNoseScale(gain)
+        ? shrinkByDeadzone(sample.noseX - center.noseX, getNoseDeadzone(gain, noise.nose, noise.noiseOnly)) * getNoseScale(gain)
         : 0;
     const yaw = yawG > 0
-        ? backlashAcceleratedAngle(center.yaw, sample.yaw, getYawDeadzone(yawG, noise.angle)) * YAW_MIRROR_SIGN * getYawScale(yawG)
+        ? backlashAcceleratedAngle(center.yaw, sample.yaw, getYawDeadzone(yawG, noise.angle, noise.noiseOnly)) * YAW_MIRROR_SIGN * getYawScale(yawG)
         : 0;
     return (nose + yaw) * ratio;
 }
 
 function verticalTravel(sample, center, gain, ratio, noise, yawG = gain) {
     const nose = gain > 0
-        ? shrinkByDeadzone(sample.noseY - center.noseY, getNoseDeadzone(gain, noise.nose)) * getNoseScale(gain) * VERTICAL_NOSE_SCALE_RATIO
+        ? shrinkByDeadzone(sample.noseY - center.noseY, getNoseDeadzone(gain, noise.nose, noise.noiseOnly)) * getNoseScale(gain) * VERTICAL_NOSE_SCALE_RATIO
         : 0;
     const pitch = yawG > 0
-        ? backlashAcceleratedAngle(center.pitch, sample.pitch, getYawDeadzone(yawG, noise.angle))
+        ? backlashAcceleratedAngle(center.pitch, sample.pitch, getYawDeadzone(yawG, noise.angle, noise.noiseOnly))
             * PITCH_MIRROR_SIGN * getYawScale(yawG) * VERTICAL_PITCH_SCALE_RATIO
         : 0;
     return (nose + pitch) * ratio;
@@ -4588,7 +4597,8 @@ function calibrationRatio(sample, model) {
 function measureNoise(samples) {
     return {
         nose: clamp(Math.max(stdOf(samples.map(s => s.noseX)), stdOf(samples.map(s => s.noseY))), 0, 0.01),
-        angle: clamp(Math.max(stdOf(samples.map(s => s.yaw)), stdOf(samples.map(s => s.pitch))), 0, 0.03)
+        angle: clamp(Math.max(stdOf(samples.map(s => s.yaw)), stdOf(samples.map(s => s.pitch))), 0, 0.03),
+        noiseOnly: true
     };
 }
 
@@ -4651,6 +4661,9 @@ function predictCalibrationOffset(sample, center, model) {
 
 function computeCalibrationResult(captures, neutralSamples, mouthSamples) {
     const warnings = [];
+    if (captures.some(e => e.forced)) {
+        warnings.push("静止できないまま時間切れで記録した○があります。結果が合わない場合はやり直してください");
+    }
     const nearEntries = captures.filter(e => e.pass === "near" && e.key !== "center");
     const farEntries = captures.filter(e => e.pass === "far" && e.key !== "center");
     const allEntries = [...nearEntries, ...farEntries];
@@ -4770,7 +4783,12 @@ const calibrationWizard = (() => {
     let result = null;
 
     const currentStep = () => steps[stepIndex];
-    const targetPx = target => ({ x: target.x * window.innerWidth, y: target.y * window.innerHeight });
+    const topbarEl = document.getElementById("calib-topbar");
+    // 低い画面でも上の○が指示バーに重ならないよう、バーの下端より下に置く
+    const targetPx = target => ({
+        x: target.x * window.innerWidth,
+        y: Math.max(target.y * window.innerHeight, topbarEl.getBoundingClientRect().bottom + CALIB_TARGET_RADIUS_PX + 12)
+    });
     const passOf = key => CALIB_PASSES.find(pass => pass.key === key);
     const passCenter = key => captures.find(e => e.pass === key && e.key === "center")?.sample ?? null;
 
@@ -4838,7 +4856,7 @@ const calibrationWizard = (() => {
         };
     }
 
-    function capture(nowMs) {
+    function capture(nowMs, forced = false) {
         const step = currentStep();
         const sample = recentAverage(nowMs, step.target.key === "center" ? CALIB_CENTER_HOLD_MS : CALIB_SAMPLE_AVERAGE_MS);
         if (step.target.key === "center") {
@@ -4847,7 +4865,7 @@ const calibrationWizard = (() => {
                 model.noise = measureNoise(neutralSamples);
                 if (Number.isFinite(sample.distance)) model.ref = sample.distance;
             }
-            captures.push({ pass: step.pass, key: "center", sample, center: sample, dx: 0, dy: 0 });
+            captures.push({ pass: step.pass, key: "center", sample, center: sample, dx: 0, dy: 0, forced });
         } else {
             const center = passCenter(step.pass);
             const origin = targetPx(CALIB_TARGETS[0]);
@@ -4858,7 +4876,8 @@ const calibrationWizard = (() => {
                 sample,
                 center,
                 dx: target.x - origin.x,
-                dy: target.y - origin.y
+                dy: target.y - origin.y,
+                forced
             });
             refitModel();
         }
@@ -4942,7 +4961,7 @@ const calibrationWizard = (() => {
         model = {
             ref: 0,
             exponent: distanceExponent,
-            noise: { nose: noseNoise, angle: angleNoise },
+            noise: { nose: noseNoise, angle: angleNoise, noiseOnly: true },
             gain: noseGain > 0 ? noseGain : NOSE_GAIN_DEFAULT,
             verticalRatio: verticalGainRatio
         };
@@ -5009,6 +5028,8 @@ const calibrationWizard = (() => {
         localStorage.setItem(JAW_OPEN_THRESHOLD_KEY, String(jawOpenThreshold));
         localStorage.setItem(DISTANCE_EXPONENT_KEY, String(distanceExponent));
         if (distanceRef > 0) localStorage.setItem(DISTANCE_REF_KEY, String(distanceRef));
+        isNoiseDeadzone = true;
+        localStorage.setItem(CALIB_VERSION_KEY, CALIB_VERSION_NOISE_DEADZONE);
         syncTuningSliders();
         close();
         // 正面位置も今の姿勢で取り直す
@@ -5045,6 +5066,7 @@ const calibrationWizard = (() => {
         const required = isCenter ? CALIB_CENTER_HOLD_MS : (inCircle ? CALIB_TARGET_HOLD_IN_CIRCLE_MS : CALIB_TARGET_HOLD_MS);
         cursorEl.classList.toggle("in-circle", inCircle);
         if (holdMs >= required) capture(timeMs);
+        else if (stepElapsedMs >= CALIB_CAPTURE_GIVEUP_MS) capture(timeMs, true);
         render(sample);
     }
 
@@ -5059,7 +5081,7 @@ const calibrationWizard = (() => {
         buffer = buffer.filter(entry => stepElapsedMs - entry.t <= CALIB_SAMPLE_BUFFER_MS);
         const farEnough = sample.distance / near.distance >= CALIB_FAR_MIN_RATIO;
         holdMs = farEnough && isStill(stepElapsedMs, CALIB_STILL_RELAX_FACTOR) ? holdMs + dt : 0;
-        if (holdMs >= CALIB_FAR_HOLD_MS) {
+        if (holdMs >= CALIB_FAR_HOLD_MS || (farEnough && stepElapsedMs >= CALIB_CAPTURE_GIVEUP_MS)) {
             nextStep();
             return;
         }
@@ -5145,6 +5167,10 @@ if (recaptureFrontBtn) {
     recaptureFrontBtn.addEventListener("click", () => {
         isCalibrating = true;
         resetPointerMotionHistory();
+        // 取り直した正面 = 移動範囲の中央なので、ポインタも中央へ置き直す（縦は校正処理が行の位置へ合わせる）
+        const bounds = getSymptomRowPointerBounds();
+        if (bounds) targetX = pointerX = (bounds.minX + bounds.maxX) / 2;
+        if (bounds && isSimpleMode()) targetY = pointerY = (bounds.minY + bounds.maxY) / 2;
     });
 }
 

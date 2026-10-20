@@ -1051,6 +1051,11 @@ body.calib-active #dwell-indicator {
     text-align: center;
 }
 
+/* .ctrl-btn の display 指定が hidden 属性より優先されるため明示する */
+#calib-topbar-actions [hidden] {
+    display: none;
+}
+
 #calib-topbar-actions {
     display: flex;
     flex-direction: column;
