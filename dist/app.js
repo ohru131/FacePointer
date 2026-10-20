@@ -1524,26 +1524,32 @@ function getComposeWords(cat) {
 }
 
 // ためた語句を、助詞を補った文にする
+// 述語ごとに1文: 名詞は「と」でつなぎ述語の助詞を付け、程度・時の言葉は述語の直前へ寄せる
+//   頭 とても 首 痛い → 「頭と首がとても痛いです。」 / 述語がなければ「頭と首。」「とても。」
 function buildComposedSentence(parts) {
-    let out = "";
-    parts.forEach((part, i) => {
-        if (part.type === "noun") {
-            const next = parts[i + 1];
-            if (next?.type === "noun") {
-                out += `${part.name}と`;
-                return;
-            }
-            const pred = parts.slice(i + 1).find(p => p.type === "pred");
-            out += pred ? `${part.name}${pred.particle || "が"}` : `${part.name}。`;
-        } else if (part.type === "pred") {
-            out += part.text || `${part.name}。`;
-        } else if (part.type === "adv") {
-            out += part.name;
-        } else {
-            out += part.sentence || `${part.name}。`;
+    const sentences = [];
+    let nouns = [];
+    let advs = [];
+    const flush = (pred) => {
+        let text = "";
+        if (nouns.length > 0) text += nouns.join("と") + (pred ? (pred.particle || "が") : (advs.length > 0 ? "、" : ""));
+        text += advs.join("");
+        if (pred) text += pred.text || `${pred.name}。`;
+        if (text) sentences.push(/[。？！?!]$/.test(text) ? text : `${text}。`);
+        nouns = [];
+        advs = [];
+    };
+    parts.forEach((part) => {
+        if (part.type === "noun") nouns.push(part.name);
+        else if (part.type === "adv") advs.push(part.name);
+        else if (part.type === "pred") flush(part);
+        else {
+            flush(null);
+            sentences.push(part.sentence || `${part.name}。`);
         }
     });
-    return out;
+    flush(null);
+    return sentences.join("");
 }
 
 function shouldMouthSpeakComposed() {
@@ -1561,6 +1567,9 @@ function handleComposeWord(word) {
     if (composeConfig.autoAdvance && category?.next) {
         composeTab = category.next;
         simplePage = 0;
+        // 切り替わったタブで同じ位置の言葉を続けて選ばないよう、一度動くまで滞留しない
+        resetDwellProgress();
+        dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
     }
     rerenderSimpleMode();
 }
@@ -1749,7 +1758,9 @@ function renderSimpleMode() {
     if (panels.length === 0) {
         const notice = document.createElement("div");
         notice.className = "simple-empty-notice";
-        notice.textContent = "表示するパネルがありません（設定 → シンプルモードで選択）";
+        notice.textContent = isComposeScreen()
+            ? "表示する言葉がありません（設定 → 文づくりで選択）"
+            : "表示するパネルがありません（設定 → シンプルモードで選択）";
         simpleGridContainer.appendChild(notice);
     }
 
@@ -2276,14 +2287,11 @@ function openSimplePanelEditor() {
     renderSimplePanelEditor();
 }
 
-// id を insertIndex の位置へ（未配置なら追加して）並べる
+// id を index の位置（そこにあったタイルの場所）へ移す。未配置なら追加する
 function moveLayoutPanel(id, insertIndex) {
     if (!id || !getDraftCatalogMap().has(id)) return;
     const from = simpleLayoutDraft.indexOf(id);
-    if (from !== -1) {
-        simpleLayoutDraft.splice(from, 1);
-        if (from < insertIndex) insertIndex -= 1;
-    }
+    if (from !== -1) simpleLayoutDraft.splice(from, 1);
     simpleLayoutDraft.splice(clamp(insertIndex, 0, simpleLayoutDraft.length), 0, id);
     simpleSelectedTileId = id;
     renderSimplePanelEditor();
@@ -2339,6 +2347,8 @@ function bindLayoutDrop(el, onDrop) {
         e.stopPropagation();
         el.classList.remove("drop-target");
         const id = e.dataTransfer.getData(LAYOUT_DRAG_TYPE) || layoutDragId;
+        // 再描画でドラッグ元が消えると dragend が来ないことがあるので、ここで片付ける
+        layoutDragId = null;
         if (id) onDrop(id);
     });
 }
@@ -2502,7 +2512,7 @@ function renderLayoutDetail(byId) {
         actions.appendChild(btn);
     };
     addAction("◀", "1つ前へ", index === 0, () => moveLayoutPanel(id, index - 1));
-    addAction("▶", "1つ後ろへ", index === simpleLayoutDraft.length - 1, () => moveLayoutPanel(id, index + 2));
+    addAction("▶", "1つ後ろへ", index === simpleLayoutDraft.length - 1, () => moveLayoutPanel(id, index + 1));
     addAction("外す", "画面から外す", false, () => removeLayoutPanel(id));
     if (item.custom) {
         addAction("削除", "この任意パネルを削除", false, () => {
@@ -2554,6 +2564,21 @@ function renderSimplePalette(byId) {
         name.textContent = item.name;
         el.appendChild(name);
         el.addEventListener("click", () => moveLayoutPanel(item.id, simpleLayoutDraft.length));
+        if (item.custom) {
+            const del = document.createElement("button");
+            del.type = "button";
+            del.className = "layout-tile-remove";
+            del.title = "この任意パネルを削除";
+            del.textContent = "🗑";
+            del.addEventListener("click", (e) => {
+                e.stopPropagation();
+                if (!confirm(`「${item.name}」を削除しますか？`)) return;
+                simpleCustomDraft = simpleCustomDraft.filter(p => p.id !== item.id);
+                delete simpleDwellDraft[item.id];
+                renderSimplePanelEditor();
+            });
+            el.appendChild(del);
+        }
         bindLayoutDrag(el, item.id);
         simplePanelList.appendChild(el);
     });
@@ -4530,10 +4555,10 @@ if (apiKeyRevealBtn) {
 }
 
 saveSettingsBtn.addEventListener("click", () => {
-    // 画像を含み容量超過しやすいパネル設定を後にして、部分保存になりにくくする
+    // 画像を含み容量超過しやすいパネル設定を先に保存し、失敗したら他も保存しない
+    if (!saveSimplePanelEditor()) return;
     if (!saveQuestionEditor()) return;
     if (!saveComposeEditor()) return;
-    if (!saveSimplePanelEditor()) return;
 
     const newKey = apiKeyInput.value.trim();
     GEMINI_API_KEY = newKey;
