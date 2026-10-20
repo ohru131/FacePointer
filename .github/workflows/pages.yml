@@ -1,0 +1,57 @@
+name: 'Deploy to GitHub Pages'
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 連続でpushしたときは最新のデプロイだけ残す
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # download_models.ps1 と同じファイル（リポジトリには含めていない）
+      - name: Download MediaPipe models
+        run: |
+          set -euo pipefail
+          base=dist/mediapipe
+          cdn=https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3
+          mkdir -p "$base/wasm" "$base/model"
+          curl -fsSL --retry 3 -o "$base/model/face_landmarker.task" \
+            https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+          curl -fsSL --retry 3 -o "$base/vision_bundle.mjs" "$cdn/vision_bundle.mjs"
+          for f in vision_wasm_internal.wasm vision_wasm_internal.js vision_wasm_nosimd_internal.wasm vision_wasm_nosimd_internal.js; do
+            curl -fsSL --retry 3 -o "$base/wasm/$f" "$cdn/wasm/$f"
+          done
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

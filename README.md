@@ -23,6 +23,12 @@ FacePointerは、顔の動きだけで操作できるコミュニケーション
 ### 一般ユーザー (実行・インストール)
 1. [Releases](https://github.com/ohru131/FacePointer/releases) から最新の `FacePointer_x.x.x_x64_en-US.msi` をダウンロードしてインストールします。
 2. または、`FacePointer.exe` を直接実行してください。
+3. インストールせずに試す場合は、ブラウザ版 https://ohru131.github.io/FacePointer/ を開きます（カメラの許可が必要）。
+
+### ブラウザ版（GitHub Pages）
+- `main` へのpushで `.github/workflows/pages.yml` が `dist/` とMediaPipeモデルをGitHub Pagesへ自動デプロイします（Windowsビルドとは別ジョブで並行実行）。
+- 初回のみ、リポジトリの Settings → Pages → Build and deployment の Source を「GitHub Actions」にしてください。
+- 設定・学習内容・APIキーはブラウザごとに保存されます（デスクトップ版とは共有しません）。
 
 ### 開発者 (ビルド方法)
 
