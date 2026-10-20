@@ -1502,10 +1502,11 @@ function loadComposeConfig() {
         const parsed = JSON.parse(localStorage.getItem(COMPOSE_CONFIG_KEY) || "null");
         return {
             hiddenIds: Array.isArray(parsed?.hiddenIds) ? parsed.hiddenIds.filter(id => typeof id === "string") : [],
-            autoAdvance: parsed?.autoAdvance !== false
+            autoAdvance: parsed?.autoAdvance !== false,
+            mouthSpeaks: parsed?.mouthSpeaks !== false
         };
     } catch {
-        return { hiddenIds: [], autoAdvance: true };
+        return { hiddenIds: [], autoAdvance: true, mouthSpeaks: true };
     }
 }
 
@@ -1543,6 +1544,10 @@ function buildComposedSentence(parts) {
         }
     });
     return out;
+}
+
+function shouldMouthSpeakComposed() {
+    return isComposeScreen() && composeConfig.mouthSpeaks && messageParts.length > 0 && !isSimplePaused;
 }
 
 function handleComposeWord(word) {
@@ -1626,6 +1631,12 @@ function renderSimpleMessage() {
     const preview = document.createElement("div");
     preview.className = "simple-message-preview";
     preview.textContent = `🔊 ${buildComposedSentence(messageParts)}`;
+    if (composeConfig.mouthSpeaks) {
+        const hint = document.createElement("span");
+        hint.className = "simple-message-hint";
+        hint.textContent = "（口を開けると話す）";
+        preview.appendChild(hint);
+    }
     const body = document.createElement("div");
     body.className = "simple-message-body";
     body.append(chips, preview);
@@ -2637,6 +2648,7 @@ function openComposeEditor() {
     composeCustomDraft = composeCustom.map(w => ({ ...w }));
     composeEditorFilter = COMPOSE_CATEGORIES[0].key;
     if (composeAutoAdvanceInput) composeAutoAdvanceInput.checked = composeConfig.autoAdvance;
+    if (composeMouthSpeaksInput) composeMouthSpeaksInput.checked = composeConfig.mouthSpeaks;
     resetComposeCustomForm();
     renderComposeEditor();
 }
@@ -2742,7 +2754,8 @@ function addComposeCustomWord() {
 function saveComposeEditor() {
     const nextConfig = {
         hiddenIds: Array.from(composeHiddenDraft),
-        autoAdvance: composeAutoAdvanceInput ? composeAutoAdvanceInput.checked : composeConfig.autoAdvance
+        autoAdvance: composeAutoAdvanceInput ? composeAutoAdvanceInput.checked : composeConfig.autoAdvance,
+        mouthSpeaks: composeMouthSpeaksInput ? composeMouthSpeaksInput.checked : composeConfig.mouthSpeaks
     };
     try {
         localStorage.setItem(COMPOSE_CUSTOM_KEY, JSON.stringify(composeCustomDraft));
@@ -3790,6 +3803,15 @@ function triggerClick() {
         return false;
     }
 
+    // 文づくり: 文があれば、口を開けたらどこを見ていても組み立てた文を話す
+    if (shouldMouthSpeakComposed()) {
+        logClickDebug("click_compose_speak", { parts: messageParts.length });
+        markClickFeedback();
+        lastConfirmedAt = now;
+        handleSimpleControl(SIMPLE_CTRL_SPEAK);
+        return true;
+    }
+
     const activeBtn = document.querySelector(".h-btn.hover");
     if (activeBtn && !activeBtn.classList.contains("h-btn--empty")) {
         const targetKey = `${activeBtn.dataset.row}|${activeBtn.dataset.name}`;
@@ -4251,6 +4273,7 @@ const layoutDetailContainer = document.getElementById("layout-detail");
 const composeWordList = document.getElementById("compose-word-list");
 const composeWordFilter = document.getElementById("compose-word-filter");
 const composeAutoAdvanceInput = document.getElementById("compose-auto-advance-input");
+const composeMouthSpeaksInput = document.getElementById("compose-mouth-speaks-input");
 const composeCustomTypeSelect = document.getElementById("compose-custom-type-select");
 const composeCustomNameInput = document.getElementById("compose-custom-name-input");
 const composeCustomEmojiInput = document.getElementById("compose-custom-emoji-input");
