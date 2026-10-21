@@ -437,7 +437,6 @@ export async function generateIcons({ env, sheets, getAll, onLog = console.log }
     if (!env.apiKey) throw new Error(".env に GEMINI_API_KEY を設定してください（.env.example 参照）");
     fs.mkdirSync(SHEET_DIR, { recursive: true });
     const reference = await loadStyleReference();
-    const log = readSheetLog();
     const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
     const failed = [];
 
@@ -461,6 +460,8 @@ export async function generateIcons({ env, sheets, getAll, onLog = console.log }
             continue;
         }
         await sharp(image).png().toFile(path.join(SHEET_DIR, file));
+        // 作っている間に削除などで書き換わることがあるので、追記する直前に読み直す
+        const log = readSheetLog();
         log.push({ file, model: env.model, slots: slots.map(({ key, pad, desc }) => ({ key, pad, hash: descHash(desc) })) });
         fs.writeFileSync(SHEET_LOG, JSON.stringify(log, null, 2));
         let written;

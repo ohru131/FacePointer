@@ -282,8 +282,10 @@ async function publishDraft(draft) {
     }
     writePublishedIndex();
     const icons = writeManifest(await collectTargets(), readSources());
-    draft.publishedAt = Date.now();
-    writeDraft(draft);
+    // 書き出している間に入った変更（作り直しの印など）を消さないよう、読み直してから記録する
+    const latest = readDraft(draft.id);
+    latest.publishedAt = Date.now();
+    writeDraft(latest);
     return { icons };
 }
 

@@ -15,6 +15,7 @@ let tab = "edit";
 let iconFilter = "all";
 let saveTimer = null;
 let isDirty = false;      // 保存していない編集がある
+let savePromise = null;   // 送っている途中の保存
 let jobTimer = null;
 
 // ---------------------------------------------------------
@@ -45,8 +46,15 @@ async function loadState() {
 }
 
 async function openDraft(id) {
-    // 切り替える前に、保存待ちの編集を保存する
+    // 切り替える前に、保存待ちの編集を保存する。保存できなかったら黙って捨てない
     await saveNow();
+    if (isDirty) {
+        if (!confirm("保存できていない編集があります。切り替えると、その編集は消えます。切り替えますか？")) {
+            renderDraftSelect();
+            return;
+        }
+        isDirty = false;
+    }
     if (!id) {
         draft = null;
         renderAll();
@@ -67,9 +75,20 @@ function scheduleSave() {
     saveTimer = setTimeout(saveNow, 600);
 }
 
+// 送っている途中の保存があれば終わるのを待ってから、残りの編集を保存する（登録や生成の前に必ず反映させるため）
 async function saveNow() {
     clearTimeout(saveTimer);
+    if (savePromise) await savePromise;
     if (!draft || !isDirty) return;
+    savePromise = sendSave();
+    try {
+        await savePromise;
+    } finally {
+        savePromise = null;
+    }
+}
+
+async function sendSave() {
     isDirty = false;
     const savedId = draft.id;
     try {
