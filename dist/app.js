@@ -4,6 +4,14 @@ import { GENERATED_ICONS } from "./icon-images.js";
 import { TALK_AI_MODEL_DEFAULT, generateInterviewQuestions, generateTalkSet, countTalkTreeNodes } from "./talk-generator.js";
 const { FaceLandmarker, FilesetResolver, DrawingUtils } = vision;
 
+// talk studio で登録したパターン。ファイルが欠けたり壊れたりしていても、標準のパターンだけで起動できるようにする
+let PUBLISHED_TALK_SETS = [];
+try {
+    ({ PUBLISHED_TALK_SETS } = await import("./talk-sets/index.js"));
+} catch (error) {
+    console.error("talk sets load failed:", error);
+}
+
 const video = document.getElementById("webcam");
 const canvasElement = document.getElementById("canvas-overlay");
 const canvasCtx = canvasElement.getContext("2d");
@@ -1626,8 +1634,11 @@ let talkSets = loadTalkSets();
 let talkActiveSetId = localStorage.getItem(TALK_ACTIVE_SET_KEY) || DEFAULT_TALK_SET.id;
 let talkProfile = loadTalkProfile();
 
+// talk studio で作って登録したパターンは、標準と同じく組み込み（名前変更・削除なし、どの端末でも使える）
+const PUBLISHED_SETS = PUBLISHED_TALK_SETS.map(set => ({ ...set, builtin: true }));
+
 function getTalkSets() {
-    return [DEFAULT_TALK_SET, ...talkSets];
+    return [DEFAULT_TALK_SET, ...PUBLISHED_SETS, ...talkSets];
 }
 
 function getActiveTalkSet() {
@@ -1801,9 +1812,9 @@ function getTalkPanels() {
     if (talkTab === TALK_TAB_AIZUCHI) return TALK_AIZUCHI.map(item => ({ ...item, type: "aizuchi" }));
     if (talkTab === TALK_TAB_FAVORITE) return getFavoriteTalkSentences();
     if (talkTab === TALK_TAB_PARTNER) {
-        // 生成アイコンは標準セットの相手の絵。AI で作ったセットは同じ id でも別の人（妹など）がありうるので id を分ける
+        // 相手のアイコンはパターンごと（同じ id でも別の人、たとえば妹のことがある）。標準だけ接頭辞なし
         // 「決めない」はどのセットでも同じ意味なので共通の id のまま
-        const idPrefix = getActiveTalkSet().builtin ? "talk-partner" : `talk-partner-${talkActiveSetId}`;
+        const idPrefix = getActiveTalkSet().id === DEFAULT_TALK_SET.id ? "talk-partner" : `talk-partner-${getActiveTalkSet().id}`;
         return getTalkPartners().map(p => ({
             id: p.id ? `${idPrefix}-${p.id}` : "talk-partner-none",
             type: "partner",
@@ -3286,7 +3297,21 @@ function renderTalkSetList() {
                 renderTalkEditor();
                 updateTalkAiButtons();
             });
-            row.append(rename, del);
+            // talk studio（npm run talk:studio）に読み込んで、文の手直しや絵の作成をするためのファイル
+            const exportBtn = document.createElement("button");
+            exportBtn.type = "button";
+            exportBtn.className = "ctrl-btn secondary talk-set-btn";
+            exportBtn.textContent = "書き出し";
+            exportBtn.addEventListener("click", (e) => {
+                e.preventDefault();
+                const blob = new Blob([JSON.stringify(set, null, 2)], { type: "application/json" });
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = `talk-set-${set.id}.json`;
+                a.click();
+                setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+            });
+            row.append(rename, exportBtn, del);
         }
         talkSetList.appendChild(row);
     });

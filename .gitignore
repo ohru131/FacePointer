@@ -16,3 +16,5 @@ dist/mediapipe/*.mjs
 !.env.example
 # Gemini で作った分割前のシート（分割後のアイコンは dist/media/gen/ に置く）
 scripts/generated-sheets/
+# talk studio の作りかけ（インタビューの答えを含む。登録した分は dist/talk-sets/ に書き出す）
+scripts/talk-studio/drafts/

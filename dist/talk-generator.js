@@ -2,7 +2,8 @@
 // 1. プロフィール（性別・年齢）と前回の回答から、介助者へのインタビュー質問を作る
 // 2. 回答から会話の木（talk-data.js と同じ形）と相手の一覧を作り、アプリで使える形に整える
 
-export const TALK_AI_MODEL_DEFAULT = "gemini-2.5-flash";
+// 世代の古いモデルは新規の利用者に使えなくなるため、最新の Flash を指す別名を使う
+export const TALK_AI_MODEL_DEFAULT = "gemini-flash-latest";
 const REQUEST_TIMEOUT_MS = 240000;
 
 const TOPIC_MAX = 6;
@@ -79,7 +80,7 @@ async function callGemini(apiKey, model, prompt, { temperature = 0.8, signal } =
         const candidate = data.candidates?.[0];
         const text = (candidate?.content?.parts || []).map(p => p.text || "").join("");
         if (candidate?.finishReason === "MAX_TOKENS") {
-            throw new Error("Gemini の出力が長すぎて途中で切れました。出力上限の大きいモデル（gemini-2.5-flash など）を使ってください。");
+            throw new Error("Gemini の出力が長すぎて途中で切れました。出力上限の大きいモデル（gemini-flash-latest など）を使ってください。");
         }
         if (!text) {
             const reason = data.promptFeedback?.blockReason || candidate?.finishReason || "理由不明";

@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const require = createRequire(import.meta.url);
 const sharp = require("sharp");
@@ -27,6 +27,8 @@ const GEN_DIR = path.join(DIST_DIR, "media", "gen");
 const SHEET_DIR = path.join(ROOT, "scripts", "generated-sheets");
 const SHEET_LOG = path.join(SHEET_DIR, "sheets.json");
 const ICON_MANIFEST = path.join(DIST_DIR, "icon-images.js");
+// talk studio で登録した組み込みの会話パターン（1パターン1ファイル + index.js）
+export const PUBLISHED_DIR = path.join(DIST_DIR, "talk-sets");
 // 各アイコンを作ったときの内容（desc）のハッシュ。内容が変わった項目（答えの並び替えなど）は古い絵を使わず作り直す
 const ICON_SOURCES = path.join(ROOT, "scripts", "icon-sources.json");
 // 標準（simple）テイストの見本。メニューアイコンの元シート
@@ -41,7 +43,7 @@ const ICON_EXT = ".webp";
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const REQUEST_TIMEOUT_MS = 300000;
 
-function loadEnv() {
+export function loadEnv() {
     if (typeof process.loadEnvFile !== "function") throw new Error("Node.js 20.12 以降で実行してください");
     try {
         process.loadEnvFile(path.join(ROOT, ".env"));
@@ -76,7 +78,7 @@ function parseArgs(argv) {
 }
 
 // app.js はブラウザ用でそのまま読み込めないため、定数の配列リテラルだけ取り出して評価する
-function extractArrayLiteral(source, name) {
+export function extractArrayLiteral(source, name) {
     const head = `const ${name} = [`;
     const start = source.indexOf(head);
     if (start < 0) throw new Error(`${name} not found in app.js`);
@@ -107,13 +109,15 @@ function stripCall(say) {
     return (say || "").replace(/^\{呼\}、/, "").trim();
 }
 
-async function collectTargets() {
-    // dist は "type": "module" 指定がなく、ファイルのまま import すると警告が出るため中身を渡す
-    const talkSource = fs.readFileSync(path.join(DIST_DIR, "talk-data.js"), "utf8");
-    const { TALK_TREE } = await import(`data:text/javascript;base64,${Buffer.from(talkSource).toString("base64")}`);
-    const appSource = fs.readFileSync(path.join(DIST_DIR, "app.js"), "utf8");
-    const targets = [];
+// dist は "type": "module" 指定がなく、ファイルのまま import すると警告が出るため中身を渡す（相対 import のないファイル用）
+async function importSource(file) {
+    const source = fs.readFileSync(file, "utf8");
+    return import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}`);
+}
 
+// 会話の木の各ノード。説明には上の話題のたどりも入れて、同じラベルでも場面を描き分けさせる
+export function talkTreeTargets(tree) {
+    const targets = [];
     const walk = (nodes, trail) => {
         for (const node of nodes) {
             const context = trail.length > 0 ? `（話題: ${trail.join(" > ")}）` : "（話題の大分類）";
@@ -125,21 +129,46 @@ async function collectTargets() {
             if (node.children) walk(node.children, [...trail, node.label]);
         }
     };
-    walk(TALK_TREE, []);
+    walk(tree, []);
+    return targets;
+}
+
+// 相手のパネル。id は app.js の getTalkPanels と同じ形（標準は talk-partner-<id>、ほかのパターンは talk-partner-<setId>-<id>）
+export function partnerTargets(partners, prefix) {
+    return partners.map(p => ({
+        key: p.id ? `${prefix}-${p.id}` : "talk-partner-none",
+        desc: p.id
+            ? `会話の相手「${p.name}」の人物（主人公は描かない）。絵文字のイメージ: ${p.emoji}`
+            : `会話の相手を決めない（いろいろな人のシルエット）。絵文字のイメージ: ${p.emoji}`
+    }));
+}
+
+// 会話パターン1つ分（標準以外）のアイコン対象。主人公を指定したパターンは、説明にも入れて主人公を変えたら作り直させる
+export function talkSetTargets(set) {
+    const targets = [...talkTreeTargets(set.tree), ...partnerTargets(set.partners, `talk-partner-${set.id}`)];
+    const protagonist = (set.protagonist || "").trim();
+    if (!protagonist) return targets;
+    return targets.map(t => ({ ...t, desc: `${t.desc} （主人公: ${protagonist}）`, protagonist }));
+}
+
+export async function loadPublishedSets() {
+    if (!fs.existsSync(PUBLISHED_DIR)) return [];
+    const files = fs.readdirSync(PUBLISHED_DIR).filter(f => f.endsWith(".js") && f !== "index.js").sort();
+    const sets = [];
+    for (const f of files) sets.push((await importSource(path.join(PUBLISHED_DIR, f))).default);
+    return sets;
+}
+
+// 標準データとアプリの各パネル、登録済みの会話パターン（と、talk studio の作りかけ extraSets）
+export async function collectTargets({ extraSets = [] } = {}) {
+    const { TALK_TREE } = await importSource(path.join(DIST_DIR, "talk-data.js"));
+    const appSource = fs.readFileSync(path.join(DIST_DIR, "app.js"), "utf8");
+    const targets = talkTreeTargets(TALK_TREE);
     targets.push(
         { key: "custom", desc: "「自分の言葉」（話題の大分類。自分で登録した言葉の置き場所） 絵文字のイメージ: ✏️" },
         { key: "talk-say", desc: "「これで話す」（選んだ言葉を声に出して読み上げる） 主人公が話しかけ、口元から声が出ている。絵文字のイメージ: 🔊" }
     );
-
-    const partners = [...extractArrayLiteral(appSource, "DEFAULT_TALK_PARTNERS"), { id: "", name: "決めない", emoji: "👥" }];
-    for (const p of partners) {
-        targets.push({
-            key: `talk-partner-${p.id || "none"}`,
-            desc: p.id
-                ? `会話の相手「${p.name}」の人物（主人公は描かない）。絵文字のイメージ: ${p.emoji}`
-                : `会話の相手を決めない（いろいろな人のシルエット）。絵文字のイメージ: ${p.emoji}`
-        });
-    }
+    targets.push(...partnerTargets([...extractArrayLiteral(appSource, "DEFAULT_TALK_PARTNERS"), { id: "", name: "決めない", emoji: "👥" }], "talk-partner"));
 
     for (const a of extractArrayLiteral(appSource, "TALK_AIZUCHI")) {
         targets.push({ key: a.id, desc: `あいづち「${a.name}」を主人公が表情としぐさで表す。絵文字のイメージ: ${a.emoji}` });
@@ -161,6 +190,11 @@ async function collectTargets() {
         });
     }
 
+    const published = await loadPublishedSets();
+    // 作りかけと登録済みが同じ id なら、作りかけ（編集中の内容）を使う
+    const extraIds = new Set(extraSets.map(set => set.id));
+    for (const set of [...published.filter(set => !extraIds.has(set.id)), ...extraSets]) targets.push(...talkSetTargets(set));
+
     const seen = new Set();
     for (const t of targets) {
         if (seen.has(t.key)) throw new Error(`Duplicate icon key: ${t.key}`);
@@ -171,7 +205,18 @@ async function collectTargets() {
 }
 
 // 最後のシートが20枠に満たないときは前の項目で埋める（グリッドの検出を安定させるため。埋めた分は保存しない）
-function planSheets(targets) {
+// 主人公はシート単位でしか指定できないので、主人公ごとに分けてからシートに割る
+export function planSheets(targets) {
+    const groups = new Map();
+    for (const t of targets) {
+        const key = t.protagonist || "";
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(t);
+    }
+    return [...groups.values()].flatMap(planGroupSheets);
+}
+
+function planGroupSheets(targets) {
     const sheets = [];
     for (let i = 0; i < targets.length; i += PER_SHEET) {
         const slots = targets.slice(i, i + PER_SHEET).map(t => ({ ...t, pad: false }));
@@ -196,7 +241,10 @@ function buildPrompt(slots) {
         "",
         "【画風】",
         "- 見本と同じ、やわらかい線画＋淡い色の塗りのやさしいイラスト",
-        "- 主人公は見本の女性（茶色のボブヘア、ピンクのセーター）。病気で話せないため、車いすやベッドで過ごしていることもある",
+        // 会話パターンごとに主人公（本人）を変えられる。指定がなければ見本の女性
+        slots[0].protagonist
+            ? `- 主人公は${slots[0].protagonist}。見本の女性ではなくこの人物を、見本と同じ画風で描く。全カードで同じ顔・髪型・服装にそろえる。病気で話せないため、車いすやベッドで過ごしていることもある`
+            : "- 主人公は見本の女性（茶色のボブヘア、ピンクのセーター）。病気で話せないため、車いすやベッドで過ごしていることもある",
         "- 相手は家族（お父さん・お母さん・お姉ちゃん・お兄ちゃん）や看護師さん（水色の制服）",
         "- ひと目で意味が伝わるよう、表情・しぐさ・小物を大きくはっきり描く",
         "",
@@ -313,32 +361,32 @@ async function splitSheet(sheetPath, slots) {
     return written;
 }
 
-function descHash(desc) {
+export function descHash(desc) {
     return crypto.createHash("sha1").update(desc).digest("hex").slice(0, 12);
 }
 
-function readSources() {
+export function readSources() {
     return fs.existsSync(ICON_SOURCES) ? JSON.parse(fs.readFileSync(ICON_SOURCES, "utf8")) : {};
 }
 
-function writeSources(sources) {
+export function writeSources(sources) {
     const sorted = Object.fromEntries(Object.entries(sources).sort(([a], [b]) => a.localeCompare(b)));
     fs.writeFileSync(ICON_SOURCES, `${JSON.stringify(sorted, null, 2)}
 `);
 }
 
-function iconPath(key) {
+export function iconPath(key) {
     return path.join(GEN_DIR, `${key}${ICON_EXT}`);
 }
 
 // 今の内容で作った絵があるか
-function isUpToDate(target, sources) {
+export function isUpToDate(target, sources) {
     return sources[target.key] === descHash(target.desc) && fs.existsSync(iconPath(target.key));
 }
 
 // アプリはこの一覧にある id だけ画像を使い、それ以外は絵文字のまま表示する。
 // 対象から外れた項目や内容が変わった項目の古いファイルは載せない
-function writeManifest(targets, sources) {
+export function writeManifest(targets, sources) {
     const keys = targets.filter(t => isUpToDate(t, sources)).map(t => t.key).sort();
     const body = keys.map(k => `    ${JSON.stringify(k)}: ${JSON.stringify(`media/gen/${k}${ICON_EXT}`)}`).join(",\n");
     fs.writeFileSync(ICON_MANIFEST, [
@@ -352,6 +400,87 @@ function writeManifest(targets, sources) {
 
 function readSheetLog() {
     return fs.existsSync(SHEET_LOG) ? JSON.parse(fs.readFileSync(SHEET_LOG, "utf8")) : [];
+}
+
+// 使わなくなった絵を消す（ファイル・作ったときの記録・元のシート）。一覧は呼び出し側で書き直す
+export function removeIcons(matchKey) {
+    let removed = 0;
+    if (fs.existsSync(GEN_DIR)) {
+        for (const f of fs.readdirSync(GEN_DIR)) {
+            if (!f.endsWith(ICON_EXT) || !matchKey(f.slice(0, -ICON_EXT.length))) continue;
+            fs.unlinkSync(path.join(GEN_DIR, f));
+            removed++;
+        }
+    }
+    const sources = readSources();
+    for (const key of Object.keys(sources)) if (matchKey(key)) delete sources[key];
+    writeSources(sources);
+    // 元のシートは、ほかの絵が残っていなければ消す。残っていれば --split-only で切り直さないよう埋め草扱いにする
+    const log = readSheetLog();
+    const kept = [];
+    for (const entry of log) {
+        const slots = entry.slots.map(s => (matchKey(s.key) ? { ...s, pad: true } : s));
+        if (slots.every(s => s.pad)) {
+            const file = path.join(SHEET_DIR, entry.file);
+            if (fs.existsSync(file)) fs.unlinkSync(file);
+        } else {
+            kept.push({ ...entry, slots });
+        }
+    }
+    if (log.length > 0) fs.writeFileSync(SHEET_LOG, JSON.stringify(kept, null, 2));
+    return removed;
+}
+
+// シートを作って分割し、記録と一覧を更新する。getAll は一覧に載せる対象（作りかけの会話パターンは含めない）。
+// 作っている間に登録や削除があっても古い内容で上書きしないよう、記録と対象はシートごとに読み直す
+export async function generateIcons({ env, sheets, getAll, onLog = console.log }) {
+    if (!env.apiKey) throw new Error(".env に GEMINI_API_KEY を設定してください（.env.example 参照）");
+    fs.mkdirSync(SHEET_DIR, { recursive: true });
+    const reference = await loadStyleReference();
+    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
+    const failed = [];
+
+    for (let i = 0; i < sheets.length; i++) {
+        const slots = sheets[i];
+        const file = `sheet-${stamp}-${String(i + 1).padStart(2, "0")}.png`;
+        onLog(`[${i + 1}/${sheets.length}] ${slots.filter(s => !s.pad).map(s => s.key).join(", ")}`);
+        let image;
+        try {
+            for (let attempt = 1; ; attempt++) {
+                image = await callImageModel(env, buildPrompt(slots), reference);
+                const gridError = await checkGrid(image);
+                if (!gridError) break;
+                if (attempt >= 3) throw new Error(`グリッドが${COLS}列×${ROWS}行になりませんでした（${gridError}）`);
+                onLog(`  グリッドが指定と違います（${gridError}）。作り直します`);
+            }
+        } catch (error) {
+            // 1シートの失敗で全体を止めない。未作成のまま残るので、もう一度実行すれば作り直す
+            onLog(`  失敗: ${error.message}`);
+            failed.push(i + 1);
+            continue;
+        }
+        await sharp(image).png().toFile(path.join(SHEET_DIR, file));
+        // 作っている間に削除などで書き換わることがあるので、追記する直前に読み直す
+        const log = readSheetLog();
+        log.push({ file, model: env.model, slots: slots.map(({ key, pad, desc }) => ({ key, pad, hash: descHash(desc) })) });
+        fs.writeFileSync(SHEET_LOG, JSON.stringify(log, null, 2));
+        let written;
+        try {
+            written = await splitSheet(path.join(SHEET_DIR, file), slots);
+        } catch (error) {
+            // シートは保存済みなので --split-only で切り直せる。残りのシートは続けて作る
+            onLog(`  分割に失敗: ${error.message}（${file}）`);
+            failed.push(i + 1);
+            continue;
+        }
+        const sources = readSources();
+        for (const slot of slots) if (!slot.pad) sources[slot.key] = descHash(slot.desc);
+        // 途中で止まっても作れた分は使えるよう、シートごとに一覧を更新する
+        writeSources(sources);
+        writeManifest(await getAll(), sources);
+        onLog(`  → ${written.length} icons (${file})`);
+    }
+    return { failed };
 }
 
 async function main() {
@@ -403,57 +532,18 @@ async function main() {
     }
     if (!env.apiKey) throw new Error(".env に GEMINI_API_KEY を設定してください（.env.example 参照）");
 
-    fs.mkdirSync(SHEET_DIR, { recursive: true });
-    const reference = await loadStyleReference();
-    const log = readSheetLog();
-    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
-    const failed = [];
-
-    for (let i = 0; i < sheets.length; i++) {
-        const slots = sheets[i];
-        const file = `sheet-${stamp}-${String(i + 1).padStart(2, "0")}.png`;
-        console.log(`[${i + 1}/${sheets.length}] ${slots.filter(s => !s.pad).map(s => s.key).join(", ")}`);
-        let image;
-        try {
-            for (let attempt = 1; ; attempt++) {
-                image = await callImageModel(env, buildPrompt(slots), reference);
-                const gridError = await checkGrid(image);
-                if (!gridError) break;
-                if (attempt >= 3) throw new Error(`グリッドが${COLS}列×${ROWS}行になりませんでした（${gridError}）`);
-                console.warn(`  グリッドが指定と違います（${gridError}）。作り直します`);
-            }
-        } catch (error) {
-            // 1シートの失敗で全体を止めない。未作成のまま残るので、もう一度実行すれば作り直す
-            console.warn(`  失敗: ${error.message}`);
-            failed.push(i + 1);
-            continue;
-        }
-        await sharp(image).png().toFile(path.join(SHEET_DIR, file));
-        log.push({ file, model: env.model, slots: slots.map(({ key, pad, desc }) => ({ key, pad, hash: descHash(desc) })) });
-        fs.writeFileSync(SHEET_LOG, JSON.stringify(log, null, 2));
-        let written;
-        try {
-            written = await splitSheet(path.join(SHEET_DIR, file), slots);
-        } catch (error) {
-            // シートは保存済みなので --split-only で切り直せる。残りのシートは続けて作る
-            console.warn(`  分割に失敗: ${error.message}（${file}）`);
-            failed.push(i + 1);
-            continue;
-        }
-        for (const slot of slots) if (!slot.pad) sources[slot.key] = descHash(slot.desc);
-        // 途中で止まっても作れた分は使えるよう、シートごとに一覧を更新する
-        writeSources(sources);
-        writeManifest(all, sources);
-        console.log(`  → ${written.length} icons (${file})`);
-    }
-    console.log(`Manifest: ${writeManifest(all, sources)} icons → ${path.relative(ROOT, ICON_MANIFEST)}`);
+    const { failed } = await generateIcons({ env, sheets, getAll: () => collectTargets() });
+    console.log(`Manifest: ${writeManifest(await collectTargets(), readSources())} icons → ${path.relative(ROOT, ICON_MANIFEST)}`);
     if (failed.length > 0) {
         console.warn(`失敗したシート: ${failed.join(", ")}。もう一度実行すると未作成の分だけ作り直します`);
         process.exitCode = 1;
     }
 }
 
-main().catch(error => {
-    console.error(error.message || error);
-    process.exit(1);
-});
+// talk studio から読み込んだときは実行しない
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+    main().catch(error => {
+        console.error(error.message || error);
+        process.exit(1);
+    });
+}

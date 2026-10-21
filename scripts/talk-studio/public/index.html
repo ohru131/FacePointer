@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>talk studio — 会話パターンを作る</title>
+    <link rel="stylesheet" href="studio.css">
+</head>
+<body>
+    <header class="topbar">
+        <h1>talk studio</h1>
+        <label class="draft-picker">
+            <span>パターン</span>
+            <select id="draft-select"></select>
+        </label>
+        <div class="topbar-actions">
+            <button type="button" id="new-empty-btn">新規（空）</button>
+            <button type="button" id="new-default-btn">標準をコピー</button>
+            <label class="file-btn">ファイルを読み込む<input type="file" id="import-input" accept="application/json,.json" hidden></label>
+            <button type="button" id="delete-draft-btn" class="danger">削除</button>
+        </div>
+        <span id="save-status" class="save-status"></span>
+    </header>
+
+    <div id="no-draft" class="empty-state" hidden>
+        <p>会話パターンを作りましょう。上の「新規（空）」「標準をコピー」、またはアプリの設定 → お話 で「書き出し」したファイルを読み込んで始めます。</p>
+    </div>
+
+    <main id="workspace" hidden>
+        <div class="name-row">
+            <label>名前 <input type="text" id="name-input" maxlength="40" placeholder="例: 40代女性・刀剣乱舞好き"></label>
+            <span id="published-badge" class="badge" hidden>登録済み</span>
+        </div>
+        <nav class="tabs" id="tabs">
+            <button type="button" data-tab="interview">① インタビュー</button>
+            <button type="button" data-tab="edit">② 確認・修正</button>
+            <button type="button" data-tab="icons">③ 絵</button>
+            <button type="button" data-tab="publish">④ アプリに登録</button>
+        </nav>
+
+        <section class="tab-panel" data-panel="interview">
+            <p class="help">本人のことを答えると、Gemini が本人らしい会話パターンを作ります。答えは手元（scripts/talk-studio/drafts）にだけ保存し、git には載せません。</p>
+            <div class="profile-row">
+                <label>性別
+                    <select id="profile-gender">
+                        <option value="">未入力</option>
+                        <option value="female">女性</option>
+                        <option value="male">男性</option>
+                        <option value="other">その他・答えない</option>
+                    </select>
+                </label>
+                <label>年齢 <input type="number" id="profile-age" min="1" max="129"></label>
+            </div>
+            <div id="interview-list" class="interview-list"></div>
+            <div class="actions">
+                <button type="button" id="add-question-btn">＋ 質問を自分で追加</button>
+                <button type="button" id="ai-questions-btn">AI で質問を作る</button>
+                <button type="button" id="generate-btn" class="primary">この回答でパターンを作る</button>
+            </div>
+            <p id="interview-status" class="status" aria-live="polite"></p>
+        </section>
+
+        <section class="tab-panel" data-panel="edit">
+            <details class="partners" open>
+                <summary>話し相手 <small>（「{呼}、」がこの呼び名に置き換わる。言葉ごとに「この相手のときだけ」を指定できる）</small></summary>
+                <div id="partner-list" class="partner-list"></div>
+                <button type="button" id="add-partner-btn">＋ 相手を追加</button>
+            </details>
+            <div class="editor">
+                <div class="tree-pane">
+                    <div class="tree-tools">
+                        <button type="button" id="add-topic-btn">＋ 話題</button>
+                        <button type="button" id="expand-all-btn">すべて開く</button>
+                        <button type="button" id="collapse-all-btn">閉じる</button>
+                        <span id="tree-count" class="muted"></span>
+                    </div>
+                    <ul id="tree" class="tree"></ul>
+                </div>
+                <div class="node-pane" id="node-pane">
+                    <p class="muted">左の一覧から言葉を選んでください。</p>
+                </div>
+            </div>
+            <div class="issues">
+                <h3>チェック <span id="issue-summary" class="muted"></span></h3>
+                <ul id="issue-list"></ul>
+            </div>
+        </section>
+
+        <section class="tab-panel" data-panel="icons">
+            <label class="protagonist">絵の主人公（本人）
+                <input type="text" id="protagonist-input" maxlength="80" placeholder="空なら見本の女性（茶色のボブ・ピンクのセーター）。例: 72歳の男性、白髪の短髪、紺のカーディガン">
+                <small class="muted">変えると、すでにある絵も作り直す対象になります。インタビューから作ると性別・年齢から自動で入ります。</small>
+            </label>
+            <div class="icon-head">
+                <p id="icon-plan" class="help"></p>
+                <button type="button" id="make-icons-btn" class="primary">絵を作る</button>
+            </div>
+            <div class="icon-filters" id="icon-filters">
+                <button type="button" data-filter="all">すべて</button>
+                <button type="button" data-filter="todo">作る予定</button>
+                <button type="button" data-filter="ok">作成済み</button>
+            </div>
+            <pre id="job-log" class="job-log" hidden></pre>
+            <div id="icon-grid" class="icon-grid"></div>
+        </section>
+
+        <section class="tab-panel" data-panel="publish">
+            <div id="publish-summary" class="publish-summary"></div>
+            <button type="button" id="publish-btn" class="primary">アプリに登録</button>
+            <p id="publish-status" class="status" aria-live="polite"></p>
+            <h3>登録済みのパターン</h3>
+            <ul id="published-list" class="published-list"></ul>
+        </section>
+    </main>
+
+    <script type="module" src="studio.js"></script>
+</body>
+</html>
