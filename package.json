@@ -9,7 +9,8 @@
     "tauri": "tauri",
     "split:menu-icons": "node scripts/split_menu_sheet.js",
     "icons:gen": "node scripts/gen_icon_sheets.mjs",
-    "icons:models": "node scripts/gen_icon_sheets.mjs --list-models"
+    "icons:models": "node scripts/gen_icon_sheets.mjs --list-models",
+    "talk:studio": "node scripts/talk-studio/server.mjs"
   },
   "keywords": [],
   "author": "",
