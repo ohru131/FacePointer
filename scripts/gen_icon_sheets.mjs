@@ -10,6 +10,7 @@
 //   node scripts/gen_icon_sheets.mjs --only greet-    id の前方一致で絞る（--force で作り直し）
 //   node scripts/gen_icon_sheets.mjs --list-models    画像を作れるモデルの一覧
 
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
@@ -26,6 +27,8 @@ const GEN_DIR = path.join(DIST_DIR, "media", "gen");
 const SHEET_DIR = path.join(ROOT, "scripts", "generated-sheets");
 const SHEET_LOG = path.join(SHEET_DIR, "sheets.json");
 const ICON_MANIFEST = path.join(DIST_DIR, "icon-images.js");
+// 各アイコンを作ったときの内容（desc）のハッシュ。内容が変わった項目（答えの並び替えなど）は古い絵を使わず作り直す
+const ICON_SOURCES = path.join(ROOT, "scripts", "icon-sources.json");
 // 標準（simple）テイストの見本。メニューアイコンの元シート
 const STYLE_REFERENCE = path.join(ROOT, "scripts", "Gemini_Generated_Image_j0qvdaj0qvdaj0qv.png");
 
@@ -39,6 +42,7 @@ const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const REQUEST_TIMEOUT_MS = 300000;
 
 function loadEnv() {
+    if (typeof process.loadEnvFile !== "function") throw new Error("Node.js 20.12 以降で実行してください");
     try {
         process.loadEnvFile(path.join(ROOT, ".env"));
     } catch (error) {
@@ -63,8 +67,11 @@ function parseArgs(argv) {
         else if (a === "--limit") args.limit = Number.parseInt(argv[++i], 10);
         else if (a === "--only") args.only = argv[++i] || "";
         else throw new Error(`Unknown option: ${a}`);
+        // 値なしの --only は全件に一致し、--force と組み合わせると全シートを作り直してしまう
+        if (a === "--only" && (!args.only || args.only.startsWith("--"))) throw new Error("--only には id の先頭部分を指定してください");
     }
     if (!(args.limit > 0)) throw new Error("--limit には 1 以上の数を指定してください");
+    if (args.splitOnly && args.dryRun) throw new Error("--split-only と --dry-run は同時に指定できません");
     return args;
 }
 
@@ -306,11 +313,33 @@ async function splitSheet(sheetPath, slots) {
     return written;
 }
 
-// アプリはこの一覧にある id だけ画像を使い、それ以外は絵文字のまま表示する
-function writeManifest() {
-    const keys = fs.existsSync(GEN_DIR)
-        ? fs.readdirSync(GEN_DIR).filter(f => f.endsWith(ICON_EXT)).map(f => f.slice(0, -ICON_EXT.length)).sort()
-        : [];
+function descHash(desc) {
+    return crypto.createHash("sha1").update(desc).digest("hex").slice(0, 12);
+}
+
+function readSources() {
+    return fs.existsSync(ICON_SOURCES) ? JSON.parse(fs.readFileSync(ICON_SOURCES, "utf8")) : {};
+}
+
+function writeSources(sources) {
+    const sorted = Object.fromEntries(Object.entries(sources).sort(([a], [b]) => a.localeCompare(b)));
+    fs.writeFileSync(ICON_SOURCES, `${JSON.stringify(sorted, null, 2)}
+`);
+}
+
+function iconPath(key) {
+    return path.join(GEN_DIR, `${key}${ICON_EXT}`);
+}
+
+// 今の内容で作った絵があるか
+function isUpToDate(target, sources) {
+    return sources[target.key] === descHash(target.desc) && fs.existsSync(iconPath(target.key));
+}
+
+// アプリはこの一覧にある id だけ画像を使い、それ以外は絵文字のまま表示する。
+// 対象から外れた項目や内容が変わった項目の古いファイルは載せない
+function writeManifest(targets, sources) {
+    const keys = targets.filter(t => isUpToDate(t, sources)).map(t => t.key).sort();
     const body = keys.map(k => `    ${JSON.stringify(k)}: ${JSON.stringify(`media/gen/${k}${ICON_EXT}`)}`).join(",\n");
     fs.writeFileSync(ICON_MANIFEST, [
         "// scripts/gen_icon_sheets.mjs が自動生成する。手で編集しない",
@@ -336,6 +365,14 @@ async function main() {
         return;
     }
 
+    const all = await collectTargets();
+    const sources = readSources();
+    if (!fs.existsSync(ICON_SOURCES)) {
+        // 記録を始める前に作った絵は、今の内容のものとみなす
+        for (const t of all) if (fs.existsSync(iconPath(t.key))) sources[t.key] = descHash(t.desc);
+        if (!args.dryRun) writeSources(sources);
+    }
+
     if (args.splitOnly) {
         let total = 0;
         for (const entry of readSheetLog()) {
@@ -343,14 +380,16 @@ async function main() {
             if (!fs.existsSync(sheetPath)) continue;
             const slots = args.only ? entry.slots.map(s => ({ ...s, pad: s.pad || !s.key.startsWith(args.only) })) : entry.slots;
             total += (await splitSheet(sheetPath, slots)).length;
+            // 切り直した絵は、そのシートを作ったときの内容のもの（古いログには記録がないので据え置き）
+            for (const slot of slots) if (!slot.pad && slot.hash) sources[slot.key] = slot.hash;
         }
-        console.log(`Split ${total} icons. Manifest: ${writeManifest()} icons`);
+        writeSources(sources);
+        console.log(`Split ${total} icons. Manifest: ${writeManifest(all, sources)} icons`);
         return;
     }
 
-    const all = await collectTargets();
     const targets = all.filter(t => t.key.startsWith(args.only))
-        .filter(t => args.force || !fs.existsSync(path.join(GEN_DIR, `${t.key}${ICON_EXT}`)));
+        .filter(t => args.force || !isUpToDate(t, sources));
     const sheets = planSheets(targets).slice(0, args.limit);
     console.log(`対象 ${all.length} 件中、未作成 ${targets.length} 件 → ${sheets.length} シート（モデル: ${env.model}）`);
 
@@ -359,7 +398,7 @@ async function main() {
         return;
     }
     if (sheets.length === 0) {
-        console.log(`Manifest: ${writeManifest()} icons`);
+        console.log(`Manifest: ${writeManifest(all, sources)} icons`);
         return;
     }
     if (!env.apiKey) throw new Error(".env に GEMINI_API_KEY を設定してください（.env.example 参照）");
@@ -390,14 +429,16 @@ async function main() {
             continue;
         }
         await sharp(image).png().toFile(path.join(SHEET_DIR, file));
-        log.push({ file, model: env.model, slots: slots.map(({ key, pad }) => ({ key, pad })) });
+        log.push({ file, model: env.model, slots: slots.map(({ key, pad, desc }) => ({ key, pad, hash: descHash(desc) })) });
         fs.writeFileSync(SHEET_LOG, JSON.stringify(log, null, 2));
         const written = await splitSheet(path.join(SHEET_DIR, file), slots);
+        for (const slot of slots) if (!slot.pad) sources[slot.key] = descHash(slot.desc);
         // 途中で止まっても作れた分は使えるよう、シートごとに一覧を更新する
-        writeManifest();
+        writeSources(sources);
+        writeManifest(all, sources);
         console.log(`  → ${written.length} icons (${file})`);
     }
-    console.log(`Manifest: ${writeManifest()} icons → ${path.relative(ROOT, ICON_MANIFEST)}`);
+    console.log(`Manifest: ${writeManifest(all, sources)} icons → ${path.relative(ROOT, ICON_MANIFEST)}`);
     if (failed.length > 0) {
         console.warn(`失敗したシート: ${failed.join(", ")}。もう一度実行すると未作成の分だけ作り直します`);
         process.exitCode = 1;

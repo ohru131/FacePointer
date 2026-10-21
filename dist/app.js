@@ -293,6 +293,7 @@ let dwellLeftAt = 0;
 let dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
 // DWELL_CARRYOVER_RATIO を掛けるパネル。DWELL_LOCK_FIRST_HOVER なら次の判定でポインタの下のパネルを記録する
 let dwellCarryoverKey = "";
+let isDwellConfirmingCarryover = false;
 
 // 介助者が出した質問への回答中（モードに関係なくパネル選択画面になる）
 let activeQuestion = null;
@@ -1800,8 +1801,11 @@ function getTalkPanels() {
     if (talkTab === TALK_TAB_AIZUCHI) return TALK_AIZUCHI.map(item => ({ ...item, type: "aizuchi" }));
     if (talkTab === TALK_TAB_FAVORITE) return getFavoriteTalkSentences();
     if (talkTab === TALK_TAB_PARTNER) {
+        // 生成アイコンは標準セットの相手の絵。AI で作ったセットは同じ id でも別の人（妹など）がありうるので id を分ける
+        // 「決めない」はどのセットでも同じ意味なので共通の id のまま
+        const idPrefix = getActiveTalkSet().builtin ? "talk-partner" : `talk-partner-${talkActiveSetId}`;
         return getTalkPartners().map(p => ({
-            id: `talk-partner-${p.id || "none"}`,
+            id: p.id ? `${idPrefix}-${p.id}` : "talk-partner-none",
             type: "partner",
             selected: p.id === talkPartnerId,
             name: p.name,
@@ -1835,11 +1839,17 @@ function getTalkTabs() {
 }
 
 // 中身が入れ替わるので、ポインタの下に来た新しいパネルは長めの滞留で確定する。
-// 確定したばかりのボタン（タブ・戻るなど）は dwellLockedKey のまま、外れるまで再選択しない
-function refreshTalkScreen() {
+// 確定したばかりのボタン（タブ・戻るなど）は dwellLockedKey のまま、外れるまで再選択しない。
+// 話した直後と、動かさずに続けて確定したあとは、じっとしているだけで次々に選ばれないよう一度外れるまで滞留しない
+function refreshTalkScreen({ fullLock = false } = {}) {
     simplePage = 0;
     resetDwellProgress();
-    dwellCarryoverKey = DWELL_LOCK_FIRST_HOVER;
+    if (fullLock || isDwellConfirmingCarryover) {
+        dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+        dwellCarryoverKey = "";
+    } else {
+        dwellCarryoverKey = DWELL_LOCK_FIRST_HOVER;
+    }
 }
 
 // お話タブ中にもう一度お話を選んだら最初の話題へ。相づちなどから戻ったときは、たどっていた場所を保つ
@@ -1885,7 +1895,7 @@ function speakTalkSentence(template, { record = true } = {}) {
     if (record) recordTalkHistory(template);
     if (talkTab === TALK_TAB_TREE) {
         talkPath = [];
-        refreshTalkScreen();
+        refreshTalkScreen({ fullLock: true });
     }
     rerenderSimpleMode();
     void speakSimpleSentence(sentence);
@@ -2316,7 +2326,13 @@ function updateDwellSelection(hasFace) {
         resetDwellProgress();
         dwellLockedKey = hoveredKey;
         lastConfirmedAt = Date.now();
-        targetBtn.click();
+        // 長めの滞留で確定したことを、クリック処理中の refreshTalkScreen に伝える
+        isDwellConfirmingCarryover = hoveredKey === dwellCarryoverKey;
+        try {
+            targetBtn.click();
+        } finally {
+            isDwellConfirmingCarryover = false;
+        }
     }
 }
 
