@@ -205,7 +205,18 @@ export async function collectTargets({ extraSets = [] } = {}) {
 }
 
 // 最後のシートが20枠に満たないときは前の項目で埋める（グリッドの検出を安定させるため。埋めた分は保存しない）
+// 主人公はシート単位でしか指定できないので、主人公ごとに分けてからシートに割る
 export function planSheets(targets) {
+    const groups = new Map();
+    for (const t of targets) {
+        const key = t.protagonist || "";
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(t);
+    }
+    return [...groups.values()].flatMap(planGroupSheets);
+}
+
+function planGroupSheets(targets) {
     const sheets = [];
     for (let i = 0; i < targets.length; i += PER_SHEET) {
         const slots = targets.slice(i, i + PER_SHEET).map(t => ({ ...t, pad: false }));
@@ -420,8 +431,9 @@ export function removeIcons(matchKey) {
     return removed;
 }
 
-// シートを作って分割し、記録と一覧を更新する。all は一覧に載せる対象（作りかけの会話パターンは含めない）
-export async function generateIcons({ env, sheets, all, sources, onLog = console.log }) {
+// シートを作って分割し、記録と一覧を更新する。getAll は一覧に載せる対象（作りかけの会話パターンは含めない）。
+// 作っている間に登録や削除があっても古い内容で上書きしないよう、記録と対象はシートごとに読み直す
+export async function generateIcons({ env, sheets, getAll, onLog = console.log }) {
     if (!env.apiKey) throw new Error(".env に GEMINI_API_KEY を設定してください（.env.example 参照）");
     fs.mkdirSync(SHEET_DIR, { recursive: true });
     const reference = await loadStyleReference();
@@ -460,10 +472,11 @@ export async function generateIcons({ env, sheets, all, sources, onLog = console
             failed.push(i + 1);
             continue;
         }
+        const sources = readSources();
         for (const slot of slots) if (!slot.pad) sources[slot.key] = descHash(slot.desc);
         // 途中で止まっても作れた分は使えるよう、シートごとに一覧を更新する
         writeSources(sources);
-        writeManifest(all, sources);
+        writeManifest(await getAll(), sources);
         onLog(`  → ${written.length} icons (${file})`);
     }
     return { failed };
@@ -518,8 +531,8 @@ async function main() {
     }
     if (!env.apiKey) throw new Error(".env に GEMINI_API_KEY を設定してください（.env.example 参照）");
 
-    const { failed } = await generateIcons({ env, sheets, all, sources });
-    console.log(`Manifest: ${writeManifest(all, sources)} icons → ${path.relative(ROOT, ICON_MANIFEST)}`);
+    const { failed } = await generateIcons({ env, sheets, getAll: () => collectTargets() });
+    console.log(`Manifest: ${writeManifest(await collectTargets(), readSources())} icons → ${path.relative(ROOT, ICON_MANIFEST)}`);
     if (failed.length > 0) {
         console.warn(`失敗したシート: ${failed.join(", ")}。もう一度実行すると未作成の分だけ作り直します`);
         process.exitCode = 1;

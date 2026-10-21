@@ -14,6 +14,7 @@ let expanded = new Set();
 let tab = "edit";
 let iconFilter = "all";
 let saveTimer = null;
+let isDirty = false;      // 保存していない編集がある
 let jobTimer = null;
 
 // ---------------------------------------------------------
@@ -44,7 +45,8 @@ async function loadState() {
 }
 
 async function openDraft(id) {
-    clearTimeout(saveTimer);
+    // 切り替える前に、保存待ちの編集を保存する
+    await saveNow();
     if (!id) {
         draft = null;
         renderAll();
@@ -59,6 +61,7 @@ async function openDraft(id) {
 
 // 入力のたびに少し待ってから保存する。保存後はチェック結果と絵の状態だけ描き直す（入力中の欄は触らない）
 function scheduleSave() {
+    isDirty = true;
     setSaveStatus("保存待ち…");
     clearTimeout(saveTimer);
     saveTimer = setTimeout(saveNow, 600);
@@ -66,12 +69,16 @@ function scheduleSave() {
 
 async function saveNow() {
     clearTimeout(saveTimer);
-    if (!draft) return;
+    if (!draft || !isDirty) return;
+    isDirty = false;
+    const savedId = draft.id;
     try {
-        const data = await api("PUT", `/api/drafts/${draft.id}`, {
+        const data = await api("PUT", `/api/drafts/${savedId}`, {
             name: draft.name, profile: draft.profile, interview: draft.interview,
-            partners: draft.partners, tree: draft.tree, regenerate: draft.regenerate || [], protagonist: draft.protagonist || ""
+            partners: draft.partners, tree: draft.tree, protagonist: draft.protagonist || ""
         });
+        // 保存している間に別のパターンへ切り替えていたら、結果は使わない
+        if (draft?.id !== savedId) return;
         issues = data.issues;
         icons = data.icons;
         setSaveStatus(`保存しました ${new Date().toLocaleTimeString("ja-JP")}`);
@@ -83,6 +90,7 @@ async function saveNow() {
         await loadState();
         renderDraftSelect();
     } catch (error) {
+        isDirty = true;
         setSaveStatus(`保存できませんでした: ${error.message}`);
     }
 }
@@ -637,11 +645,19 @@ function renderNodeIconOnly() {
     row.append(iconBox(node.id, node.emoji), box);
 }
 
-function toggleRegenerate(key, on) {
-    const set = new Set(draft.regenerate || []);
-    if (on) set.add(key); else set.delete(key);
-    draft.regenerate = [...set];
-    changed();
+// 作り直しの印は、絵を作るジョブも書き換えるので、差分だけ送る（保存とは別）
+async function toggleRegenerate(key, on) {
+    const id = draft.id;
+    try {
+        const data = await api("POST", `/api/drafts/${id}/regenerate`, { key, on });
+        if (draft?.id !== id) return;
+        draft.regenerate = data.draft.regenerate;
+        icons = data.icons;
+        if (tab === "icons") renderIcons();
+        renderNodeIconOnly();
+    } catch (error) {
+        alert(error.message);
+    }
 }
 
 // ---------------------------------------------------------
@@ -694,10 +710,7 @@ function renderIcons() {
         card.append(iconBox(item.key, item.emoji), title, sub, stateEl);
         if (state === "ok") {
             const check = Object.assign(document.createElement("input"), { type: "checkbox", checked: marked.has(item.key) });
-            check.addEventListener("change", () => {
-                toggleRegenerate(item.key, check.checked);
-                renderIcons();
-            });
+            check.addEventListener("change", () => toggleRegenerate(item.key, check.checked));
             const label = document.createElement("label");
             label.append(check, "作り直す");
             card.appendChild(label);
@@ -850,6 +863,9 @@ async function deleteDraft() {
     const iconCount = Object.values(icons).filter(i => i.url).length;
     if (!confirm(`「${draft.name || "（名前なし）"}」を削除しますか？
 作った絵（${iconCount} 枚）も削除し${draft.publishedAt ? "、アプリへの登録も外し" : ""}ます。元に戻せません。`)) return;
+    // 消すパターンの保存待ちは捨てる
+    clearTimeout(saveTimer);
+    isDirty = false;
     await api("DELETE", `/api/drafts/${draft.id}`, {});
     draft = null;
     await loadState();
@@ -861,10 +877,7 @@ async function deleteDraft() {
 // 起動
 // ---------------------------------------------------------
 function bind() {
-    $("draft-select").addEventListener("change", async (e) => {
-        await saveNow();
-        openDraft(e.target.value);
-    });
+    $("draft-select").addEventListener("change", (e) => openDraft(e.target.value));
     $("new-empty-btn").addEventListener("click", () => createDraft("empty"));
     $("new-default-btn").addEventListener("click", () => createDraft("default"));
     $("import-input").addEventListener("change", (e) => {
@@ -904,7 +917,7 @@ function bind() {
     }));
     $("make-icons-btn").addEventListener("click", makeIcons);
     $("publish-btn").addEventListener("click", publish);
-    window.addEventListener("beforeunload", () => { if (saveTimer) saveNow(); });
+    window.addEventListener("beforeunload", () => { if (isDirty) saveNow(); });
 }
 
 async function start() {

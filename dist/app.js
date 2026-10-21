@@ -1,9 +1,16 @@
 import vision from "./mediapipe/vision_bundle.mjs";
 import { TALK_TREE } from "./talk-data.js";
 import { GENERATED_ICONS } from "./icon-images.js";
-import { PUBLISHED_TALK_SETS } from "./talk-sets/index.js";
 import { TALK_AI_MODEL_DEFAULT, generateInterviewQuestions, generateTalkSet, countTalkTreeNodes } from "./talk-generator.js";
 const { FaceLandmarker, FilesetResolver, DrawingUtils } = vision;
+
+// talk studio で登録したパターン。ファイルが欠けたり壊れたりしていても、標準のパターンだけで起動できるようにする
+let PUBLISHED_TALK_SETS = [];
+try {
+    ({ PUBLISHED_TALK_SETS } = await import("./talk-sets/index.js"));
+} catch (error) {
+    console.error("talk sets load failed:", error);
+}
 
 const video = document.getElementById("webcam");
 const canvasElement = document.getElementById("canvas-overlay");

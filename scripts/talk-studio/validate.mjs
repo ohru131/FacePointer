@@ -16,7 +16,10 @@ export function validateTalkSet(set) {
     const issues = [];
     const add = (level, message, nodeId = "") => issues.push({ level, message, nodeId });
 
-    if (!set.name || !set.name.trim()) add("error", "パターンの名前がありません");
+    const name = typeof set.name === "string" ? set.name : "";
+    if (!name.trim()) add("error", "パターンの名前がありません");
+    else if (/[\u0000-\u001f\u007f\u2028\u2029]/.test(name)) add("error", "パターンの名前に改行などの制御文字は使えません");
+    else if (textLength(name) > 40) add("error", "パターンの名前は40文字までにしてください");
     if (!KEY_SAFE.test(set.id || "")) add("error", `パターンの id「${set.id}」に使えない文字があります`);
 
     const partnerIds = new Set();

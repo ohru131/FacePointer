@@ -61,10 +61,17 @@ function writeDraft(draft) {
 
 function listDrafts() {
     if (!fs.existsSync(DRAFT_DIR)) return [];
-    return fs.readdirSync(DRAFT_DIR).filter(f => f.endsWith(".json")).map((f) => {
-        const d = JSON.parse(fs.readFileSync(path.join(DRAFT_DIR, f), "utf8"));
-        return { id: d.id, name: d.name, updatedAt: d.updatedAt, publishedAt: d.publishedAt || null, nodes: countNodes(d.tree) };
-    }).sort((a, b) => b.updatedAt - a.updatedAt);
+    const drafts = [];
+    for (const f of fs.readdirSync(DRAFT_DIR).filter(name => name.endsWith(".json"))) {
+        // 壊れたファイルが1つあっても studio 全体は開けるようにする
+        try {
+            const d = JSON.parse(fs.readFileSync(path.join(DRAFT_DIR, f), "utf8"));
+            drafts.push({ id: d.id, name: d.name, updatedAt: d.updatedAt, publishedAt: d.publishedAt || null, nodes: countNodes(d.tree) });
+        } catch (error) {
+            console.warn(`読めない作りかけを飛ばしました: ${f}（${error.message}）`);
+        }
+    }
+    return drafts.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 function countNodes(nodes) {
@@ -80,6 +87,32 @@ function describeProtagonist(profile) {
 
 function newSetId() {
     return `st${Date.now().toString(36)}`;
+}
+
+function asText(raw) {
+    return typeof raw === "string" || typeof raw === "number" ? String(raw) : "";
+}
+
+// 読み込んだファイルや画面から来た木を、アプリの形（文字列の label/say/emoji、配列の children/for）にそろえる
+function normalizeTree(nodes) {
+    return (Array.isArray(nodes) ? nodes : []).filter(n => n && typeof n === "object").map((node) => {
+        const out = { id: asText(node.id), label: asText(node.label ?? node.l) };
+        const emoji = asText(node.emoji ?? node.e).trim();
+        if (emoji) out.emoji = emoji;
+        const say = asText(node.say ?? node.s).trim();
+        if (say) out.say = say;
+        const children = normalizeTree(node.children ?? node.c);
+        if (children.length > 0) out.children = children;
+        const forIds = (Array.isArray(node.for) ? node.for : []).map(asText).filter(Boolean);
+        if (forIds.length > 0) out.for = forIds;
+        if (typeof node.time === "string" && node.time) out.time = node.time;
+        return out;
+    });
+}
+
+function normalizePartners(partners) {
+    return (Array.isArray(partners) ? partners : []).filter(p => p && typeof p === "object")
+        .map(p => ({ id: asText(p.id), name: asText(p.name), emoji: asText(p.emoji) }));
 }
 
 // アイコンのファイル名になるので、パターンをまたいで重ならないよう id を振り直す（位置で決まる id）
@@ -132,11 +165,12 @@ async function createDraft({ source, data }) {
         draft.copiedIcons = copyMatchingIcons(before.map((from, i) => ({ from, to: after[i] })));
     } else if (source === "import") {
         if (!data || !Array.isArray(data.tree)) throw httpError(400, "会話パターンのファイルではありません（tree がありません）");
-        const { tree } = reId(data.tree, id);
+        const { tree } = reId(normalizeTree(data.tree), id);
         Object.assign(draft, {
             name: typeof data.name === "string" ? data.name.replace(/（\d+\/\d+）$/, "") : "",
             profile: data.profile && typeof data.profile === "object" ? data.profile : draft.profile,
-            interview: Array.isArray(data.interview) ? data.interview.filter(x => x && x.q) : [],
+            interview: (Array.isArray(data.interview) ? data.interview : [])
+                .filter(x => x && typeof x === "object" && x.q).map(x => ({ q: asText(x.q), a: asText(x.a) })),
             partners: sanitizeImportedPartners(data.partners),
             tree
         });
@@ -191,8 +225,7 @@ async function startIconJob(draft) {
     (async () => {
         try {
             // 一覧（アプリが読む）には、標準と登録済みのパターンだけを載せる
-            const all = await collectTargets();
-            const { failed } = await generateIcons({ env, sheets, all, sources: readSources(), onLog: line => current.log.push(line) });
+            const { failed } = await generateIcons({ env, sheets, getAll: () => collectTargets(), onLog: line => current.log.push(line) });
             current.failed = failed;
             const failedKeys = new Set(failed.flatMap(n => sheets[n - 1].filter(s => !s.pad).map(s => s.key)));
             // 作り直しの印は、作れた分だけ外す（作りかけを読み直して、その間の編集を消さない）
@@ -232,11 +265,21 @@ async function publishDraft(draft) {
     const set = { id: draft.id, name: draft.name.trim(), partners: draft.partners, tree: draft.tree };
     // 絵の作り直しを判断するために残す（アプリは使わない）
     if (draft.protagonist) set.protagonist = draft.protagonist;
-    fs.writeFileSync(path.join(PUBLISHED_DIR, `${draft.id}.js`), [
-        `// talk studio で作った会話パターン「${set.name}」。手で編集せず npm run talk:studio で直して登録し直す`,
+    const file = path.join(PUBLISHED_DIR, `${draft.id}.js`);
+    const previous = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : null;
+    // 名前などの文字はコメントに入れず、JSON の文字列としてだけ書く（改行などで JS が壊れないように）
+    fs.writeFileSync(file, [
+        "// talk studio で作った会話パターン。手で編集せず npm run talk:studio で直して登録し直す",
         `export default ${JSON.stringify(set, null, 2)};`,
         ""
     ].join("\n"));
+    // 読み込めないファイルを残すとアプリ全体が起動しなくなるので、書いたものを読み直して確かめる
+    try {
+        await importSource(file);
+    } catch (error) {
+        if (previous === null) fs.unlinkSync(file); else fs.writeFileSync(file, previous);
+        throw httpError(500, `書き出したパターンを読み込めませんでした（${error.message}）`);
+    }
     writePublishedIndex();
     const icons = writeManifest(await collectTargets(), readSources());
     draft.publishedAt = Date.now();
@@ -359,19 +402,30 @@ async function handleApi(req, res, url) {
         if (method === "POST") return sendJson(res, 200, draftResponse(await createDraft(body)));
         throw httpError(405, "使えない操作です");
     }
-    const draft = readDraft(parts[1]);
     const action = parts[2] || "";
+    // 壊れた作りかけでも消せるよう、読む前に処理する
+    if (!action && method === "DELETE") {
+        if (!fs.existsSync(draftPath(parts[1]))) throw httpError(404, "見つかりません");
+        return sendJson(res, 200, { ok: true, ...(await deleteDraft(parts[1])) });
+    }
+    const draft = readDraft(parts[1]);
 
     if (!action && method === "GET") return sendJson(res, 200, draftResponse(draft));
     if (!action && method === "PUT") {
-        // 画面から直せる項目だけ受け取る
-        for (const key of ["name", "profile", "interview", "partners", "tree", "regenerate", "protagonist"]) {
-            if (body[key] !== undefined) draft[key] = body[key];
-        }
+        // 画面から直せる項目だけ受け取る。作り直しの印は絵を作るジョブも書き換えるので、専用の操作（regenerate）で受ける
+        if (typeof body.name === "string") draft.name = body.name;
+        if (typeof body.protagonist === "string") draft.protagonist = body.protagonist.trim();
+        if (body.profile && typeof body.profile === "object") draft.profile = body.profile;
+        if (Array.isArray(body.interview)) draft.interview = body.interview.filter(x => x && typeof x === "object").map(x => ({ q: asText(x.q), a: asText(x.a) }));
+        if (body.partners !== undefined) draft.partners = normalizePartners(body.partners);
+        if (body.tree !== undefined) draft.tree = normalizeTree(body.tree);
         return sendJson(res, 200, draftResponse(writeDraft(draft)));
     }
-    if (!action && method === "DELETE") {
-        return sendJson(res, 200, { ok: true, ...(await deleteDraft(draft.id)) });
+    if (action === "regenerate" && method === "POST") {
+        const marked = new Set(draft.regenerate || []);
+        if (body.on) marked.add(asText(body.key)); else marked.delete(asText(body.key));
+        draft.regenerate = [...marked].filter(Boolean);
+        return sendJson(res, 200, draftResponse(writeDraft(draft)));
     }
     if (action === "generate" && method === "POST") {
         requireKey();
@@ -379,11 +433,13 @@ async function handleApi(req, res, url) {
         const result = await talkGenerator.generateTalkSet({
             apiKey: env.apiKey, model: textModel || undefined, profile: draft.profile, interview: draft.interview, setId: draft.id
         });
+        // 作っている間（1〜3分）に画面で書き足した内容を消さないよう、読み直してから木と相手だけ入れ替える。
         // 作り直すと同じ id で別の内容になるので、作り直しの印は消す（内容が変われば古い絵は stale になる）
-        Object.assign(draft, { partners: result.partners, tree: result.tree, regenerate: [] });
-        if (!draft.name) draft.name = result.name;
-        if (!draft.protagonist) draft.protagonist = describeProtagonist(draft.profile);
-        return sendJson(res, 200, draftResponse(writeDraft(draft)));
+        const latest = readDraft(draft.id);
+        Object.assign(latest, { partners: result.partners, tree: result.tree, regenerate: [] });
+        if (!latest.name) latest.name = result.name;
+        if (!latest.protagonist) latest.protagonist = describeProtagonist(latest.profile);
+        return sendJson(res, 200, draftResponse(writeDraft(latest)));
     }
     if (action === "icon-plan" && method === "GET") {
         const { targets, sheets } = iconPlan(draft);
