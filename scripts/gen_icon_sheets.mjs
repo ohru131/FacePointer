@@ -431,7 +431,15 @@ async function main() {
         await sharp(image).png().toFile(path.join(SHEET_DIR, file));
         log.push({ file, model: env.model, slots: slots.map(({ key, pad, desc }) => ({ key, pad, hash: descHash(desc) })) });
         fs.writeFileSync(SHEET_LOG, JSON.stringify(log, null, 2));
-        const written = await splitSheet(path.join(SHEET_DIR, file), slots);
+        let written;
+        try {
+            written = await splitSheet(path.join(SHEET_DIR, file), slots);
+        } catch (error) {
+            // シートは保存済みなので --split-only で切り直せる。残りのシートは続けて作る
+            console.warn(`  分割に失敗: ${error.message}（${file}）`);
+            failed.push(i + 1);
+            continue;
+        }
         for (const slot of slots) if (!slot.pad) sources[slot.key] = descHash(slot.desc);
         // 途中で止まっても作れた分は使えるよう、シートごとに一覧を更新する
         writeSources(sources);
