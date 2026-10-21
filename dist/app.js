@@ -177,6 +177,8 @@ const DWELL_LEAVE_GRACE_MS = 200;
 const DWELL_INDICATOR_SHOW_RATIO = 0.08;
 // 起動・モード切替直後は、最初にホバーしたパネルから一度外れるまで滞留しない
 const DWELL_LOCK_FIRST_HOVER = "*";
+// お話の画面が入れ替わった直後にポインタの下にあるパネルは、外さなくても選べるが、意図せず選ばないよう長めに滞留させる
+const DWELL_CARRYOVER_RATIO = 1.5;
 
 const symptomChoices = [
     {
@@ -289,6 +291,8 @@ let dwellAnchorY = 0;
 let dwellLeftAt = 0;
 // 確定済みパネル。一度外れるまで再選択しない（TD Snap の Look away before reselecting 相当）
 let dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+// DWELL_CARRYOVER_RATIO を掛けるパネル。DWELL_LOCK_FIRST_HOVER なら次の判定でポインタの下のパネルを記録する
+let dwellCarryoverKey = "";
 
 // 介助者が出した質問への回答中（モードに関係なくパネル選択画面になる）
 let activeQuestion = null;
@@ -1830,11 +1834,12 @@ function getTalkTabs() {
     ];
 }
 
-// 中身が入れ替わるので、一度動くまで滞留しない
+// 中身が入れ替わるので、ポインタの下に来た新しいパネルは長めの滞留で確定する。
+// 確定したばかりのボタン（タブ・戻るなど）は dwellLockedKey のまま、外れるまで再選択しない
 function refreshTalkScreen() {
     simplePage = 0;
     resetDwellProgress();
-    dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+    dwellCarryoverKey = DWELL_LOCK_FIRST_HOVER;
 }
 
 // お話タブ中にもう一度お話を選んだら最初の話題へ。相づちなどから戻ったときは、たどっていた場所を保つ
@@ -2267,6 +2272,9 @@ function updateDwellSelection(hasFace) {
     if (dwellLockedKey && dwellLockedKey !== DWELL_LOCK_FIRST_HOVER && hoveredKey !== dwellLockedKey) {
         dwellLockedKey = "";
     }
+    // 入れ替わり後に最初に判定したとき、ポインタの下にあったパネルだけを長めにする（外れたら通常に戻す）
+    if (dwellCarryoverKey === DWELL_LOCK_FIRST_HOVER) dwellCarryoverKey = hoveredKey;
+    if (dwellCarryoverKey && hoveredKey !== dwellCarryoverKey) dwellCarryoverKey = "";
 
     if (!hoveredKey || hoveredKey === dwellLockedKey) {
         // 境界のジッタで一瞬外れただけなら進捗を保持する
@@ -2292,9 +2300,10 @@ function updateDwellSelection(hasFace) {
     if (!targetBtn) return;
     targetBtn.classList.add("dwelling");
 
-    const requiredMs = isSimplePaused
+    const baseMs = isSimplePaused
         ? Math.max(dwellTimeMs * SIMPLE_RESUME_DWELL_RATIO, SIMPLE_RESUME_DWELL_MIN_MS)
         : getPanelDwellMs(hoveredKey);
+    const requiredMs = hoveredKey === dwellCarryoverKey ? baseMs * DWELL_CARRYOVER_RATIO : baseMs;
     const progress = clamp((now - dwellStartAt) / requiredMs, 0, 1);
     if (dwellIndicator) {
         dwellIndicator.style.setProperty("--dwell-x", `${pointerX}px`);
