@@ -129,6 +129,7 @@ body.pointer-absolute #front-recapture-top {
     border-color: rgba(69, 123, 157, 0.9);
 }
 
+#front-recapture-top.unreachable,
 body.calib-active #front-recapture-top,
 body.settings-open #front-recapture-top {
     display: none;

@@ -793,6 +793,8 @@ function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
         && Date.now() - lastVerticalStageSwitchAt >= FRONT_BUTTON_STAGE_LOCKOUT_MS
         && !isConfirmInProgress && !pendingClickTimer && !isSettingsOpen();
     updatePostureHint(rawX, rawY, centerX - bounds.minX, bounds.maxX - centerX, upRange, downRange, timeMs);
+    // 上下に動けない画面ではボタンへ届かないので出さない
+    if (frontRecaptureTopBtn) frontRecaptureTopBtn.classList.toggle("unreachable", !verticalBounds);
     const buttonCenter = updateFrontButtonHover(onFrontButton, timeMs);
     if (buttonCenter) {
         nextX = buttonCenter.x;
@@ -819,7 +821,9 @@ function updatePostureHint(rawX, rawY, leftRange, rightRange, upRange, downRange
     // 範囲 0 の側（症状モードの段ごとの正面）は設計上いつも端なので数えない
     const pinnedOn = (raw, negRange, posRange) => (posRange > 0 && raw >= posRange * POSTURE_HINT_PINNED_RATIO)
         || (negRange > 0 && -raw >= negRange * POSTURE_HINT_PINNED_RATIO);
-    const nearCenter = (raw, negRange, posRange) => Math.abs(raw) <= Math.max(negRange, posRange) * POSTURE_HINT_CLEAR_RATIO;
+    // 範囲の無い軸（上下移動なし）は中央扱い
+    const nearCenter = (raw, negRange, posRange) => (negRange <= 0 && posRange <= 0)
+        || Math.abs(raw) <= Math.max(negRange, posRange) * POSTURE_HINT_CLEAR_RATIO;
     const isPinned = pinnedOn(rawX, leftRange, rightRange) || pinnedOn(rawY, upRange, downRange);
     const isCentered = nearCenter(rawX, leftRange, rightRange) && nearCenter(rawY, upRange, downRange);
 
@@ -1031,8 +1035,8 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex,
         if (isSimpleMode()) {
             targetY = clamp(targetY, bounds.minY, bounds.maxY);
         } else if (isVerticalMoveEnabled) {
-            // 校正直後は必ず上段の高さから始める
-            snapPointerToUpperRow();
+            // 校正直後は正面の行から始める（相対方式は上段、絶対方式は今の段の行）
+            snapPointerToFrontRow();
         } else {
             targetY = bounds.centerY;
         }
@@ -1429,6 +1433,7 @@ function checkPointerCollision() {
     }
 
     // 上下移動で行間を通過中も、上段の選択対象とプレビューを保持する
+    // （上端の正面取り直しボタンに乗っている間も同じ。滞留と口のクリックは updateDwellSelection / triggerClick で止める）
     if (!hoveredBtn && !isSimpleMode() && isVerticalMoveEnabled && symptomStage === SYMPTOM_STAGE_SYMPTOM) {
         hoveredBtn = findRow1ButtonByPointerX();
     }
@@ -2469,7 +2474,8 @@ function resetDwellProgress() {
 
 function updateDwellSelection(hasFace) {
     if (!isSimpleMode() || dwellTimeMs <= 0 || !hasFace || isCalibrating
-        || calibrationWizard.isActive() || isConfirmInProgress || pendingClickTimer) {
+        || calibrationWizard.isActive() || isConfirmInProgress || pendingClickTimer
+        || frontButtonHoverStartMs !== null) {
         resetDwellProgress();
         return;
     }
@@ -4500,9 +4506,14 @@ async function predictWebcam() {
 
             const nose = landmarks[4];
             if (isNewFrame && faceIndex === 0 && needsStartupFrontRegistration) {
-                needsStartupFrontRegistration = false;
-                // 絶対方式は正面がずれると全体がずれるので、起動時に正面を登録する（10秒止まれなければ今の姿勢で始める）
-                if (pointerMode === POINTER_MODE_ABSOLUTE && !calibrationWizard.isActive() && !isSettingsOpen()) startFrontRecapture();
+                // 絶対方式は正面がずれると全体がずれるので、起動時に正面を登録する（10秒止まれなければ今の姿勢で始める）。
+                // 設定画面を開いている間は待つ。介助者メニューの開閉状態は変えない
+                if (pointerMode !== POINTER_MODE_ABSOLUTE || calibrationWizard.isActive()) {
+                    needsStartupFrontRegistration = false;
+                } else if (!isSettingsOpen()) {
+                    needsStartupFrontRegistration = false;
+                    startFrontRecapture({ collapse: false });
+                }
             }
             if (isNewFrame && faceIndex === 0 && calibrationWizard.isActive()) {
                 calibrationWizard.onFrame(landmarks, results, startTimeMs);
@@ -5029,7 +5040,7 @@ function showGestureFeedback() {
 }
 
 function triggerClick() {
-    if (calibrationWizard.isActive() || isSettingsOpen()) return false;
+    if (calibrationWizard.isActive() || isSettingsOpen() || frontButtonHoverStartMs !== null) return false;
     if (isConfirmInProgress) {
         logClickDebug("click_blocked_confirm_in_progress");
         return false;
@@ -5506,9 +5517,8 @@ const calibrationWizard = (() => {
 
     function nextStep() {
         if (frontOnly) {
-            // 静止を確認できたので、今の向きを正面として取り直す
+            // 正面は記録した時点で登録済み
             close();
-            recaptureFrontPose();
             return;
         }
         if (stepIndex + 1 >= steps.length) {
@@ -5588,6 +5598,8 @@ const calibrationWizard = (() => {
             });
             refitModel();
         }
+        // 正面の登録だけのときは、静止中の平均をそのまま正面にする（表示の待ち時間の間に動いた姿勢を拾わない）
+        if (frontOnly) recaptureFrontPose(sample);
         matchedElapsedMs = 0;
         targetEl.classList.add("matched");
         playChime();
@@ -5883,20 +5895,43 @@ calibrateBtn.addEventListener("click", () => {
 
 // 姿勢が変わったときに、キャリブレーション結果（感度・揺れ・距離補正）は残したまま正面だけ取り直す。
 // キャリブレーション画面の正面登録と同じく、中央の○を向いて静止したら登録する
-function startFrontRecapture() {
+function startFrontRecapture({ collapse = true } = {}) {
     if (calibrationWizard.isActive()) return;
-    collapseControls();
+    // 上を向いたまま登録が時間切れで閉じても、すぐにボタンへ乗って開き直さないよう、一度戻るまで無効にする
+    isFrontButtonArmed = false;
+    if (collapse) collapseControls();
     calibrationWizard.start({ frontOnly: true });
 }
 
-function recaptureFrontPose() {
+// sample があれば（キャリブレーション画面の静止中の平均）それを正面にし、無ければ次のフレームの姿勢を正面にする
+function recaptureFrontPose(sample = null) {
     clearPostureHint();
-    isCalibrating = true;
     resetPointerMotionHistory();
-    // 取り直した正面 = 移動範囲の中央なので、ポインタも中央へ置き直す（縦は校正処理が行の位置へ合わせる）
+    if (sample && [sample.noseX, sample.noseY, sample.yaw, sample.pitch].every(Number.isFinite)) {
+        // sample.noseX はランタイムと同じ鏡像座標（1 - nose.x）
+        calibratedNoseX = sample.noseX;
+        calibratedNoseY = sample.noseY;
+        calibratedYaw = sample.yaw;
+        calibratedPitch = sample.pitch;
+        if (Number.isFinite(sample.distance)) sessionDistanceRef = sample.distance;
+        // 起動時の校正待ち（isCalibrating）が残っていると、次のフレームの姿勢で上書きされるので解除する
+        isCalibrating = false;
+        speak("完了");
+    } else {
+        isCalibrating = true;
+    }
+    // 取り直した正面 = 移動範囲の中央なので、ポインタも中央へ置き直す
     const bounds = getSymptomRowPointerBounds();
     if (bounds) targetX = pointerX = (bounds.minX + bounds.maxX) / 2;
     if (bounds && isSimpleMode()) targetY = pointerY = (bounds.minY + bounds.maxY) / 2;
+    else snapPointerToFrontRow();
+}
+
+// 症状モードの縦: 絶対方式では今の段の行が正面、相対方式では上段から始める
+function snapPointerToFrontRow() {
+    if (isSimpleMode() || !isVerticalMoveEnabled) return;
+    if (pointerMode === POINTER_MODE_ABSOLUTE && symptomStage === SYMPTOM_STAGE_BODY_PART) snapPointerToLowerRow();
+    else snapPointerToUpperRow();
 }
 
 const recaptureFrontBtn = document.getElementById("recapture-front-btn");
