@@ -86,6 +86,20 @@ const RECENTER_KEY = "recenter_enabled";
 // 揺れからデッドゾーンを決める新しいキャリブレーションで保存したかどうか。
 // 旧キャリブレーションの感度は広いデッドゾーン前提で決めたので、やり直すまでは従来の幅を使う
 const CALIB_VERSION_KEY = "calibration_version";
+// ポインタ方式: 絶対（正面を固定し、顔の向き＝画面位置）/ 相対（動いた分だけ動く）
+const POINTER_MODE_KEY = "pointer_mode";
+const POINTER_MODE_ABSOLUTE = "absolute";
+const POINTER_MODE_RELATIVE = "relative";
+// 絶対方式で端を越えて振り切ったあと、中央のこの範囲まで戻ったら元の係数に戻す（移動範囲の半幅に対する割合）
+const ABS_EDGE_RESET_RATIO = 0.05;
+// 上端中央の「正面取り直し」: 上の端をこの量（上下の移動範囲に対する割合）以上越えて上を向き、滞留すると起動
+const FRONT_BUTTON_OVERSHOOT_RATIO = 0.4;
+const FRONT_BUTTON_MIN_OVERSHOOT_PX = 40;
+// 横は正面からこの範囲（移動範囲の半幅に対する割合）のときだけボタンに乗る
+const FRONT_BUTTON_X_BAND_RATIO = 0.5;
+const FRONT_BUTTON_DWELL_MS = 1500;
+// 段の切替で上を向いた直後に誤って乗らないようにする
+const FRONT_BUTTON_STAGE_LOCKOUT_MS = 1000;
 const CALIB_VERSION_NOISE_DEADZONE = "2";
 // 正面付近とみなす範囲（移動範囲の半幅に対する割合）
 const RECENTER_ZONE_RATIO = 0.35;
@@ -269,6 +283,14 @@ let verticalGainRatio = readStoredNumber(VERTICAL_GAIN_RATIO_KEY, 1, 0.3, 4);
 let isVerticalMoveEnabled = localStorage.getItem(VERTICAL_MOVE_KEY) !== "0";
 let isDistanceCompEnabled = localStorage.getItem(DISTANCE_COMP_KEY) !== "0";
 let isRecenterEnabled = localStorage.getItem(RECENTER_KEY) !== "0";
+let pointerMode = localStorage.getItem(POINTER_MODE_KEY) === POINTER_MODE_RELATIVE ? POINTER_MODE_RELATIVE : POINTER_MODE_ABSOLUTE;
+// 絶対方式で振り切ったときの一時的な端（正面からの変位px。null = 振り切っていない）
+let absEdges = { left: null, right: null, up: null, down: null };
+let absStageForY = null;
+let frontButtonHoverStartMs = null;
+// 段の切替などで上を向いたままの場合に起動しないよう、一度上の端より内側へ戻ってから有効にする
+let isFrontButtonArmed = false;
+let frontButtonStage = null;
 let isNoiseDeadzone = localStorage.getItem(CALIB_VERSION_KEY) === CALIB_VERSION_NOISE_DEADZONE;
 let debugRecenterDrift = 0;
 // キャリブレーションで決めた基準距離（0 = 未計測。その間は正面を取り直した時点の距離を基準にする）
@@ -396,6 +418,7 @@ function resetPointerMotionHistory() {
     filteredPitch = null;
     filteredHeadDistance = null;
     lastHeadDistanceMs = null;
+    absEdges = { left: null, right: null, up: null, down: null };
 }
 
 function updateHeadDistance(detectResults, faceIndex, timeMs) {
@@ -684,6 +707,117 @@ function recenterToward(position, expected, delta) {
     return position + clamp(expected - position, -limit, limit);
 }
 
+// 絶対方式: 正面(校正位置)から anchor までの顔の変位を、ランタイムと同じゲイン・加速で画面上の変位(px)にする。
+// anchor はバックラッシュ後の値なので、揺れはここに来る前に抑えられている
+function getAbsoluteFaceOffset(anchor) {
+    const noseX = noseGain > 0 ? (anchor.noseX - calibratedNoseX) * getNoseScale() : 0;
+    const yaw = yawGain > 0
+        ? signedAcceleratedAngle(calibratedYaw, anchor.yaw, calibratedYaw) * YAW_MIRROR_SIGN * getYawScale()
+        : 0;
+    const noseY = noseGain > 0 ? (anchor.noseY - calibratedNoseY) * getNoseScale() * VERTICAL_NOSE_SCALE_RATIO : 0;
+    const pitch = yawGain > 0
+        ? signedAcceleratedAngle(calibratedPitch, anchor.pitch, calibratedPitch) * PITCH_MIRROR_SIGN * getYawScale() * VERTICAL_PITCH_SCALE_RATIO
+        : 0;
+    return { x: noseX + yaw, y: (noseY + pitch) * verticalGainRatio };
+}
+
+// 端を越えて振り切った量を一時的な端として覚え、戻すときは「正面→一時的な端」を「中央→画面の端」に縮めて動かす。
+// 戻し始めた瞬間から動き、正面で必ず中央に来る。中央付近まで戻ったら元の係数に戻す（中央ではどちらの係数でも
+// ほぼ同じ位置なので跳ねない）
+function mapAbsoluteAxis(raw, negRange, posRange, negKey, posKey) {
+    const side = raw >= 0 ? posKey : negKey;
+    const range = raw >= 0 ? posRange : negRange;
+    const magnitude = Math.abs(raw);
+    absEdges[raw >= 0 ? negKey : posKey] = null;
+    if (range <= 0) return 0;
+    if (absEdges[side] !== null && magnitude < range * ABS_EDGE_RESET_RATIO) absEdges[side] = null;
+    if (magnitude > range) absEdges[side] = Math.max(absEdges[side] ?? range, magnitude);
+    const edge = Math.max(range, absEdges[side] ?? range);
+    return Math.sign(raw) * magnitude * (range / edge);
+}
+
+function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
+    const distanceRatio = getDistanceRatio();
+    debugDistanceRatio = distanceRatio;
+    const offset = getAbsoluteFaceOffset(anchor);
+    const rawX = offset.x * distanceRatio;
+    const rawY = offset.y * distanceRatio;
+
+    const centerX = (bounds.minX + bounds.maxX) / 2;
+    let nextX = clamp(centerX + mapAbsoluteAxis(rawX, centerX - bounds.minX, bounds.maxX - centerX, "left", "right"), bounds.minX, bounds.maxX);
+    let nextY = bounds.centerY;
+    let upRange = 0;
+    let downRange = 0;
+    if (verticalBounds) {
+        const stage = isSimpleMode() ? "simple" : symptomStage;
+        if (stage !== absStageForY) {
+            absEdges.up = null;
+            absEdges.down = null;
+            absStageForY = stage;
+        }
+        // 症状モードは段ごとに正面の位置を変える（上段: 正面=上段、下段: 正面=下段）。下段で下を向き続けなくてよい
+        let centerY = (verticalBounds.minY + verticalBounds.maxY) / 2;
+        if (!isSimpleMode()) centerY = symptomStage === SYMPTOM_STAGE_BODY_PART ? verticalBounds.maxY : verticalBounds.minY;
+        upRange = centerY - verticalBounds.minY;
+        downRange = verticalBounds.maxY - centerY;
+        nextY = clamp(centerY + mapAbsoluteAxis(rawY, upRange, downRange, "up", "down"), verticalBounds.minY, verticalBounds.maxY);
+    }
+    debugDeltaX = nextX - targetX;
+    debugDeltaYPx = nextY - targetY;
+    debugRecenterDrift = 0;
+
+    const halfWidth = (bounds.maxX - bounds.minX) / 2;
+    const overshootUp = -rawY - upRange;
+    if (absStageForY !== frontButtonStage) {
+        frontButtonStage = absStageForY;
+        isFrontButtonArmed = false;
+    }
+    const frontButtonThreshold = Math.max(FRONT_BUTTON_MIN_OVERSHOOT_PX, FRONT_BUTTON_OVERSHOOT_RATIO * Math.max(upRange, downRange));
+    // 正面に戻してもバックラッシュの分だけ上に残るので、しきい値の半分まで戻れば有効にする
+    if (overshootUp <= frontButtonThreshold / 2) isFrontButtonArmed = true;
+    const onFrontButton = verticalBounds !== null
+        && (isFrontButtonArmed || frontButtonHoverStartMs !== null)
+        && overshootUp >= frontButtonThreshold
+        && Math.abs(rawX) <= halfWidth * FRONT_BUTTON_X_BAND_RATIO
+        && Date.now() - lastVerticalStageSwitchAt >= FRONT_BUTTON_STAGE_LOCKOUT_MS
+        && !isConfirmInProgress && !pendingClickTimer && !isSettingsOpen();
+    const buttonCenter = updateFrontButtonHover(onFrontButton, timeMs);
+    if (buttonCenter) {
+        nextX = buttonCenter.x;
+        nextY = buttonCenter.y;
+    }
+    targetX = nextX;
+    targetY = nextY;
+}
+
+const frontRecaptureTopBtn = document.getElementById("front-recapture-top");
+
+function cancelFrontButtonHover() {
+    frontButtonHoverStartMs = null;
+    if (!frontRecaptureTopBtn) return;
+    frontRecaptureTopBtn.classList.remove("hover");
+    frontRecaptureTopBtn.style.setProperty("--front-hold", "0");
+}
+
+// 上端中央ボタンへの滞留。乗っている間はポインタをボタンの上に置き、滞留が溜まったら正面の登録を始める
+function updateFrontButtonHover(isOn, timeMs) {
+    if (!frontRecaptureTopBtn || !isOn) {
+        cancelFrontButtonHover();
+        return null;
+    }
+    if (frontButtonHoverStartMs === null) frontButtonHoverStartMs = timeMs;
+    const progress = clamp((timeMs - frontButtonHoverStartMs) / FRONT_BUTTON_DWELL_MS, 0, 1);
+    frontRecaptureTopBtn.classList.add("hover");
+    frontRecaptureTopBtn.style.setProperty("--front-hold", String(progress));
+    const rect = frontRecaptureTopBtn.getBoundingClientRect();
+    const center = { x: rect.left + (rect.width / 2), y: rect.top + (rect.height / 2) };
+    if (progress >= 1) {
+        cancelFrontButtonHover();
+        startFrontRecapture();
+    }
+    return center;
+}
+
 function getAngleOffsetAcceleration(currentAngle, calibratedAngle) {
     const offsetAbs = Math.abs((currentAngle ?? calibratedAngle) - calibratedAngle);
     const norm = clamp((offsetAbs - YAW_ACCEL_START_RAD) / (YAW_ACCEL_FULL_RAD - YAW_ACCEL_START_RAD), 0, 1);
@@ -710,7 +844,10 @@ function updateTelemetryPanel(hasFace) {
         `横移動px: ${f2(debugDeltaX)}`,
         `口(実/閾): ${f3(jawOpenFilteredScore)}/${f3(debugJawOpenThreshold)}`,
         `距離比: ${isDistanceCompEnabled ? f2(debugDistanceRatio) : "補正OFF"}`,
-        `中央補正ずれpx: ${isRecenterEnabled ? f2(debugRecenterDrift) : "OFF"}`
+        `方式: ${pointerMode === POINTER_MODE_ABSOLUTE ? "絶対（正面固定）" : "相対"}`,
+        pointerMode === POINTER_MODE_ABSOLUTE
+            ? `一時的な端px(左/右/上/下): ${["left", "right", "up", "down"].map(k => (absEdges[k] === null ? "-" : absEdges[k].toFixed(0))).join("/")}`
+            : `中央補正ずれpx: ${isRecenterEnabled ? f2(debugRecenterDrift) : "OFF"}`
     ];
 
     if (isVerticalMoveEnabled) {
@@ -877,13 +1014,23 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex,
         return;
     }
 
-    const noseDeadzone = getNoseDeadzone();
-    const yawDeadzone = getYawDeadzone();
+    // 絶対方式では遊びが「戻したときの位置の差」として残るので、揺れを抑える最小限の幅にする
+    const isAbsolute = pointerMode === POINTER_MODE_ABSOLUTE;
+    const noseDeadzone = isAbsolute ? Math.max(NOSE_DEADZONE_MIN, noseNoise * NOISE_DEADZONE_FACTOR) : getNoseDeadzone();
+    const yawDeadzone = isAbsolute ? Math.max(YAW_DEADZONE_MIN, angleNoise * NOISE_DEADZONE_FACTOR) : getYawDeadzone();
     // last* はバックラッシュ後の値（anchor）。差分は anchor の移動量
     const nextNoseX = applyBacklash(lastNoseControlX, filteredNoseControlX, noseDeadzone);
     const nextYaw = applyBacklash(lastYaw, filteredYaw, yawDeadzone);
     const nextNoseY = applyBacklash(lastNoseControlY, filteredNoseControlY, noseDeadzone);
     const nextPitch = applyBacklash(lastPitch, filteredPitch, yawDeadzone);
+    if (isAbsolute) {
+        updateAbsolutePointerTarget(bounds, verticalBounds, { noseX: nextNoseX, noseY: nextNoseY, yaw: nextYaw, pitch: nextPitch }, timeMs);
+        lastNoseControlX = nextNoseX;
+        lastNoseControlY = nextNoseY;
+        lastYaw = nextYaw;
+        lastPitch = nextPitch;
+        return;
+    }
     const dN = nextNoseX - lastNoseControlX;
     const dY = nextYaw - lastYaw;
     debugDeltaN = dN;
@@ -4326,6 +4473,7 @@ async function predictWebcam() {
     pointerElement.style.setProperty("--pointer-y", `${pointerY}px`);
 
     if (!hasFace) {
+        cancelFrontButtonHover();
         debugDeltaN = 0;
         debugDeltaY = 0;
         debugPixN = 0;
@@ -4938,6 +5086,8 @@ const CALIB_MIN_MOVE_NOSE = 0.015;
 const CALIB_MOVE_GIVEUP_MS = 5000;
 // 止まりきれなくても、この時間が経ったら直近の平均で記録して先へ進む（結果に警告を出す）
 const CALIB_CAPTURE_GIVEUP_MS = 15000;
+// 正面の登録だけのときは、この時間止まれなければ元の正面のまま閉じる
+const CALIB_FRONT_TIMEOUT_MS = 10000;
 const CALIB_MATCH_SHOW_MS = 700;
 // 記録する値は静止中の直近この時間の平均
 const CALIB_SAMPLE_AVERAGE_MS = 600;
@@ -5279,6 +5429,8 @@ const calibrationWizard = (() => {
     let mouthSamples = [];
     let model = null;
     let result = null;
+    // 正面の登録だけを行うモード（正面取り直し）
+    let frontOnly = false;
 
     const currentStep = () => steps[stepIndex];
     const topbarEl = document.getElementById("calib-topbar");
@@ -5302,6 +5454,12 @@ const calibrationWizard = (() => {
     }
 
     function nextStep() {
+        if (frontOnly) {
+            // 静止を確認できたので、今の向きを正面として取り直す
+            close();
+            recaptureFrontPose();
+            return;
+        }
         if (stepIndex + 1 >= steps.length) {
             finish();
             return;
@@ -5388,7 +5546,9 @@ const calibrationWizard = (() => {
         const step = currentStep();
         if (!step) return;
         const pass = step.pass ? passOf(step.pass) : null;
-        stepCountEl.textContent = `キャリブレーション ${stepIndex + 1} / ${steps.length}${pass ? `（${pass.label}）` : ""}`;
+        stepCountEl.textContent = frontOnly
+            ? "正面の登録"
+            : `キャリブレーション ${stepIndex + 1} / ${steps.length}${pass ? `（${pass.label}）` : ""}`;
         skipBtn.hidden = step.pass !== "far";
         root.classList.toggle("is-target", step.type === "target");
 
@@ -5403,7 +5563,9 @@ const calibrationWizard = (() => {
                 ? "一致しました"
                 : `${step.target.label}の ○ に顔の正面を向けて 止めてください`;
             if (matchedElapsedMs === null) {
-                subEl.textContent = step.target.key === "center"
+                subEl.textContent = frontOnly
+                    ? "楽な姿勢で。この向きが画面の中央になります"
+                    : step.target.key === "center"
                     ? `${pass.sub}、楽な姿勢で`
                     : "薄い点が ○ の中に入るように。合わなくても ○ を向いて止まれば記録します";
             }
@@ -5444,15 +5606,17 @@ const calibrationWizard = (() => {
         progressBar.style.width = `${clamp(ratio, 0, 1) * 100}%`;
     }
 
-    function start() {
+    function start(options = {}) {
         // 起動ボタンにフォーカスが残ると Space/Enter で計測中に再スタートしてしまう
         if (document.activeElement && typeof document.activeElement.blur === "function") {
             document.activeElement.blur();
         }
         active = true;
         finished = false;
-        steps = buildCalibrationSteps();
+        frontOnly = options.frontOnly === true;
+        steps = frontOnly ? [{ type: "target", pass: "near", target: CALIB_TARGETS[0] }] : buildCalibrationSteps();
         lastFrameMs = null;
+        cancelFrontButtonHover();
         captures = [];
         neutralSamples = [];
         mouthSamples = [];
@@ -5473,6 +5637,9 @@ const calibrationWizard = (() => {
     function close() {
         active = false;
         finished = false;
+        // 計測中に見ていた位置のパネルが閉じた直後に滞留確定しないよう、一度外れるまで滞留しない
+        dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+        resetDwellProgress();
         root.classList.remove("active", "done", "is-target");
         cursorEl.classList.remove("visible");
         document.body.classList.remove("calib-active");
@@ -5564,7 +5731,11 @@ const calibrationWizard = (() => {
         const required = isCenter ? CALIB_CENTER_HOLD_MS : (inCircle ? CALIB_TARGET_HOLD_IN_CIRCLE_MS : CALIB_TARGET_HOLD_MS);
         cursorEl.classList.toggle("in-circle", inCircle);
         if (holdMs >= required) capture(timeMs);
-        else if (stepElapsedMs >= CALIB_CAPTURE_GIVEUP_MS) capture(timeMs, true);
+        else if (frontOnly && stepElapsedMs >= CALIB_FRONT_TIMEOUT_MS) {
+            // 止まれないまま時間が経ったら、元の正面のまま閉じる（誤って起動した場合もここで戻る）
+            close();
+            return;
+        } else if (stepElapsedMs >= CALIB_CAPTURE_GIVEUP_MS) capture(timeMs, true);
         render(sample);
     }
 
@@ -5627,7 +5798,7 @@ const calibrationWizard = (() => {
     }
 
     saveBtn.addEventListener("click", apply);
-    retryBtn.addEventListener("click", start);
+    retryBtn.addEventListener("click", () => start());
     closeBtn.addEventListener("click", close);
     cancelBtn.addEventListener("click", close);
     skipBtn.addEventListener("click", skipFarPass);
@@ -5659,17 +5830,26 @@ calibrateBtn.addEventListener("click", () => {
     speak("リセット");
 });
 
-// 姿勢が変わったときに、キャリブレーション結果（感度・揺れ・距離補正）は残したまま正面だけ取り直す
+// 姿勢が変わったときに、キャリブレーション結果（感度・揺れ・距離補正）は残したまま正面だけ取り直す。
+// キャリブレーション画面の正面登録と同じく、中央の○を向いて静止したら登録する
+function startFrontRecapture() {
+    if (calibrationWizard.isActive()) return;
+    collapseControls();
+    calibrationWizard.start({ frontOnly: true });
+}
+
+function recaptureFrontPose() {
+    isCalibrating = true;
+    resetPointerMotionHistory();
+    // 取り直した正面 = 移動範囲の中央なので、ポインタも中央へ置き直す（縦は校正処理が行の位置へ合わせる）
+    const bounds = getSymptomRowPointerBounds();
+    if (bounds) targetX = pointerX = (bounds.minX + bounds.maxX) / 2;
+    if (bounds && isSimpleMode()) targetY = pointerY = (bounds.minY + bounds.maxY) / 2;
+}
+
 const recaptureFrontBtn = document.getElementById("recapture-front-btn");
 if (recaptureFrontBtn) {
-    recaptureFrontBtn.addEventListener("click", () => {
-        isCalibrating = true;
-        resetPointerMotionHistory();
-        // 取り直した正面 = 移動範囲の中央なので、ポインタも中央へ置き直す（縦は校正処理が行の位置へ合わせる）
-        const bounds = getSymptomRowPointerBounds();
-        if (bounds) targetX = pointerX = (bounds.minX + bounds.maxX) / 2;
-        if (bounds && isSimpleMode()) targetY = pointerY = (bounds.minY + bounds.maxY) / 2;
-    });
+    recaptureFrontBtn.addEventListener("click", startFrontRecapture);
 }
 
 const audioCacheBtn = document.getElementById("audio-cache-btn");
@@ -5934,6 +6114,28 @@ if (recenterToggleBtn) {
 }
 
 applyRecenterToggleState();
+
+const pointerModeToggleBtn = document.getElementById("pointer-mode-btn");
+
+function applyPointerModeState() {
+    const isAbsolute = pointerMode === POINTER_MODE_ABSOLUTE;
+    document.body.classList.toggle("pointer-absolute", isAbsolute);
+    if (!pointerModeToggleBtn) return;
+    pointerModeToggleBtn.classList.toggle("is-off", !isAbsolute);
+    pointerModeToggleBtn.setAttribute("aria-pressed", isAbsolute ? "true" : "false");
+}
+
+if (pointerModeToggleBtn) {
+    pointerModeToggleBtn.addEventListener("click", () => {
+        pointerMode = pointerMode === POINTER_MODE_ABSOLUTE ? POINTER_MODE_RELATIVE : POINTER_MODE_ABSOLUTE;
+        localStorage.setItem(POINTER_MODE_KEY, pointerMode);
+        cancelFrontButtonHover();
+        resetPointerMotionHistory();
+        applyPointerModeState();
+    });
+}
+
+applyPointerModeState();
 
 function applyParamPanelVisibility() {
     if (!controlsRoot) return;

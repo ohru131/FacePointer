@@ -84,6 +84,44 @@ body {
     border: 2px solid rgba(255, 255, 255, 0.6);
 }
 
+/* ── 正面取り直し（絶対方式・上端中央） ───────────── */
+#front-recapture-top {
+    position: fixed;
+    top: 4px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: none;
+    align-items: center;
+    gap: 0.4em;
+    padding: 0.25rem 1rem;
+    border-radius: 999px;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #334155;
+    /* --front-hold (0〜1) の割合だけ下地を塗って滞留の進み具合を見せる */
+    background:
+        linear-gradient(90deg, rgba(69, 123, 157, 0.35) calc(var(--front-hold, 0) * 100%), rgba(255, 255, 255, 0.75) 0);
+    border: 1px solid rgba(100, 116, 139, 0.35);
+    opacity: 0.55;
+    pointer-events: none;
+    z-index: 580; /* pointer(600) の下 */
+    transition: opacity 0.15s;
+}
+
+body.pointer-absolute #front-recapture-top {
+    display: flex;
+}
+
+#front-recapture-top.hover {
+    opacity: 1;
+    border-color: rgba(69, 123, 157, 0.9);
+}
+
+body.calib-active #front-recapture-top,
+body.settings-open #front-recapture-top {
+    display: none;
+}
+
 /* ── dwell indicator (滞留確定の円グラフ) ──────────── */
 #dwell-indicator {
     position: fixed;
