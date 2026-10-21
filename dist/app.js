@@ -1,5 +1,6 @@
 import vision from "./mediapipe/vision_bundle.mjs";
 import { TALK_TREE } from "./talk-data.js";
+import { GENERATED_ICONS } from "./icon-images.js";
 import { TALK_AI_MODEL_DEFAULT, generateInterviewQuestions, generateTalkSet, countTalkTreeNodes } from "./talk-generator.js";
 const { FaceLandmarker, FilesetResolver, DrawingUtils } = vision;
 
@@ -176,6 +177,8 @@ const DWELL_LEAVE_GRACE_MS = 200;
 const DWELL_INDICATOR_SHOW_RATIO = 0.08;
 // 起動・モード切替直後は、最初にホバーしたパネルから一度外れるまで滞留しない
 const DWELL_LOCK_FIRST_HOVER = "*";
+// お話の画面が入れ替わった直後にポインタの下にあるパネルは、外さなくても選べるが、意図せず選ばないよう長めに滞留させる
+const DWELL_CARRYOVER_RATIO = 1.5;
 
 const symptomChoices = [
     {
@@ -288,6 +291,9 @@ let dwellAnchorY = 0;
 let dwellLeftAt = 0;
 // 確定済みパネル。一度外れるまで再選択しない（TD Snap の Look away before reselecting 相当）
 let dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+// DWELL_CARRYOVER_RATIO を掛けるパネル。DWELL_LOCK_FIRST_HOVER なら次の判定でポインタの下のパネルを記録する
+let dwellCarryoverKey = "";
+let isDwellConfirmingCarryover = false;
 
 // 介助者が出した質問への回答中（モードに関係なくパネル選択画面になる）
 let activeQuestion = null;
@@ -1508,8 +1514,16 @@ function buildSimpleSentence(item) {
     return `${item.name}。`;
 }
 
+// 絵のない項目と、標準の画風でピクトグラムになる項目は、Gemini で作ったアイコン（scripts/gen_icon_sheets.mjs）があればそれを使う。
+// ほかの画風には専用の素材があるので、icon のある項目はそちらを優先する
+function getGeneratedIcon(id, icon = "") {
+    if (icon && iconStyle !== ICON_STYLE_DEFAULT) return "";
+    return id && Object.hasOwn(GENERATED_ICONS, id) ? GENERATED_ICONS[id] : "";
+}
+
 function createSimpleButton(id, label, options = {}) {
-    const { icon = "", emoji = "", image = "", className = "", onClick = null } = options;
+    const { icon = "", emoji = "", className = "", onClick = null } = options;
+    const image = options.image || getGeneratedIcon(id, icon);
     const btn = document.createElement("div");
     btn.className = `h-btn ${className}`.trim();
     btn.dataset.row = SIMPLE_ROW_ID;
@@ -1787,8 +1801,11 @@ function getTalkPanels() {
     if (talkTab === TALK_TAB_AIZUCHI) return TALK_AIZUCHI.map(item => ({ ...item, type: "aizuchi" }));
     if (talkTab === TALK_TAB_FAVORITE) return getFavoriteTalkSentences();
     if (talkTab === TALK_TAB_PARTNER) {
+        // 生成アイコンは標準セットの相手の絵。AI で作ったセットは同じ id でも別の人（妹など）がありうるので id を分ける
+        // 「決めない」はどのセットでも同じ意味なので共通の id のまま
+        const idPrefix = getActiveTalkSet().builtin ? "talk-partner" : `talk-partner-${talkActiveSetId}`;
         return getTalkPartners().map(p => ({
-            id: `talk-partner-${p.id || "none"}`,
+            id: p.id ? `${idPrefix}-${p.id}` : "talk-partner-none",
             type: "partner",
             selected: p.id === talkPartnerId,
             name: p.name,
@@ -1821,11 +1838,18 @@ function getTalkTabs() {
     ];
 }
 
-// 中身が入れ替わるので、一度動くまで滞留しない
-function refreshTalkScreen() {
+// 中身が入れ替わるので、ポインタの下に来た新しいパネルは長めの滞留で確定する。
+// 確定したばかりのボタン（タブ・戻るなど）は dwellLockedKey のまま、外れるまで再選択しない。
+// 話した直後と、動かさずに続けて確定したあとは、じっとしているだけで次々に選ばれないよう一度外れるまで滞留しない
+function refreshTalkScreen({ fullLock = false } = {}) {
     simplePage = 0;
     resetDwellProgress();
-    dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+    if (fullLock || isDwellConfirmingCarryover) {
+        dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+        dwellCarryoverKey = "";
+    } else {
+        dwellCarryoverKey = DWELL_LOCK_FIRST_HOVER;
+    }
 }
 
 // お話タブ中にもう一度お話を選んだら最初の話題へ。相づちなどから戻ったときは、たどっていた場所を保つ
@@ -1871,7 +1895,7 @@ function speakTalkSentence(template, { record = true } = {}) {
     if (record) recordTalkHistory(template);
     if (talkTab === TALK_TAB_TREE) {
         talkPath = [];
-        refreshTalkScreen();
+        refreshTalkScreen({ fullLock: true });
     }
     rerenderSimpleMode();
     void speakSimpleSentence(sentence);
@@ -2258,6 +2282,9 @@ function updateDwellSelection(hasFace) {
     if (dwellLockedKey && dwellLockedKey !== DWELL_LOCK_FIRST_HOVER && hoveredKey !== dwellLockedKey) {
         dwellLockedKey = "";
     }
+    // 入れ替わり後に最初に判定したとき、ポインタの下にあったパネルだけを長めにする（外れたら通常に戻す）
+    if (dwellCarryoverKey === DWELL_LOCK_FIRST_HOVER) dwellCarryoverKey = hoveredKey;
+    if (dwellCarryoverKey && hoveredKey !== dwellCarryoverKey) dwellCarryoverKey = "";
 
     if (!hoveredKey || hoveredKey === dwellLockedKey) {
         // 境界のジッタで一瞬外れただけなら進捗を保持する
@@ -2283,9 +2310,10 @@ function updateDwellSelection(hasFace) {
     if (!targetBtn) return;
     targetBtn.classList.add("dwelling");
 
-    const requiredMs = isSimplePaused
+    const baseMs = isSimplePaused
         ? Math.max(dwellTimeMs * SIMPLE_RESUME_DWELL_RATIO, SIMPLE_RESUME_DWELL_MIN_MS)
         : getPanelDwellMs(hoveredKey);
+    const requiredMs = hoveredKey === dwellCarryoverKey ? baseMs * DWELL_CARRYOVER_RATIO : baseMs;
     const progress = clamp((now - dwellStartAt) / requiredMs, 0, 1);
     if (dwellIndicator) {
         dwellIndicator.style.setProperty("--dwell-x", `${pointerX}px`);
@@ -2298,7 +2326,13 @@ function updateDwellSelection(hasFace) {
         resetDwellProgress();
         dwellLockedKey = hoveredKey;
         lastConfirmedAt = Date.now();
-        targetBtn.click();
+        // 長めの滞留で確定したことを、クリック処理中の refreshTalkScreen に伝える
+        isDwellConfirmingCarryover = hoveredKey === dwellCarryoverKey;
+        try {
+            targetBtn.click();
+        } finally {
+            isDwellConfirmingCarryover = false;
+        }
     }
 }
 
@@ -2649,9 +2683,10 @@ function removeLayoutPanel(id) {
 function createLayoutThumb(item, className = "layout-thumb") {
     const thumb = document.createElement("div");
     thumb.className = className;
-    if (item.image || item.icon) {
+    const src = item.image || getGeneratedIcon(item.id, item.icon) || item.icon;
+    if (src) {
         const img = document.createElement("img");
-        img.src = item.image || item.icon;
+        img.src = src;
         img.alt = "";
         img.draggable = false;
         thumb.appendChild(img);

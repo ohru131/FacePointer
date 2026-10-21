@@ -9,3 +9,10 @@ dist/mediapipe/model/
 dist/mediapipe/*.mjs
 *.msi
 *.exe
+
+# Gemini APIキーなどのローカル設定（.env.example だけ共有する）
+.env
+.env.*
+!.env.example
+# Gemini で作った分割前のシート（分割後のアイコンは dist/media/gen/ に置く）
+scripts/generated-sheets/

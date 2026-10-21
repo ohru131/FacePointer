@@ -272,8 +272,8 @@ function trimTopSparseRows(raw, width, height) {
   return { data: out, width, height: newHeight };
 }
 
-// ボーダーなしの均等グリッド画像用: 5列×4行を等分割して切り出す
-function detectGridBands(raw, width, height) {
+// ボーダーなしの均等グリッド画像用: 列×行のバンドを検出して切り出す
+function detectGridBands(raw, width, height, rows = 4, cols = 5) {
   const rowInk = new Array(height).fill(0);
   const colInk = new Array(width).fill(0);
   for (let y = 0; y < height; y++)
@@ -302,8 +302,8 @@ function detectGridBands(raw, width, height) {
   const rowBands = findBands(rowInk, width, 0.02, 100);
   const colBands = findBands(colInk, height, 0.02, 100);
 
-  if (rowBands.length !== 4) throw new Error(`Expected 4 row bands, got ${rowBands.length}`);
-  if (colBands.length !== 5) throw new Error(`Expected 5 col bands, got ${colBands.length}`);
+  if (rowBands.length !== rows) throw new Error(`Expected ${rows} row bands, got ${rowBands.length}`);
+  if (colBands.length !== cols) throw new Error(`Expected ${cols} col bands, got ${colBands.length}`);
 
   return { rowBands, colBands };
 }
@@ -427,7 +427,11 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+module.exports = { applyEdgeConnectedTransparency, trimTopSparseRows, detectGridBands };
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}
