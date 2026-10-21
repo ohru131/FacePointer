@@ -1,5 +1,6 @@
 import vision from "./mediapipe/vision_bundle.mjs";
 import { TALK_TREE } from "./talk-data.js";
+import { GENERATED_ICONS } from "./icon-images.js";
 import { TALK_AI_MODEL_DEFAULT, generateInterviewQuestions, generateTalkSet, countTalkTreeNodes } from "./talk-generator.js";
 const { FaceLandmarker, FilesetResolver, DrawingUtils } = vision;
 
@@ -1508,8 +1509,16 @@ function buildSimpleSentence(item) {
     return `${item.name}。`;
 }
 
+// 絵のない項目と、標準の画風でピクトグラムになる項目は、Gemini で作ったアイコン（scripts/gen_icon_sheets.mjs）があればそれを使う。
+// ほかの画風には専用の素材があるので、icon のある項目はそちらを優先する
+function getGeneratedIcon(id, icon = "") {
+    if (icon && iconStyle !== ICON_STYLE_DEFAULT) return "";
+    return id && Object.hasOwn(GENERATED_ICONS, id) ? GENERATED_ICONS[id] : "";
+}
+
 function createSimpleButton(id, label, options = {}) {
-    const { icon = "", emoji = "", image = "", className = "", onClick = null } = options;
+    const { icon = "", emoji = "", className = "", onClick = null } = options;
+    const image = options.image || getGeneratedIcon(id, icon);
     const btn = document.createElement("div");
     btn.className = `h-btn ${className}`.trim();
     btn.dataset.row = SIMPLE_ROW_ID;
@@ -2649,9 +2658,10 @@ function removeLayoutPanel(id) {
 function createLayoutThumb(item, className = "layout-thumb") {
     const thumb = document.createElement("div");
     thumb.className = className;
-    if (item.image || item.icon) {
+    const src = item.image || getGeneratedIcon(item.id, item.icon) || item.icon;
+    if (src) {
         const img = document.createElement("img");
-        img.src = item.image || item.icon;
+        img.src = src;
         img.alt = "";
         img.draggable = false;
         thumb.appendChild(img);

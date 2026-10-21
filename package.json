@@ -7,7 +7,9 @@
     "start": "npx serve dist -p 3000",
     "dev": "npx serve dist -p 3000",
     "tauri": "tauri",
-    "split:menu-icons": "node scripts/split_menu_sheet.js"
+    "split:menu-icons": "node scripts/split_menu_sheet.js",
+    "icons:gen": "node scripts/gen_icon_sheets.mjs",
+    "icons:models": "node scripts/gen_icon_sheets.mjs --list-models"
   },
   "keywords": [],
   "author": "",
