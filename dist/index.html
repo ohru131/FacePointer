@@ -20,6 +20,8 @@
         </div>
         <!-- Pointer lives above ALL layers -->
         <div id="pointer"></div>
+        <!-- 正面取り直し（絶対方式）: 上の端を越えて上を向き、滞留すると起動。顔操作専用なのでマウスでは押せない -->
+        <div id="front-recapture-top" aria-hidden="true"><span class="front-recapture-icon">◎</span>正面取り直し</div>
         <!-- Dwell (滞留確定) progress pie, follows the pointer -->
         <div id="dwell-indicator" aria-hidden="true"></div>
 
@@ -138,7 +140,8 @@
                     <button id="params-toggle-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true">調整・計測値</button>
                     <button id="vertical-move-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true">上下移動（症状モード）</button>
                     <button id="distance-comp-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true" title="画面からの距離が変わっても、同じ向きで同じ位置を指せるように移動量を補正します">距離補正</button>
-                    <button id="recenter-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true" title="顔が正面付近にあるとき、顔を動かしている間だけポインタのずれを少しずつ戻します">中央補正</button>
+                    <button id="pointer-mode-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true" title="ON: 正面を固定し、顔の向きがそのまま画面の位置になる（絶対） / OFF: 顔を動かした分だけ動く（相対）">正面固定（絶対位置）</button>
+                    <button id="recenter-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true" title="相対方式のとき、顔が正面付近にあるあいだ、顔を動かしている間だけポインタのずれを少しずつ戻します">中央補正（相対）</button>
                 </section>
             </div>
 
