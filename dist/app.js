@@ -294,6 +294,19 @@ let pointerMode = localStorage.getItem(POINTER_MODE_KEY) === POINTER_MODE_RELATI
 // 絶対方式で振り切ったときの一時的な端（正面からの変位px。null = 振り切っていない）
 let absEdges = { left: null, right: null, up: null, down: null };
 let absStageForY = null;
+// パネル中央吸着（シンプルモード・絶対方式）: パネルに入るとラベル中央へゆっくり寄せ、
+// 着いたら「その顔の向き＝そのパネル中央」になるよう、正面（画面中央）を固定したまま上下左右の縮尺を変える
+const PANEL_SNAP_KEY = "panel_snap_enabled";
+const PANEL_SNAP_SPEED_PX_PER_S = 260;
+// 縮尺を変える点が正面に近すぎる（変位が範囲のこの割合未満）・端に近すぎる（この割合超）と縮尺が極端になるので使わない
+const PANEL_SNAP_MIN_RATIO = 0.08;
+const PANEL_SNAP_MAX_RATIO = 0.98;
+// 軸ロック（相対方式）: 横/縦どちらかが優勢なとき、もう片方を止めて上下左右だけに動かす
+const AXIS_LOCK_KEY = "axis_lock_enabled";
+let isAxisLockEnabled = localStorage.getItem(AXIS_LOCK_KEY) !== "0";
+let isPanelSnapEnabled =localStorage.getItem(PANEL_SNAP_KEY) === "1";
+// warpX/Y: 縮尺の変更点 { side, mu, pu }（変位 mu → pu。範囲に対する割合）。gx/gy: 吸着中の補正量px
+const panelSnap = { warpX: null, warpY: null, gx: 0, gy: 0, glideEl: null, doneEl: null, lastMs: null };
 let frontButtonHoverStartMs = null;
 // 段の切替などで上を向いたままの場合に起動しないよう、一度上の端より内側へ戻ってから有効にする
 let isFrontButtonArmed = false;
@@ -430,6 +443,17 @@ function resetPointerMotionHistory() {
     filteredHeadDistance = null;
     lastHeadDistanceMs = null;
     absEdges = { left: null, right: null, up: null, down: null };
+    resetPanelSnap();
+}
+
+function resetPanelSnap() {
+    panelSnap.warpX = null;
+    panelSnap.warpY = null;
+    panelSnap.gx = 0;
+    panelSnap.gy = 0;
+    panelSnap.glideEl = null;
+    panelSnap.doneEl = null;
+    panelSnap.lastMs = null;
 }
 
 function updateHeadDistance(detectResults, faceIndex, timeMs) {
@@ -747,6 +771,96 @@ function mapAbsoluteAxis(raw, negRange, posRange, negKey, posKey) {
     return Math.sign(raw) * magnitude * (range / edge);
 }
 
+// 変位 m0（顔の向きから決まる位置）を変位 p0（パネル中央）へ置く縮尺の変更点。
+// 正面(0)は動かさないので、m0 と p0 は同じ側・正面と端の間に無いと作れない
+function makePanelWarp(m0, p0, negRange, posRange) {
+    const side = Math.sign(m0);
+    if (side === 0 || Math.sign(p0) !== side) return null;
+    const range = side > 0 ? posRange : negRange;
+    if (range <= 0) return null;
+    const mu = Math.abs(m0) / range;
+    const pu = Math.abs(p0) / range;
+    if (mu < PANEL_SNAP_MIN_RATIO || mu > PANEL_SNAP_MAX_RATIO || pu < PANEL_SNAP_MIN_RATIO || pu > 1) return null;
+    return { side, mu, pu };
+}
+
+// 正面→変更点→端の区間ごとに線形に伸縮する。変更点と反対側は変えない
+function applyPanelWarp(m, warp, negRange, posRange) {
+    if (!warp || Math.sign(m) !== warp.side) return m;
+    const range = warp.side > 0 ? posRange : negRange;
+    if (range <= 0) return m;
+    const u = Math.abs(m);
+    const u0 = warp.mu * range;
+    const p = warp.pu * range;
+    const out = u <= u0 ? (u * p / u0) : (p + ((u - u0) * (range - p) / (range - u0)));
+    return warp.side * Math.min(out, range);
+}
+
+function findPanelAt(x, y) {
+    if (!simplePanelContainer) return null;
+    for (const btn of simplePanelContainer.querySelectorAll(".h-btn:not(.h-btn--empty)")) {
+        const rect = btn.getBoundingClientRect();
+        if (rect.width > 0 && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return btn;
+    }
+    return null;
+}
+
+// パネルに入ったらラベル中央へ一定速度で寄せる。着いたらそのパネルでは吸着しない（次のパネルに入るまで）。
+// 着いた時点の顔の向きがパネル中央になるよう、縮尺の変更点を作り直す。
+// nat: 縮尺変更後の位置、ax/ay: { m(変更前の変位), center, neg, pos }。ay は縦に動けないとき null
+function updatePanelSnap(nat, ax, ay, timeMs) {
+    const s = panelSnap;
+    const dt = s.lastMs === null ? 0 : clamp((timeMs - s.lastMs) / 1000, 0, 0.1);
+    s.lastMs = timeMs;
+
+    const panel = findPanelAt(nat.x + s.gx, nat.y + s.gy);
+    if (panel !== s.doneEl) s.doneEl = null;
+    if (panel !== s.glideEl) s.glideEl = panel && !s.doneEl ? panel : null;
+
+    let wx = null;
+    let wy = null;
+    let center = null;
+    let tx = 0;
+    let ty = 0;
+    if (s.glideEl) {
+        const rect = s.glideEl.getBoundingClientRect();
+        center = { x: rect.left + (rect.width / 2), y: rect.top + (rect.height / 2) };
+        wx = makePanelWarp(ax.m, center.x - ax.center, ax.neg, ax.pos);
+        wy = ay ? makePanelWarp(ay.m, center.y - ay.center, ay.neg, ay.pos) : null;
+        if (!wx && !wy) {
+            // 縮尺を変えられない位置（正面付近など）は寄せない
+            s.doneEl = s.glideEl;
+            s.glideEl = null;
+        } else {
+            tx = wx ? center.x - nat.x : 0;
+            ty = wy ? center.y - nat.y : 0;
+        }
+    }
+
+    const step = (s.glideEl ? PANEL_SNAP_SPEED_PX_PER_S : PANEL_SNAP_SPEED_PX_PER_S * 2) * dt;
+    const dx = tx - s.gx;
+    const dy = ty - s.gy;
+    const dist = Math.hypot(dx, dy);
+    if (dist <= step || dist < 0.5) {
+        s.gx = tx;
+        s.gy = ty;
+    } else {
+        s.gx += (dx / dist) * step;
+        s.gy += (dy / dist) * step;
+    }
+
+    if (s.glideEl && s.gx === tx && s.gy === ty) {
+        if (wx) s.warpX = wx;
+        if (wy) s.warpY = wy;
+        s.gx = 0;
+        s.gy = 0;
+        s.doneEl = s.glideEl;
+        s.glideEl = null;
+        return { x: wx ? center.x : nat.x, y: wy ? center.y : nat.y };
+    }
+    return { x: nat.x + s.gx, y: nat.y + s.gy };
+}
+
 function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
     const distanceRatio = getDistanceRatio();
     debugDistanceRatio = distanceRatio;
@@ -755,8 +869,12 @@ function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
     const rawY = offset.y * distanceRatio;
 
     const centerX = (bounds.minX + bounds.maxX) / 2;
-    let nextX = clamp(centerX + mapAbsoluteAxis(rawX, centerX - bounds.minX, bounds.maxX - centerX, "left", "right"), bounds.minX, bounds.maxX);
+    const leftRange = centerX - bounds.minX;
+    const rightRange = bounds.maxX - centerX;
+    const mapX = mapAbsoluteAxis(rawX, leftRange, rightRange, "left", "right");
+    let nextX = clamp(centerX + applyPanelWarp(mapX, panelSnap.warpX, leftRange, rightRange), bounds.minX, bounds.maxX);
     let nextY = bounds.centerY;
+    let snapAxisY = null;
     let upRange = 0;
     let downRange = 0;
     if (verticalBounds) {
@@ -771,7 +889,21 @@ function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
         if (!isSimpleMode()) centerY = symptomStage === SYMPTOM_STAGE_BODY_PART ? verticalBounds.maxY : verticalBounds.minY;
         upRange = centerY - verticalBounds.minY;
         downRange = verticalBounds.maxY - centerY;
-        nextY = clamp(centerY + mapAbsoluteAxis(rawY, upRange, downRange, "up", "down"), verticalBounds.minY, verticalBounds.maxY);
+        const mapY = mapAbsoluteAxis(rawY, upRange, downRange, "up", "down");
+        nextY = clamp(centerY + applyPanelWarp(mapY, panelSnap.warpY, upRange, downRange), verticalBounds.minY, verticalBounds.maxY);
+        snapAxisY = { m: mapY, center: centerY, neg: upRange, pos: downRange };
+    }
+    if (isPanelSnapEnabled && isSimpleMode() && !isConfirmInProgress) {
+        const snapped = updatePanelSnap(
+            { x: nextX, y: nextY },
+            { m: mapX, center: centerX, neg: leftRange, pos: rightRange },
+            snapAxisY,
+            timeMs
+        );
+        nextX = clamp(snapped.x, bounds.minX, bounds.maxX);
+        if (verticalBounds) nextY = clamp(snapped.y, verticalBounds.minY, verticalBounds.maxY);
+    } else {
+        resetPanelSnap();
     }
     debugDeltaX = nextX - targetX;
     debugDeltaYPx = nextY - targetY;
@@ -786,7 +918,9 @@ function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
     const frontButtonThreshold = Math.max(FRONT_BUTTON_MIN_OVERSHOOT_PX, FRONT_BUTTON_OVERSHOOT_RATIO * Math.max(upRange, downRange));
     // 正面に戻してもバックラッシュの分だけ上に残るので、しきい値の半分まで戻れば有効にする
     if (overshootUp <= frontButtonThreshold / 2) isFrontButtonArmed = true;
-    const onFrontButton = verticalBounds !== null
+    // シンプルモードは上の項目を選ぶ動きがそのまま上端越えになるので、顔操作での取り直しは使わない（メニューからは可能）
+    const frontButtonAvailable = verticalBounds !== null && !isSimpleMode();
+    const onFrontButton = frontButtonAvailable
         && (isFrontButtonArmed || frontButtonHoverStartMs !== null)
         && overshootUp >= frontButtonThreshold
         && Math.abs(rawX) <= halfWidth * FRONT_BUTTON_X_BAND_RATIO
@@ -794,7 +928,7 @@ function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
         && !isConfirmInProgress && !pendingClickTimer && !isSettingsOpen();
     updatePostureHint(rawX, rawY, centerX - bounds.minX, bounds.maxX - centerX, upRange, downRange, timeMs);
     // 上下に動けない画面ではボタンへ届かないので出さない
-    if (frontRecaptureTopBtn) frontRecaptureTopBtn.classList.toggle("unreachable", !verticalBounds);
+    if (frontRecaptureTopBtn) frontRecaptureTopBtn.classList.toggle("unreachable", !verticalBounds && !isSimpleMode());
     const buttonCenter = updateFrontButtonHover(onFrontButton, timeMs);
     if (buttonCenter) {
         nextX = buttonCenter.x;
@@ -805,6 +939,8 @@ function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
 }
 
 const frontRecaptureTopBtn = document.getElementById("front-recapture-top");
+// 顔の滞留とは別に、マウスクリックでも取り直しを始められる
+frontRecaptureTopBtn?.addEventListener("click", () => startFrontRecapture());
 
 function setPostureHint(isOn) {
     if (frontRecaptureTopBtn) frontRecaptureTopBtn.classList.toggle("suggest", isOn);
@@ -985,6 +1121,10 @@ function getGazeEnhancedX(landmarks, noseX) {
 // 横/縦の移動速度(EMA)を比較し、片方が優勢なら axisLockDominant にその軸をセットして
 // もう片方をブロックする。ヒステリシス(ENGAGE > RELEASE)で判定のチャタリングを防ぐ
 function updateAxisLockDominant(speedX, speedY) {
+    if (!isAxisLockEnabled) {
+        axisLockDominant = null;
+        return;
+    }
     if (speedX < AXIS_LOCK_MIN_SPEED_PX && speedY < AXIS_LOCK_MIN_SPEED_PX) {
         axisLockDominant = null;
         return;
@@ -5970,13 +6110,18 @@ audioCacheBtn.addEventListener("click", () => {
 // 全画面表示の切り替え（ブラウザ版向け。Escでも解除される）
 const fullscreenBtn = document.getElementById("fullscreen-btn");
 
-// 全画面中は、メニューを閉じていても右上（⚙の横）に解除アイコンを出す
+// メニューを閉じていても右上（⚙の横）に全画面の切り替えアイコンを出す（全画面中は解除アイコン）
 const fullscreenExitBtn = document.getElementById("fullscreen-exit-btn");
 
 function updateFullscreenButton() {
     const isFullscreen = Boolean(document.fullscreenElement);
     document.body.classList.toggle("is-fullscreen", isFullscreen);
-    if (fullscreenExitBtn) fullscreenExitBtn.style.display = isFullscreen ? "" : "none";
+    if (fullscreenExitBtn) {
+        fullscreenExitBtn.textContent = isFullscreen ? "⤡" : "⛶";
+        const title = isFullscreen ? "全画面を解除" : "全画面表示";
+        fullscreenExitBtn.title = title;
+        fullscreenExitBtn.setAttribute("aria-label", title);
+    }
     if (!fullscreenBtn) return;
     const label = fullscreenBtn.querySelector(".fullscreen-btn-label");
     if (label) label.textContent = isFullscreen ? "全画面を解除" : "全画面";
@@ -5985,6 +6130,7 @@ function updateFullscreenButton() {
 if (fullscreenBtn) {
     if (!document.fullscreenEnabled) {
         fullscreenBtn.style.display = "none";
+        if (fullscreenExitBtn) fullscreenExitBtn.style.display = "none";
     } else {
         fullscreenBtn.addEventListener("click", async () => {
             try {
@@ -5995,7 +6141,8 @@ if (fullscreenBtn) {
             }
         });
         fullscreenExitBtn?.addEventListener("click", () => {
-            if (document.fullscreenElement) document.exitFullscreen().catch(error => console.warn("fullscreen exit failed:", error));
+            const toggle = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+            toggle.catch(error => console.warn("fullscreen toggle failed:", error));
         });
         document.addEventListener("fullscreenchange", updateFullscreenButton);
         updateFullscreenButton();
@@ -6052,6 +6199,8 @@ function radioGroup(name) {
 
 const modeSelect = radioGroup("app-mode");
 const dwellTimeSelect = radioGroup("dwell-time");
+const panelSnapSelect = radioGroup("panel-snap");
+const axisLockSelect = radioGroup("axis-lock");
 const simpleGridSizeSelect = radioGroup("simple-grid-size");
 const simplePanelFilter = document.getElementById("simple-panel-filter");
 const simpleTabsContainer = document.getElementById("simple-tabs");
@@ -6458,7 +6607,7 @@ function shouldIgnoreMouseSpeech(event) {
 
     if (settingsModal && settingsModal.classList.contains("active")) return true;
     // 操作パネル・キャリブレーション画面のボタン操作では発話しない
-    if (target.closest && target.closest("#controls, #calib-wizard")) return true;
+    if (target.closest && target.closest("#controls, #calib-wizard, #front-recapture-top")) return true;
     if (target.closest("input, textarea, [contenteditable='true']")) return true;
 
     const activeTag = document.activeElement ? document.activeElement.tagName : "";
@@ -6515,6 +6664,8 @@ settingsBtn.addEventListener("click", () => {
     if (iconStyleSelect) iconStyleSelect.value = iconStyle;
     if (modeSelect) modeSelect.value = appMode;
     if (dwellTimeSelect) dwellTimeSelect.value = String(dwellTimeMs);
+    if (panelSnapSelect) panelSnapSelect.value = isPanelSnapEnabled ? "1" : "0";
+    if (axisLockSelect) axisLockSelect.value = isAxisLockEnabled ? "1" : "0";
     openSimplePanelEditor();
     openQuestionEditor();
     openTalkEditor();
@@ -6586,6 +6737,15 @@ saveSettingsBtn.addEventListener("click", () => {
     if (dwellTimeSelect) {
         dwellTimeMs = readStoredNumberFromValue(dwellTimeSelect.value, DWELL_TIME_DEFAULT_MS, 0, DWELL_TIME_MAX_MS);
         localStorage.setItem(DWELL_TIME_KEY, String(dwellTimeMs));
+    }
+    if (panelSnapSelect) {
+        isPanelSnapEnabled = panelSnapSelect.value === "1";
+        localStorage.setItem(PANEL_SNAP_KEY, isPanelSnapEnabled ? "1" : "0");
+        resetPanelSnap();
+    }
+    if (axisLockSelect) {
+        isAxisLockEnabled = axisLockSelect.value === "1";
+        localStorage.setItem(AXIS_LOCK_KEY, isAxisLockEnabled ? "1" : "0");
     }
 
     renderAll();

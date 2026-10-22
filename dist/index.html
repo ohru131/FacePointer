@@ -20,8 +20,8 @@
         </div>
         <!-- Pointer lives above ALL layers -->
         <div id="pointer"></div>
-        <!-- 正面取り直し（絶対方式）: 上の端を越えて上を向き、滞留すると起動。顔操作専用なのでマウスでは押せない -->
-        <div id="front-recapture-top" aria-hidden="true"><span class="front-recapture-icon">◎</span>正面取り直し</div>
+        <!-- 正面取り直し（絶対方式）: 上の端を越えて上を向き、滞留すると起動。マウスクリックでも起動できる -->
+        <div id="front-recapture-top" role="button"><span class="front-recapture-icon">◎</span>正面取り直し</div>
         <!-- Dwell (滞留確定) progress pie, follows the pointer -->
         <div id="dwell-indicator" aria-hidden="true"></div>
 
@@ -107,7 +107,7 @@
             <div id="controls-top">
                 <div class="drawer-header">
                     <span class="drawer-title">介助者メニュー</span>
-                    <button id="fullscreen-exit-btn" class="drawer-toggle" type="button" title="全画面を解除" aria-label="全画面を解除" style="display:none;">⤡</button>
+                    <button id="fullscreen-exit-btn" class="drawer-toggle" type="button" title="全画面表示" aria-label="全画面表示">⛶</button>
                     <button id="controls-collapse-btn" class="drawer-toggle" type="button" title="メニューを閉じる" aria-expanded="true">✕</button>
                 </div>
 
@@ -224,6 +224,24 @@
                                     <label><input type="radio" name="dwell-time" value="3000"><span>3.0秒</span></label>
                                 </div>
                                 <p class="settings-help">パネル上でポインタを止めると円が埋まり、満タンで発話。OFF のときは口を開けて確定のみ。</p>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4>パネル中央へ吸着（シンプルモード）</h4>
+                                <div class="segmented" role="radiogroup" aria-label="パネル中央へ吸着">
+                                    <label><input type="radio" name="panel-snap" value="0"><span>OFF</span></label>
+                                    <label><input type="radio" name="panel-snap" value="1"><span>ON</span></label>
+                                </div>
+                                <p class="settings-help">パネルに入ると、ポインタがラベルの中央へゆっくり寄ります。着いたらそのパネルでは吸着せず、その位置から相対的に動きます（正面は画面中央のまま、左右上下の動きの大きさだけ変わります）。「正面固定（絶対位置）」のときだけ働きます。</p>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4>軸ロック（上下左右だけに動かす）</h4>
+                                <div class="segmented" role="radiogroup" aria-label="軸ロック">
+                                    <label><input type="radio" name="axis-lock" value="0"><span>OFF</span></label>
+                                    <label><input type="radio" name="axis-lock" value="1"><span>ON</span></label>
+                                </div>
+                                <p class="settings-help">横か縦のどちらかが優勢な動きのとき、もう片方を止めて斜めに流れにくくします。「正面固定（絶対位置）」では元から働かないので、相対方式のときだけ効きます。吸着と組み合わせるなら OFF でも使えます。</p>
                             </section>
 
                             <section class="settings-section">

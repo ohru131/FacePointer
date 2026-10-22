@@ -103,7 +103,8 @@ body {
         linear-gradient(90deg, rgba(69, 123, 157, 0.35) calc(var(--front-hold, 0) * 100%), rgba(255, 255, 255, 0.75) 0);
     border: 1px solid rgba(100, 116, 139, 0.35);
     opacity: 0.55;
-    pointer-events: none;
+    pointer-events: auto;
+    cursor: pointer;
     z-index: 580; /* pointer(600) の下 */
     transition: opacity 0.15s;
 }
@@ -1568,8 +1569,13 @@ body.calib-active #dwell-indicator {
     margin-left: auto;
 }
 
-/* 全画面中は右上に解除アイコンも出るので、その分だけ上部の文の右余白を広げる */
-body.is-fullscreen #simple-message {
+/* メニューを閉じている間（トップ画面）と全画面中は、⚙の横に全画面アイコンを出す */
+#controls.collapsed #fullscreen-exit-btn {
+    margin-left: 0;
+}
+
+/* 右上に全画面アイコンも出るので、その分だけ上部の文の右余白を広げる */
+#simple-message {
     padding-right: 116px;
 }
 
