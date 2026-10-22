@@ -287,16 +287,25 @@ function saveSideGainRatios() {
     localStorage.removeItem(VERTICAL_GAIN_RATIO_KEY);
 }
 
-// 正面からの変位（右・下が正）に、変位の向きの倍率を掛ける。正面では変位 0 なので倍率が切り替わっても跳ねない
 function formatSideRatios(ratios) {
     return ["left", "right", "up", "down"].map(side => ratios[side].toFixed(2)).join(" / ");
 }
 
+// 正面からの変位（右・下が正）に、変位の向きの倍率を掛ける。正面では変位 0 なので倍率が切り替わっても跳ねない
 function applySideGainRatios(offset, ratios = sideGainRatios) {
     return {
         x: offset.x * (offset.x < 0 ? ratios.left : ratios.right),
         y: offset.y * (offset.y < 0 ? ratios.up : ratios.down)
     };
+}
+
+// 相対方式: 変位 from→to の差分に掛ける倍率。正面をまたいだら、またぐ前後の変位の比で両側の倍率を按分する。
+// 移動先の側の倍率だけを掛けると、またぐたびに倍率の大きい側へずれていく
+function blendSideRatio(from, to, negRatio, posRatio) {
+    const ratioOf = value => (value < 0 ? negRatio : posRatio);
+    if ((from < 0) === (to < 0)) return ratioOf(to);
+    const t = Math.abs(from) / (Math.abs(from) + Math.abs(to));
+    return (t * ratioOf(from)) + ((1 - t) * ratioOf(to));
 }
 
 function resolveIconPath(iconPath) {
@@ -1131,7 +1140,8 @@ function extractHeadForward(detectResults, faceIndex = 0) {
 
 // yaw / pitch は「顔の正面方向の直線が画面（カメラ正面の平面）に当たる点」の横・縦の角度（x/z, y/z の atan）。
 // Euler 角は上を向いたまま左右に回すと pitch が cos(yaw) 倍に縮み、ポインタが端で下がる円弧になる。
-// 画面との交点なら、顔をどの軸で回しても画面上の直線は直線のまま、首のかしげ（roll）にも影響されない。
+// 画面との交点なら、顔自身の縦軸・横軸まわりの回転（上を向いたまま首の軸で左右に回すなど）は画面上の直線のまま、
+// 首のかしげ（roll）にも影響されない。
 // 正面付近（片方の角度が 0）では従来の Euler 角と同じ値になる
 function extractHeadYawRadians(detectResults, faceIndex = 0) {
     const f = extractHeadForward(detectResults, faceIndex);
@@ -1288,10 +1298,11 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex,
 
     const distanceRatio = getDistanceRatio();
     debugDistanceRatio = distanceRatio;
-    // 向きごとの倍率は、今の顔が正面からどちら側にあるかで選ぶ（絶対方式と同じ倍率）
-    const side = getRawFaceOffset({ noseX: nextNoseX, noseY: nextNoseY, yaw: nextYaw, pitch: nextPitch });
-    const sideRatioX = side.x < 0 ? sideGainRatios.left : sideGainRatios.right;
-    const sideRatioY = side.y < 0 ? sideGainRatios.up : sideGainRatios.down;
+    // 向きごとの倍率は、顔が正面からどちら側にあるかで選ぶ（絶対方式と同じ倍率）
+    const fromSide = getRawFaceOffset({ noseX: lastNoseControlX, noseY: lastNoseControlY, yaw: lastYaw, pitch: lastPitch });
+    const toSide = getRawFaceOffset({ noseX: nextNoseX, noseY: nextNoseY, yaw: nextYaw, pitch: nextPitch });
+    const sideRatioX = blendSideRatio(fromSide.x, toSide.x, sideGainRatios.left, sideGainRatios.right);
+    const sideRatioY = blendSideRatio(fromSide.y, toSide.y, sideGainRatios.up, sideGainRatios.down);
     const rawDeltaX = (pixN + pixY) * distanceRatio * sideRatioX;
 
     // 上下移動: 鼻の縦位置 + 顔の上下向きを横移動と同じゲインで合成する
@@ -5631,7 +5642,9 @@ function computeCalibrationResult(captures, neutralSamples, mouthSamples) {
     const sideLabel = { left: "左", right: "右", up: "上", down: "下" };
     [["left", "right"], ["up", "down"]].forEach(([a, b]) => {
         if (fitted[a] === null && fitted[b] === null) {
-            warnings.push(`${sideLabel[a]}${sideLabel[b]}の動きが○の方向と合わないため、${sideLabel[a]}${sideLabel[b]}の倍率は変更しません`);
+            // 左右はゲインを決め直したときだけ標準に戻す（fallback と同じ条件）
+            const isReset = a === "left" && solved;
+            warnings.push(`${sideLabel[a]}${sideLabel[b]}の動きが○の方向と合わないため、${sideLabel[a]}${sideLabel[b]}の倍率は${isReset ? "標準（1.00）にしました" : "変更しません"}`);
             return;
         }
         [[a, b], [b, a]].forEach(([missing, used]) => {
@@ -5639,6 +5652,13 @@ function computeCalibrationResult(captures, neutralSamples, mouthSamples) {
                 warnings.push(`${sideLabel[missing]}の動きが○の方向と合わないため、${sideLabel[missing]}は${sideLabel[used]}と同じ倍率にしました`);
             }
         });
+    });
+    Object.entries(fitted).forEach(([side, value]) => {
+        if (value === null) return;
+        const [min, max] = SIDE_GAIN_RATIO_LIMITS[side];
+        if (value <= min || value >= max) {
+            warnings.push(`${sideLabel[side]}の倍率が上限・下限に達しました。○を向けていなかった場合はやり直してください`);
+        }
     });
     model.sideRatios = sideRatios;
 
