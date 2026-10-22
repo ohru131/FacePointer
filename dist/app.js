@@ -114,7 +114,12 @@ const RECENTER_ZONE_RATIO = 0.35;
 const RECENTER_RATE = 0.3;
 const NOSE_NOISE_KEY = "nose_noise";
 const ANGLE_NOISE_KEY = "angle_noise";
+// 旧形式（上下共通の倍率）。上下別の倍率が未保存のときの初期値にだけ使う
 const VERTICAL_GAIN_RATIO_KEY = "vertical_gain_ratio";
+// 正面から見た向き（左右上下）ごとの感度倍率。目で見下ろす癖・目の高さ・カメラ位置で向きごとの効きが違うのを打ち消す
+const SIDE_GAIN_RATIO_KEYS = { left: "side_gain_left", right: "side_gain_right", up: "side_gain_up", down: "side_gain_down" };
+const SIDE_GAIN_RATIO_LIMITS = { left: [0.5, 2], right: [0.5, 2], up: [0.3, 4], down: [0.3, 4] };
+const CALIB_SIDE_KEYS = { left: "dx", right: "dx", up: "dy", down: "dy" };
 const CONTROLS_COLLAPSED_KEY = "controls_collapsed";
 const NOSE_GAIN_KEY = "nose_gain";
 const YAW_GAIN_KEY = "yaw_gain";
@@ -266,6 +271,34 @@ function readStoredNumberFromValue(raw, fallback, min, max) {
     return Math.max(min, Math.min(max, parsed));
 }
 
+function loadSideGainRatios() {
+    // 上下別の倍率が無ければ、旧形式の上下共通の倍率を上下両方に使う
+    const legacyVertical = readStoredNumber(VERTICAL_GAIN_RATIO_KEY, 1, ...SIDE_GAIN_RATIO_LIMITS.up);
+    const ratios = {};
+    Object.entries(SIDE_GAIN_RATIO_KEYS).forEach(([side, key]) => {
+        const fallback = side === "up" || side === "down" ? legacyVertical : 1;
+        ratios[side] = readStoredNumber(key, fallback, ...SIDE_GAIN_RATIO_LIMITS[side]);
+    });
+    return ratios;
+}
+
+function saveSideGainRatios() {
+    Object.entries(SIDE_GAIN_RATIO_KEYS).forEach(([side, key]) => localStorage.setItem(key, String(sideGainRatios[side])));
+    localStorage.removeItem(VERTICAL_GAIN_RATIO_KEY);
+}
+
+// 正面からの変位（右・下が正）に、変位の向きの倍率を掛ける。正面では変位 0 なので倍率が切り替わっても跳ねない
+function formatSideRatios(ratios) {
+    return ["left", "right", "up", "down"].map(side => ratios[side].toFixed(2)).join(" / ");
+}
+
+function applySideGainRatios(offset, ratios = sideGainRatios) {
+    return {
+        x: offset.x * (offset.x < 0 ? ratios.left : ratios.right),
+        y: offset.y * (offset.y < 0 ? ratios.up : ratios.down)
+    };
+}
+
 function resolveIconPath(iconPath) {
     if (!iconPath || !iconPath.endsWith(".png")) return iconPath;
     // menu系は -cute 素材が未配置のため通常素材を使う
@@ -286,7 +319,7 @@ let calibratedPitch = 0;
 let isCalibrating = true;
 let noseNoise = readStoredNumber(NOSE_NOISE_KEY, 0, 0, 0.01);
 let angleNoise = readStoredNumber(ANGLE_NOISE_KEY, 0, 0, 0.05);
-let verticalGainRatio = readStoredNumber(VERTICAL_GAIN_RATIO_KEY, 1, 0.3, 4);
+let sideGainRatios = loadSideGainRatios();
 let isVerticalMoveEnabled = localStorage.getItem(VERTICAL_MOVE_KEY) !== "0";
 let isDistanceCompEnabled = localStorage.getItem(DISTANCE_COMP_KEY) !== "0";
 let isRecenterEnabled = localStorage.getItem(RECENTER_KEY) !== "0";
@@ -730,10 +763,10 @@ function getExpectedPointerOffset(distanceRatio) {
     const sample = { noseX: filteredNoseControlX, noseY: filteredNoseControlY, yaw: filteredYaw, pitch: filteredPitch };
     const center = { noseX: calibratedNoseX, noseY: calibratedNoseY, yaw: calibratedYaw, pitch: calibratedPitch };
     const noise = { nose: noseNoise, angle: angleNoise, noiseOnly: isNoiseDeadzone };
-    return {
+    return applySideGainRatios({
         x: horizontalTravel(sample, center, noseGain, distanceRatio, noise, yawGain),
-        y: verticalTravel(sample, center, noseGain, distanceRatio, noise, yawGain) * verticalGainRatio
-    };
+        y: verticalTravel(sample, center, noseGain, distanceRatio, noise, yawGain)
+    });
 }
 
 // position を expected の方向へ、このフレームの移動量 |delta| × RECENTER_RATE を上限に寄せる
@@ -745,6 +778,11 @@ function recenterToward(position, expected, delta) {
 // 絶対方式: 正面(校正位置)から anchor までの顔の変位を、ランタイムと同じゲイン・加速で画面上の変位(px)にする。
 // anchor はバックラッシュ後の値なので、揺れはここに来る前に抑えられている
 function getAbsoluteFaceOffset(anchor) {
+    return applySideGainRatios(getRawFaceOffset(anchor));
+}
+
+// 向きごとの倍率を掛ける前の変位。相対方式では、この符号で今どちら側にいるか（どの倍率を使うか）を決める
+function getRawFaceOffset(anchor) {
     const noseX = noseGain > 0 ? (anchor.noseX - calibratedNoseX) * getNoseScale() : 0;
     const yaw = yawGain > 0
         ? signedAcceleratedAngle(calibratedYaw, anchor.yaw, calibratedYaw) * YAW_MIRROR_SIGN * getYawScale()
@@ -753,7 +791,7 @@ function getAbsoluteFaceOffset(anchor) {
     const pitch = yawGain > 0
         ? signedAcceleratedAngle(calibratedPitch, anchor.pitch, calibratedPitch) * PITCH_MIRROR_SIGN * getYawScale() * VERTICAL_PITCH_SCALE_RATIO
         : 0;
-    return { x: noseX + yaw, y: (noseY + pitch) * verticalGainRatio };
+    return { x: noseX + yaw, y: noseY + pitch };
 }
 
 // 端を越えて振り切った量を一時的な端として覚え、戻すときは「正面→一時的な端」を「中央→画面の端」に縮めて動かす。
@@ -1069,17 +1107,6 @@ function toMatrixArray(matrixLike) {
     return null;
 }
 
-function extractHeadYawRadians(detectResults, faceIndex = 0) {
-    const matrices = detectResults?.facialTransformationMatrixes;
-    if (!matrices || matrices.length <= faceIndex) return null;
-
-    const m = toMatrixArray(matrices[faceIndex]);
-    if (!m || m.length !== 16) return null;
-
-    // row-major 想定: yaw ~= atan2(m02, m00)
-    return Math.atan2(m[2], m[0]);
-}
-
 // 4x4 の並び順を平行移動成分の位置から判定する（row-major は末尾行が 0,0,0,1）
 function isRowMajorMatrix(m) {
     const rowMajorTail = Math.abs(m[12]) + Math.abs(m[13]) + Math.abs(m[14]);
@@ -1087,7 +1114,8 @@ function isRowMajorMatrix(m) {
     return rowMajorTail <= columnMajorTail;
 }
 
-function extractHeadPitchRadians(detectResults, faceIndex = 0) {
+// 顔の正面方向（顔モデルの +z 軸 = 回転行列の第3列）のカメラ座標。カメラを向いているとき z > 0
+function extractHeadForward(detectResults, faceIndex = 0) {
     const matrices = detectResults?.facialTransformationMatrixes;
     if (!matrices || matrices.length <= faceIndex) return null;
 
@@ -1096,8 +1124,27 @@ function extractHeadPitchRadians(detectResults, faceIndex = 0) {
 
     const rowMajor = isRowMajorMatrix(m);
     const at = (row, col) => (rowMajor ? m[(row * 4) + col] : m[(col * 4) + row]);
-    // 顔が下を向くほど正になる pitch（R = Ry*Rx*Rz 前提、m12 = -sin(pitch)）
-    return Math.atan2(-at(1, 2), Math.hypot(at(0, 2), at(2, 2)));
+    const forward = { x: at(0, 2), y: at(1, 2), z: at(2, 2), rowMajor };
+    if (![forward.x, forward.y, forward.z].every(Number.isFinite) || forward.z <= 1e-3) return null;
+    return forward;
+}
+
+// yaw / pitch は「顔の正面方向の直線が画面（カメラ正面の平面）に当たる点」の横・縦の角度（x/z, y/z の atan）。
+// Euler 角は上を向いたまま左右に回すと pitch が cos(yaw) 倍に縮み、ポインタが端で下がる円弧になる。
+// 画面との交点なら、顔をどの軸で回しても画面上の直線は直線のまま、首のかしげ（roll）にも影響されない。
+// 正面付近（片方の角度が 0）では従来の Euler 角と同じ値になる
+function extractHeadYawRadians(detectResults, faceIndex = 0) {
+    const f = extractHeadForward(detectResults, faceIndex);
+    if (!f) return null;
+    // 従来の atan2(m[2], m[0]) と同じ向き（column-major のときは符号が反転していた）に揃え、YAW_MIRROR_SIGN をそのまま使う
+    return (f.rowMajor ? 1 : -1) * Math.atan2(f.x, f.z);
+}
+
+function extractHeadPitchRadians(detectResults, faceIndex = 0) {
+    const f = extractHeadForward(detectResults, faceIndex);
+    if (!f) return null;
+    // 顔が下を向くほど正
+    return Math.atan2(-f.y, f.z);
 }
 
 // 顔の並進成分 z（カメラからの距離。単位は概ね cm）。比率しか使わないので絶対値の精度は問わない
@@ -1241,7 +1288,11 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex,
 
     const distanceRatio = getDistanceRatio();
     debugDistanceRatio = distanceRatio;
-    const rawDeltaX = (pixN + pixY) * distanceRatio;
+    // 向きごとの倍率は、今の顔が正面からどちら側にあるかで選ぶ（絶対方式と同じ倍率）
+    const side = getRawFaceOffset({ noseX: nextNoseX, noseY: nextNoseY, yaw: nextYaw, pitch: nextPitch });
+    const sideRatioX = side.x < 0 ? sideGainRatios.left : sideGainRatios.right;
+    const sideRatioY = side.y < 0 ? sideGainRatios.up : sideGainRatios.down;
+    const rawDeltaX = (pixN + pixY) * distanceRatio * sideRatioX;
 
     // 上下移動: 鼻の縦位置 + 顔の上下向きを横移動と同じゲインで合成する
     const dNoseY = nextNoseY - lastNoseControlY;
@@ -1253,16 +1304,16 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex,
     if (verticalBounds) {
         let pixNoseY = 0;
         if (noseGain > 0) {
-            pixNoseY = dNoseY * getNoseScale() * VERTICAL_NOSE_SCALE_RATIO * verticalGainRatio;
+            pixNoseY = dNoseY * getNoseScale() * VERTICAL_NOSE_SCALE_RATIO;
         }
 
         let pixPitch = 0;
         if (yawGain > 0) {
             const pitchAccel = getAngleOffsetAcceleration(filteredPitch, calibratedPitch);
-            pixPitch = dPitch * PITCH_MIRROR_SIGN * getYawScale() * pitchAccel * VERTICAL_PITCH_SCALE_RATIO * verticalGainRatio;
+            pixPitch = dPitch * PITCH_MIRROR_SIGN * getYawScale() * pitchAccel * VERTICAL_PITCH_SCALE_RATIO;
         }
 
-        rawDeltaY = (pixNoseY + pixPitch) * distanceRatio;
+        rawDeltaY = (pixNoseY + pixPitch) * distanceRatio * sideRatioY;
     }
 
     // 軸ロック: 横/縦の速度を比較し、片方が明らかに優勢ならもう片方の移動を止める
@@ -5465,15 +5516,32 @@ function fitCalibrationGain(entries, model) {
     return solveGainForTravel(travelAt, required);
 }
 
-function fitCalibrationVerticalRatio(entries, model, gain) {
-    const usable = entries.filter(e => CALIB_VERTICAL_KEYS.includes(e.key) && Math.abs(e.dy) > 1);
+// side（left/right/up/down）の○だけで「○までの距離 / 顔の動きから出る移動量」を求め、その向きの倍率にする
+function fitCalibrationSideRatio(entries, model, gain, side) {
+    const axis = CALIB_SIDE_KEYS[side];
+    const usable = entries.filter(e => e.key === side && Math.abs(e[axis]) > 1);
     if (usable.length === 0) return null;
-    const required = usable.reduce((sum, e) => sum + Math.abs(e.dy), 0);
+    const travelOf = axis === "dx" ? horizontalTravel : verticalTravel;
+    const required = usable.reduce((sum, e) => sum + Math.abs(e[axis]), 0);
     const travel = usable.reduce((sum, e) => (
-        sum + (Math.sign(e.dy) * verticalTravel(e.sample, e.center, gain, calibrationRatio(e.sample, model), model.noise))
+        sum + (Math.sign(e[axis]) * travelOf(e.sample, e.center, gain, calibrationRatio(e.sample, model), model.noise))
     ), 0);
     if (travel <= 1) return null;
-    return clamp(roundTo(required / travel, 0.05), 0.3, 4);
+    return clamp(roundTo(required / travel, 0.05), ...SIDE_GAIN_RATIO_LIMITS[side]);
+}
+
+// 4方向の倍率を求める。決められない向きは同じ軸の反対側の値、それも無ければ fallback を使う
+function fitCalibrationSideRatios(entries, model, gain, fallback) {
+    const fitted = {};
+    Object.keys(SIDE_GAIN_RATIO_KEYS).forEach((side) => {
+        fitted[side] = fitCalibrationSideRatio(entries, model, gain, side);
+    });
+    const opposite = { left: "right", right: "left", up: "down", down: "up" };
+    const ratios = {};
+    Object.keys(SIDE_GAIN_RATIO_KEYS).forEach((side) => {
+        ratios[side] = fitted[side] ?? fitted[opposite[side]] ?? fallback[side];
+    });
+    return { ratios, fitted };
 }
 
 // 距離補正なしで「必要な移動量 / 顔の動きから出る移動量」を求める。距離ごとのこの倍率の違いが距離補正の強さになる
@@ -5503,10 +5571,10 @@ function estimateDistanceExponent(nearEntries, farEntries, nearDistance, farDist
 
 function predictCalibrationOffset(sample, center, model) {
     const ratio = calibrationRatio(sample, model);
-    return {
+    return applySideGainRatios({
         x: horizontalTravel(sample, center, model.gain, ratio, model.noise),
-        y: verticalTravel(sample, center, model.gain, ratio, model.noise) * model.verticalRatio
-    };
+        y: verticalTravel(sample, center, model.gain, ratio, model.noise)
+    }, model.sideRatios);
 }
 
 function computeCalibrationResult(captures, neutralSamples, mouthSamples) {
@@ -5540,7 +5608,7 @@ function computeCalibrationResult(captures, neutralSamples, mouthSamples) {
     } else if (!farCenter) {
         warnings.push("離れた位置の計測を省略したため、距離補正は標準の強さにしました");
     }
-    const model = { ref, exponent, noise, gain: noseGain, verticalRatio: verticalGainRatio };
+    const model = { ref, exponent, noise, gain: noseGain, sideRatios: { ...sideGainRatios } };
 
     let gain = noseGain;
     const solved = fitCalibrationGain(allEntries, model);
@@ -5552,20 +5620,37 @@ function computeCalibrationResult(captures, neutralSamples, mouthSamples) {
     }
     model.gain = gain;
 
-    let vRatio = verticalGainRatio;
-    const solvedRatio = fitCalibrationVerticalRatio(allEntries, model, gain);
-    if (solvedRatio === null) {
-        warnings.push("上下の動きが○の方向と合わないため、上下感度は変更しません");
-    } else {
-        vRatio = solvedRatio;
-    }
-    model.verticalRatio = vRatio;
+    // 左右はゲインを決め直したら倍率 1 を基準にする。上下は決められなければ今の倍率のまま
+    const fallback = {
+        left: solved ? 1 : sideGainRatios.left,
+        right: solved ? 1 : sideGainRatios.right,
+        up: sideGainRatios.up,
+        down: sideGainRatios.down
+    };
+    const { ratios: sideRatios, fitted } = fitCalibrationSideRatios(allEntries, model, gain, fallback);
+    const sideLabel = { left: "左", right: "右", up: "上", down: "下" };
+    [["left", "right"], ["up", "down"]].forEach(([a, b]) => {
+        if (fitted[a] === null && fitted[b] === null) {
+            warnings.push(`${sideLabel[a]}${sideLabel[b]}の動きが○の方向と合わないため、${sideLabel[a]}${sideLabel[b]}の倍率は変更しません`);
+            return;
+        }
+        [[a, b], [b, a]].forEach(([missing, used]) => {
+            if (fitted[missing] === null) {
+                warnings.push(`${sideLabel[missing]}の動きが○の方向と合わないため、${sideLabel[missing]}は${sideLabel[used]}と同じ倍率にしました`);
+            }
+        });
+    });
+    model.sideRatios = sideRatios;
 
-    // 決めた値で各○をどれだけ正確に指せるか（距離ごとの平均のずれ）
+    // 決めた値で各○をどれだけ正確に指せるか（距離ごと・向きごとの平均のずれ）
     const errorOf = entries => meanOf(entries.map((e) => {
         const predicted = predictCalibrationOffset(e.sample, e.center, model);
         return Math.hypot(predicted.x - e.dx, predicted.y - e.dy);
     }));
+    const sideErrors = {};
+    Object.keys(SIDE_GAIN_RATIO_KEYS).forEach((side) => {
+        sideErrors[side] = errorOf(allEntries.filter(e => e.key === side));
+    });
 
     // 口: 閉じ〜開きの中間より少し下を判定ラインにする
     const jawClosed = percentileOf(neutralSamples.map(s => s.jaw), 0.5);
@@ -5582,7 +5667,7 @@ function computeCalibrationResult(captures, neutralSamples, mouthSamples) {
     return {
         gain,
         yawGain: gain,
-        verticalRatio: vRatio,
+        sideRatios,
         noseNoise: noise.nose,
         angleNoise: noise.angle,
         jawThreshold,
@@ -5594,6 +5679,7 @@ function computeCalibrationResult(captures, neutralSamples, mouthSamples) {
             farDistance: farCenter?.distance ?? NaN,
             nearError: errorOf(nearEntries),
             farError: errorOf(farEntries),
+            sideErrors,
             jawClosed,
             jawOpen
         },
@@ -5697,8 +5783,7 @@ const calibrationWizard = (() => {
         const entries = captures.filter(e => e.key !== "center");
         const solved = fitCalibrationGain(entries, model);
         if (solved) model.gain = solved.gain;
-        const ratio = fitCalibrationVerticalRatio(entries, model, model.gain);
-        if (ratio !== null) model.verticalRatio = ratio;
+        model.sideRatios = fitCalibrationSideRatios(entries, model, model.gain, model.sideRatios).ratios;
     }
 
     function predictCursor(sample) {
@@ -5828,7 +5913,7 @@ const calibrationWizard = (() => {
             exponent: distanceExponent,
             noise: { nose: noseNoise, angle: angleNoise, noiseOnly: true },
             gain: noseGain > 0 ? noseGain : NOSE_GAIN_DEFAULT,
-            verticalRatio: verticalGainRatio
+            sideRatios: { ...sideGainRatios }
         };
         result = null;
         root.classList.remove("done");
@@ -5864,11 +5949,12 @@ const calibrationWizard = (() => {
         const px = value => (Number.isFinite(value) ? `${Math.round(value)}px` : "-");
         const lines = [
             `感度（鼻位置・顔の傾き）: ${noseGain.toFixed(1)} / ${yawGain.toFixed(1)} → ${result.gain.toFixed(1)} / ${result.yawGain.toFixed(1)}`,
-            `上下感度の倍率: ${verticalGainRatio.toFixed(2)} → ${result.verticalRatio.toFixed(2)}`,
+            `向きごとの倍率（左/右/上/下）: ${formatSideRatios(sideGainRatios)} → ${formatSideRatios(result.sideRatios)}`,
             `距離補正の強さ: ${distanceExponent.toFixed(2)} → ${result.distanceExponent.toFixed(2)}${m.exponentMeasured ? "（2つの距離で計測）" : "（標準）"}`,
             `口の開き閾値: ${jawOpenThreshold.toFixed(2)} → ${result.jawThreshold.toFixed(2)}`,
             `静止時の揺れ（鼻/角度）: ${formatMetric(result.noseNoise, 4)} / ${formatMetric(result.angleNoise, 4)}`,
             `○とのずれ（平均）: 近い位置 ${px(m.nearError)} / 離れた位置 ${px(m.farError)}`,
+            `○とのずれ（左/右/上/下）: ${["left", "right", "up", "down"].map(side => px(m.sideErrors[side])).join(" / ")}`,
             `計測: 距離 ${formatMetric(m.nearDistance, 1)} → ${formatMetric(m.farDistance, 1)} / 口 ${formatMetric(m.jawClosed, 2)}→${formatMetric(m.jawOpen, 2)}`
         ];
         if (result.warnings.length > 0) {
@@ -5882,7 +5968,7 @@ const calibrationWizard = (() => {
         if (!result) return;
         noseGain = result.gain;
         yawGain = result.yawGain;
-        verticalGainRatio = result.verticalRatio;
+        sideGainRatios = { ...result.sideRatios };
         noseNoise = result.noseNoise;
         angleNoise = result.angleNoise;
         jawOpenThreshold = result.jawThreshold;
@@ -5890,7 +5976,7 @@ const calibrationWizard = (() => {
         if (result.distanceRef > 0) distanceRef = result.distanceRef;
         localStorage.setItem(NOSE_GAIN_KEY, String(noseGain));
         localStorage.setItem(YAW_GAIN_KEY, String(yawGain));
-        localStorage.setItem(VERTICAL_GAIN_RATIO_KEY, String(verticalGainRatio));
+        saveSideGainRatios();
         localStorage.setItem(NOSE_NOISE_KEY, String(noseNoise));
         localStorage.setItem(ANGLE_NOISE_KEY, String(angleNoise));
         localStorage.setItem(JAW_OPEN_THRESHOLD_KEY, String(jawOpenThreshold));
@@ -6023,13 +6109,14 @@ calibrateBtn.addEventListener("click", () => {
     jawClosedBaseline = null;
     debugJawOpenThreshold = jawOpenThreshold;
     debugJawCloseThreshold = Math.max(0, jawOpenThreshold - JAW_CLOSE_MIN_GAP);
-    // キャリブレーションで決めた揺れ幅・上下感度倍率はスライダーが無いので、ここで初期値へ戻す
+    // キャリブレーションで決めた揺れ幅・向きごとの倍率はスライダーが無いので、ここで初期値へ戻す
     noseNoise = 0;
     angleNoise = 0;
-    verticalGainRatio = 1;
+    sideGainRatios = { left: 1, right: 1, up: 1, down: 1 };
     localStorage.removeItem(NOSE_NOISE_KEY);
     localStorage.removeItem(ANGLE_NOISE_KEY);
     localStorage.removeItem(VERTICAL_GAIN_RATIO_KEY);
+    Object.values(SIDE_GAIN_RATIO_KEYS).forEach(key => localStorage.removeItem(key));
     speak("リセット");
 });
 
