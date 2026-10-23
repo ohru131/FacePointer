@@ -2549,15 +2549,16 @@ function renderSimpleMode() {
         simpleBarContainer.appendChild(pageLabel);
         appendSimpleControl(SIMPLE_CTRL_NEXT, "次へ ▶");
     }
-    if (activeQuestion) {
-        if (!isQuestionMode()) appendSimpleControl(SIMPLE_CTRL_CANCEL, "✕ やめる", "simple-ctrl--cancel");
+    if (activeQuestion && !isQuestionMode()) {
+        appendSimpleControl(SIMPLE_CTRL_CANCEL, "✕ やめる", "simple-ctrl--cancel");
     } else {
         if (isTalkScreen() && talkTab === TALK_TAB_TREE) {
             const isTop = talkPath.length === 0;
             appendSimpleControl(SIMPLE_CTRL_BACKSPACE, "◀ 戻る", "", isTop);
             appendSimpleControl(SIMPLE_CTRL_CLEAR, "🏠 最初から", "", isTop);
         }
-        if (simpleConfig.showRest) {
+        // 質問モードは続けて答えるので休憩も出す（出す質問が無ければ出さない）
+        if (simpleConfig.showRest && (!isQuestionMode() || activeQuestion)) {
             appendSimpleControl(SIMPLE_CTRL_REST, isSimplePaused ? "▶️ 再開" : "⏸️ 休憩", "simple-ctrl--rest");
         }
     }
@@ -3036,7 +3037,19 @@ function renderQuestionModeBar() {
 function startQuestion(questionId, { speak: shouldSpeak = true } = {}) {
     const question = getQuestionCatalog().find(q => q.id === questionId);
     if (!question || isConfirmInProgress) return;
-    if (isQuestionMode()) localStorage.setItem(QUESTION_MODE_LAST_KEY, question.id);
+    if (isQuestionMode()) {
+        try {
+            localStorage.setItem(QUESTION_MODE_LAST_KEY, question.id);
+        } catch (error) {
+            console.warn("question mode last id save failed:", error);
+        }
+    }
+    // 切り替える前の画面で予約された口のクリックは実行しない（同じ質問を出し直すと回答 id が同じで、古いパネルが確定してしまう）
+    if (pendingClickTimer) {
+        clearTimeout(pendingClickTimer);
+        pendingClickTimer = null;
+        pendingClickTargetKey = "";
+    }
 
     if (!activeQuestion) pageBeforeQuestion = simplePage;
     activeQuestion = {
@@ -3095,10 +3108,11 @@ function renderQuestionButtons() {
         btn.textContent = getQuestionLabel(q);
         btn.title = q.question;
         btn.addEventListener("click", () => {
-            if (activeQuestion?.id === q.id) {
+            if (activeQuestion?.id === q.id && !isQuestionMode()) {
                 endQuestion();
                 return;
             }
+            // 質問モードは上のボタンと同じ（回答中の質問なら読み上げ直す）
             if (isQuestionMode()) selectQuestionFromBar(q.id);
             else startQuestion(q.id);
             // 利用者が回答画面を見られるようメニューは閉じる
@@ -4131,29 +4145,6 @@ let preferredVoice = null;
 let GEMINI_API_KEY = localStorage.getItem("gemini_api_key") || "";
 let geminiAuthBlocked = false;
 
-const DEFAULT_MOUSE_CLICK_SPEECH = {
-    left: "ありがとう。",
-    middle: "こんにちは。",
-    right: "お願いします。"
-};
-
-let mouseClickSpeech = { ...DEFAULT_MOUSE_CLICK_SPEECH };
-
-function normalizedPhrase(value, fallback) {
-    const trimmed = (value || "").trim();
-    return trimmed || fallback;
-}
-
-function loadMouseClickSpeech() {
-    mouseClickSpeech = {
-        left: normalizedPhrase(localStorage.getItem("mouse_click_phrase_left"), DEFAULT_MOUSE_CLICK_SPEECH.left),
-        middle: normalizedPhrase(localStorage.getItem("mouse_click_phrase_middle"), DEFAULT_MOUSE_CLICK_SPEECH.middle),
-        right: normalizedPhrase(localStorage.getItem("mouse_click_phrase_right"), DEFAULT_MOUSE_CLICK_SPEECH.right)
-    };
-}
-
-loadMouseClickSpeech();
-
 // TTSモデル: "cloud:<voice名>" (Google Cloud TTS) / "gemini:<モデル名>" (Gemini API TTS)
 //   / "voicevox:<話者スタイルID>" (PCで起動した VOICEVOX) / "browser:" (ブラウザ内蔵の音声。通信なし)
 const TTS_MODEL_KEY = "tts_model";
@@ -4532,7 +4523,9 @@ window.speechSynthesis.onvoiceschanged = initVoices;
 initVoices();
 
 async function speakGemini(text, silent = false) {
-    if (isSpeechFetching) return true;
+    // 前の文の音声を作っている途中なら、それは捨てて新しい文を話す
+    // （捨てないと新しい文が話されず、作り終えた古い音声が後から流れる）
+    if (currentSpeechController) currentSpeechController.abort();
     // ブラウザ内蔵の音声を選んでいれば、合成もキャッシュも使わない
     if (getTtsProvider() === "browser") return false;
 
@@ -4549,27 +4542,29 @@ async function speakGemini(text, silent = false) {
 
     if (!canSynthesizeSpeech()) return false;
 
-    if (currentSpeechController) {
-        currentSpeechController.abort();
-    }
-    currentSpeechController = new AbortController();
+    const controller = new AbortController();
+    currentSpeechController = controller;
 
     isSpeechFetching = true;
     try {
-        const blob = await synthesizeSpeech(phrase, currentSpeechController.signal);
+        const blob = await synthesizeSpeech(phrase, controller.signal);
         if (blob.size >= AUDIO_MIN_BYTES) await setCachedAudio(cacheKey, blob);
 
-        if (!silent) {
+        // 作っている間に次の文へ切り替わっていたら流さない（作った音声は保存済み）
+        if (!silent && !controller.signal.aborted) {
             await playBlob(blob);
         }
-
-        isSpeechFetching = false;
         return true;
     } catch (err) {
-        isSpeechFetching = false;
         if (err.name === "AbortError") return true;
         console.error("Gemini TTS Error:", err);
         return false;
+    } finally {
+        // 次の文の合成が始まっていれば、その合成中の状態は残す
+        if (currentSpeechController === controller) {
+            currentSpeechController = null;
+            isSpeechFetching = false;
+        }
     }
 }
 
@@ -4627,10 +4622,6 @@ function collectPrefetchPhrases() {
     getQuestionCatalog().forEach(q => {
         phrases.push(q.question);
         q.answers.forEach(answer => phrases.push(buildSimpleSentence(answer)));
-    });
-
-    Object.values(mouseClickSpeech).forEach(p => {
-        if (p) phrases.push(p.trim());
     });
 
     phrases.push(...collectTalkSentences());
@@ -6424,9 +6415,6 @@ if (geminiStyleResetBtn && geminiStyleInput) {
         geminiStyleInput.value = DEFAULT_GEMINI_STYLE;
     });
 }
-const mouseLeftInput = document.getElementById("mouse-left-input");
-const mouseMiddleInput = document.getElementById("mouse-middle-input");
-const mouseRightInput = document.getElementById("mouse-right-input");
 const jawOpenThresholdSlider = document.getElementById("jaw-open-threshold-slider");
 const noseGainSlider = document.getElementById("nose-gain-slider");
 const yawGainSlider = document.getElementById("yaw-gain-slider");
@@ -6505,7 +6493,6 @@ const settingsTabContents = document.querySelectorAll(".settings-tab-content");
 const jawOpenThresholdValue = document.getElementById("jaw-open-threshold-value");
 const noseGainValue = document.getElementById("nose-gain-value");
 const yawGainValue = document.getElementById("yaw-gain-value");
-const mouseClickFeedback = document.getElementById("mouse-click-feedback");
 const saveSettingsBtn = document.getElementById("save-settings");
 const closeSettingsBtn = document.getElementById("close-settings");
 const controlsRoot = document.getElementById("controls");
@@ -6700,7 +6687,7 @@ document.getElementById("audio-cache-clear-btn")?.addEventListener("click", () =
     if (status) status.textContent = "消去しました。";
 });
 
-// 設定画面の未保存の値 (API Key / モデル / 話者 / 口調) でキャッシュを使わず即時発話する
+// 設定画面の未保存の値 (API Key / モデル / 話者 / 口調) でキャッシュを使わず即時発話する（音声タブの「試聴」）
 const ttsPreviewStatus = document.getElementById("tts-preview-status");
 let ttsPreviewController = null;
 
@@ -6766,68 +6753,6 @@ document.querySelectorAll(".tts-preview-btn").forEach(btn => {
     });
 });
 
-function showMouseClickFeedback(button, text) {
-    if (!mouseClickFeedback) return;
-
-    const buttonLabel = button === "left" ? "左クリック" : (button === "middle" ? "真ん中クリック" : "右クリック");
-    mouseClickFeedback.textContent = `${buttonLabel}: ${text}`;
-    mouseClickFeedback.classList.remove("left", "middle", "right", "active");
-    mouseClickFeedback.classList.add(button);
-
-    void mouseClickFeedback.offsetWidth;
-    mouseClickFeedback.classList.add("active");
-
-    if (window.mouseClickFeedbackTimer) clearTimeout(window.mouseClickFeedbackTimer);
-    window.mouseClickFeedbackTimer = setTimeout(() => {
-        mouseClickFeedback.classList.remove("active");
-    }, 1200);
-}
-
-function shouldIgnoreMouseSpeech(event) {
-    const target = event.target;
-    if (!target) return false;
-
-    if (settingsModal && settingsModal.classList.contains("active")) return true;
-    // 操作パネル・キャリブレーション画面のボタン操作では発話しない
-    if (target.closest && target.closest("#controls, #calib-wizard, #front-recapture-top, #question-mode-bar")) return true;
-    if (target.closest("input, textarea, [contenteditable='true']")) return true;
-
-    const activeTag = document.activeElement ? document.activeElement.tagName : "";
-    if (activeTag === "INPUT" || activeTag === "TEXTAREA") return true;
-    if (document.activeElement && document.activeElement.isContentEditable) return true;
-
-    return false;
-}
-
-function speakByMouseButton(button) {
-    const key = button === 0 ? "left" : (button === 1 ? "middle" : "right");
-    const phrase = mouseClickSpeech[key];
-    showMouseClickFeedback(key, phrase);
-    speak(phrase);
-}
-
-document.addEventListener("contextmenu", (event) => {
-    if (!shouldIgnoreMouseSpeech(event)) {
-        event.preventDefault();
-    }
-});
-
-document.addEventListener("auxclick", (event) => {
-    if ((event.button === 1 || event.button === 2) && !shouldIgnoreMouseSpeech(event)) {
-        event.preventDefault();
-    }
-});
-
-document.addEventListener("mousedown", (event) => {
-    if (![0, 1, 2].includes(event.button)) return;
-    if (shouldIgnoreMouseSpeech(event)) return;
-
-    if (event.button === 1 || event.button === 2) {
-        event.preventDefault();
-    }
-    speakByMouseButton(event.button);
-});
-
 settingsBtn.addEventListener("click", () => {
     collapseControls();
     apiKeyInput.value = GEMINI_API_KEY;
@@ -6860,9 +6785,6 @@ settingsBtn.addEventListener("click", () => {
     openSimplePanelEditor();
     openQuestionEditor();
     openTalkEditor();
-    if (mouseLeftInput) mouseLeftInput.value = mouseClickSpeech.left;
-    if (mouseMiddleInput) mouseMiddleInput.value = mouseClickSpeech.middle;
-    if (mouseRightInput) mouseRightInput.value = mouseClickSpeech.right;
     refreshTuningSliderLabels();
     settingsModal.classList.add("active");
 });
@@ -6911,13 +6833,6 @@ saveSettingsBtn.addEventListener("click", () => {
         localStorage.setItem(GEMINI_STYLE_KEY, geminiStyle);
     }
 
-    const newLeft = normalizedPhrase(mouseLeftInput ? mouseLeftInput.value : "", DEFAULT_MOUSE_CLICK_SPEECH.left);
-    const newMiddle = normalizedPhrase(mouseMiddleInput ? mouseMiddleInput.value : "", DEFAULT_MOUSE_CLICK_SPEECH.middle);
-    const newRight = normalizedPhrase(mouseRightInput ? mouseRightInput.value : "", DEFAULT_MOUSE_CLICK_SPEECH.right);
-    mouseClickSpeech = { left: newLeft, middle: newMiddle, right: newRight };
-    localStorage.setItem("mouse_click_phrase_left", newLeft);
-    localStorage.setItem("mouse_click_phrase_middle", newMiddle);
-    localStorage.setItem("mouse_click_phrase_right", newRight);
     localStorage.setItem(JAW_OPEN_THRESHOLD_KEY, String(jawOpenThreshold));
     localStorage.setItem(NOSE_GAIN_KEY, String(noseGain));
     localStorage.setItem(YAW_GAIN_KEY, String(yawGain));

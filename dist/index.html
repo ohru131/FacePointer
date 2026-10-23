@@ -573,14 +573,13 @@
                             </section>
 
                             <section class="settings-section">
-                                <h4>マウスクリックで話す文言</h4>
-                                <div class="mouse-speech-grid">
-                                    <div class="mouse-speech-row"><label class="field field--row"><span>左クリック</span><input type="text" id="mouse-left-input" placeholder="左クリックの文言"></label><button class="ctrl-btn secondary tts-preview-btn" type="button" data-target="mouse-left-input" title="選択中のTTS設定で試聴">🔊</button></div>
-                                    <div class="mouse-speech-row"><label class="field field--row"><span>中クリック</span><input type="text" id="mouse-middle-input" placeholder="真ん中クリックの文言"></label><button class="ctrl-btn secondary tts-preview-btn" type="button" data-target="mouse-middle-input" title="選択中のTTS設定で試聴">🔊</button></div>
-                                    <div class="mouse-speech-row"><label class="field field--row"><span>右クリック</span><input type="text" id="mouse-right-input" placeholder="右クリックの文言"></label><button class="ctrl-btn secondary tts-preview-btn" type="button" data-target="mouse-right-input" title="選択中のTTS設定で試聴">🔊</button></div>
+                                <h4><label for="tts-preview-input">試聴</label></h4>
+                                <div class="tts-preview-row">
+                                    <input type="text" id="tts-preview-input" value="こんにちは。今日もよろしくお願いします。" maxlength="80">
+                                    <button class="ctrl-btn secondary tts-preview-btn" type="button" data-target="tts-preview-input" title="選択中のTTS設定で試聴">🔊</button>
                                 </div>
                                 <small id="tts-preview-status" aria-live="polite"></small>
-                                <p class="settings-help">介助者がマウスで即時発話させるためのショートカット。🔊 で保存前のTTS設定を試聴できます。</p>
+                                <p class="settings-help">保存する前の音声の設定（モデル・話者・口調）で、この文を読み上げます。</p>
                             </section>
                         </div>
                     </div>
@@ -592,8 +591,6 @@
                 </div>
             </div>
         </div>
-
-        <div id="mouse-click-feedback" aria-live="polite"></div>
 
         <div id="loading">
             <div class="loader"></div>
