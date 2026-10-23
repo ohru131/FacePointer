@@ -341,7 +341,7 @@ let pointerMode = localStorage.getItem(POINTER_MODE_KEY) === POINTER_MODE_RELATI
 let absEdges = { left: null, right: null, up: null, down: null };
 let absStageForY = null;
 // パネル中央吸着（シンプルモード・絶対方式）: パネルに入るとラベル中央へゆっくり寄せ、
-// 着いたら「その顔の向き＝そのパネル中央」になるよう、正面（画面中央）を固定したまま上下左右の縮尺を変える
+// 着いたら「その顔の向き＝そのパネル中央」になるよう、正面の位置を固定したまま上下左右の縮尺を変える
 const PANEL_SNAP_KEY = "panel_snap_enabled";
 const PANEL_SNAP_SPEED_PX_PER_S = 260;
 // 縮尺を変える点が正面に近すぎる（変位が範囲のこの割合未満）・端に近すぎる（この割合超）と縮尺が極端になるので使わない
@@ -807,8 +807,8 @@ function getRawFaceOffset(anchor) {
     return { x: noseX + yaw, y: noseY + pitch };
 }
 
-// 端を越えて振り切った量を一時的な端として覚え、戻すときは「正面→一時的な端」を「中央→画面の端」に縮めて動かす。
-// 戻し始めた瞬間から動き、正面で必ず中央に来る。中央付近まで戻ったら元の係数に戻す（中央ではどちらの係数でも
+// 端を越えて振り切った量を一時的な端として覚え、戻すときは「正面→一時的な端」を「正面の位置→画面の端」に縮めて動かす。
+// 戻し始めた瞬間から動き、正面で必ず正面の位置に来る。正面付近まで戻ったら元の係数に戻す（正面付近ではどちらの係数でも
 // ほぼ同じ位置なので跳ねない）
 function mapAbsoluteAxis(raw, negRange, posRange, negKey, posKey) {
     const side = raw >= 0 ? posKey : negKey;
@@ -912,6 +912,18 @@ function updatePanelSnap(nat, ax, ay, timeMs) {
     return { x: nat.x + s.gx, y: nat.y + s.gy };
 }
 
+// シンプルモードの正面の位置（px）。絶対方式で○を向いて正面を登録していれば、その○の画面上の位置（範囲内に収める）。
+// 感度は画面上の実際の距離で合わせているので、範囲の中央を正面にすると○の位置と中央の差だけ画面全体で向いた場所からずれる。
+// 上下（左右）の範囲は不均等になってよい。それ以外は範囲の中央
+function getSimpleFrontPoint(bounds) {
+    const front = pointerMode === POINTER_MODE_ABSOLUTE ? frontScreenPoint : null;
+    if (!front) return { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
+    return {
+        x: clamp(front.x * window.innerWidth, bounds.minX, bounds.maxX),
+        y: clamp(front.y * window.innerHeight, bounds.minY, bounds.maxY)
+    };
+}
+
 function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
     const distanceRatio = getDistanceRatio();
     debugDistanceRatio = distanceRatio;
@@ -919,12 +931,8 @@ function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
     const rawX = offset.x * distanceRatio;
     const rawY = offset.y * distanceRatio;
 
-    // シンプルモードは、正面 = 正面登録の○を向いていた画面上の位置。感度は画面上の実際の距離で合わせているので、
-    // 範囲の中央を正面にすると、○の位置と中央の差だけ画面全体で向いた場所からずれる。上下（左右）の範囲は不均等になってよい
-    const front = isSimpleMode() ? frontScreenPoint : null;
-    const centerX = front
-        ? clamp(front.x * window.innerWidth, bounds.minX, bounds.maxX)
-        : (bounds.minX + bounds.maxX) / 2;
+    const simpleFront = isSimpleMode() ? getSimpleFrontPoint(bounds) : null;
+    const centerX = simpleFront ? simpleFront.x : (bounds.minX + bounds.maxX) / 2;
     const leftRange = centerX - bounds.minX;
     const rightRange = bounds.maxX - centerX;
     const mapX = mapAbsoluteAxis(rawX, leftRange, rightRange, "left", "right");
@@ -941,9 +949,7 @@ function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
             absStageForY = stage;
         }
         // 症状モードは段ごとに正面の位置を変える（上段: 正面=上段、下段: 正面=下段）。下段で下を向き続けなくてよい
-        let centerY = front
-            ? clamp(front.y * window.innerHeight, verticalBounds.minY, verticalBounds.maxY)
-            : (verticalBounds.minY + verticalBounds.maxY) / 2;
+        let centerY = simpleFront ? simpleFront.y : (verticalBounds.minY + verticalBounds.maxY) / 2;
         if (!isSimpleMode()) centerY = symptomStage === SYMPTOM_STAGE_BODY_PART ? verticalBounds.maxY : verticalBounds.minY;
         upRange = centerY - verticalBounds.minY;
         downRange = verticalBounds.maxY - centerY;
@@ -2774,11 +2780,14 @@ function isSimpleClickBlocked(targetKey) {
     return isSimpleMode() && isSimplePaused && targetKey !== getSimpleRowKey(SIMPLE_CTRL_REST);
 }
 
+// 正面の位置（絶対方式で○を向いて登録していれば○の位置）へ置く。絶対方式は次のフレームで正面の位置へ動くので、
+// グリッド中央に置くと途中のパネルで滞留ロックが外れ、正面で休んでいるだけで確定してしまう
 function centerPointerOnSimpleGrid() {
     const bounds = getSimplePanelPointerBounds();
     if (!bounds) return;
-    targetX = pointerX = bounds.centerX;
-    targetY = pointerY = bounds.centerY;
+    const front = getSimpleFrontPoint(bounds);
+    targetX = pointerX = front.x;
+    targetY = pointerY = front.y;
 }
 
 function setAppMode(mode) {
@@ -5560,9 +5569,11 @@ function fitCalibrationSideRatios(entries, model, gain, fallback) {
     const fitted = {};
     const limited = [];
     [["left", "right"], ["up", "down"]].forEach((pair) => {
-        const combined = measureCalibrationRatio(entries, model, gain, pair);
-        pair.forEach((side) => {
-            let value = measureCalibrationRatio(entries, model, gain, [side]);
+        const single = pair.map(side => measureCalibrationRatio(entries, model, gain, [side]));
+        // 片側が決められない（動かなかった・逆に動いた）ときは、その記録が合算を歪めるので制限しない
+        const combined = single.every(value => value !== null) ? measureCalibrationRatio(entries, model, gain, pair) : null;
+        pair.forEach((side, index) => {
+            let value = single[index];
             if (value !== null && combined !== null) {
                 const bounded = clamp(value, combined / SIDE_GAIN_ASYMMETRY_MAX, combined * SIDE_GAIN_ASYMMETRY_MAX);
                 if (bounded !== value && !limited.includes(pair[0])) limited.push(pair[0]);
@@ -5903,7 +5914,7 @@ const calibrationWizard = (() => {
                 : `${step.target.label}の ○ に顔の正面を向けて 止めてください`;
             if (matchedElapsedMs === null) {
                 subEl.textContent = frontOnly
-                    ? "楽な姿勢で。この向きが画面の中央になります"
+                    ? "楽な姿勢で。この ○ を向いた向きが正面になります"
                     : step.target.key === "center"
                     ? `${pass.sub}、楽な姿勢で`
                     : "薄い点が ○ の中に入るように。合わなくても ○ を向いて止まれば記録します";
@@ -6039,8 +6050,9 @@ const calibrationWizard = (() => {
         close();
         jawClosedBaseline = null;
         // 正面位置も今の姿勢で取り直す。絶対方式は正面がずれると全体がずれるので、○を向いて登録する
+        // 登録できれば recaptureFrontPose が解除し、時間切れなら起動時と同じく次のフレームの姿勢を正面にする
+        isCalibrating = true;
         if (pointerMode === POINTER_MODE_ABSOLUTE) start({ frontOnly: true });
-        else isCalibrating = true;
     }
 
     function onTargetFrame(sample, timeMs, dt) {
@@ -6202,21 +6214,19 @@ function recaptureFrontPose(sample = null, screenPoint = null) {
         isCalibrating = false;
         speak("完了");
     } else {
+        frontScreenPoint = null;
         isCalibrating = true;
     }
-    // 取り直した正面の位置（シンプルモードで○の位置が分かればそこ、それ以外は移動範囲の中央）へポインタを置き直す
+    // 取り直した正面の位置へポインタを置き直す
     const bounds = getSymptomRowPointerBounds();
-    const front = isSimpleMode() && !isCalibrating ? frontScreenPoint : null;
-    if (bounds) {
-        targetX = pointerX = front
-            ? clamp(front.x * window.innerWidth, bounds.minX, bounds.maxX)
-            : (bounds.minX + bounds.maxX) / 2;
-    }
     if (bounds && isSimpleMode()) {
-        targetY = pointerY = front
-            ? clamp(front.y * window.innerHeight, bounds.minY, bounds.maxY)
-            : (bounds.minY + bounds.maxY) / 2;
-    } else snapPointerToFrontRow();
+        const front = getSimpleFrontPoint(bounds);
+        targetX = pointerX = front.x;
+        targetY = pointerY = front.y;
+    } else {
+        if (bounds) targetX = pointerX = (bounds.minX + bounds.maxX) / 2;
+        snapPointerToFrontRow();
+    }
 }
 
 // 症状モードの縦: 絶対方式では今の段の行が正面、相対方式では上段から始める
