@@ -92,14 +92,6 @@ const POINTER_MODE_ABSOLUTE = "absolute";
 const POINTER_MODE_RELATIVE = "relative";
 // 絶対方式で端を越えて振り切ったあと、中央のこの範囲まで戻ったら元の係数に戻す（移動範囲の半幅に対する割合）
 const ABS_EDGE_RESET_RATIO = 0.05;
-// 上端中央の「正面取り直し」: 上の端をこの量（上下の移動範囲に対する割合）以上越えて上を向き、滞留すると起動
-const FRONT_BUTTON_OVERSHOOT_RATIO = 0.4;
-const FRONT_BUTTON_MIN_OVERSHOOT_PX = 40;
-// 横は正面からこの範囲（移動範囲の半幅に対する割合）のときだけボタンに乗る
-const FRONT_BUTTON_X_BAND_RATIO = 0.5;
-const FRONT_BUTTON_DWELL_MS = 1500;
-// 段の切替で上を向いた直後に誤って乗らないようにする
-const FRONT_BUTTON_STAGE_LOCKOUT_MS = 1000;
 // 姿勢ずれのお知らせ: 絶対方式で端に張り付いた状態がこの時間続いたら、正面取り直しボタンを光らせる（自動では取り直さない）
 const POSTURE_HINT_PINNED_MS = 15000;
 // 端に張り付いているとみなす変位（その側の移動範囲に対する割合）
@@ -355,14 +347,10 @@ let isAxisLockEnabled = localStorage.getItem(AXIS_LOCK_KEY) !== "0";
 let isPanelSnapEnabled =localStorage.getItem(PANEL_SNAP_KEY) === "1";
 // warpX/Y: 縮尺の変更点 { side, mu, pu }（変位 mu → pu。範囲に対する割合）。gx/gy: 吸着中の補正量px
 const panelSnap = { warpX: null, warpY: null, gx: 0, gy: 0, glideEl: null, doneEl: null, lastMs: null };
-let frontButtonHoverStartMs = null;
-// 段の切替などで上を向いたままの場合に起動しないよう、一度上の端より内側へ戻ってから有効にする
-let isFrontButtonArmed = false;
 let postureHintPinnedSinceMs = null;
 let postureHintCenteredSinceMs = null;
 // 起動直後は、顔が見つかったら正面の登録から始める（最初のフレームの姿勢で正面が決まるのを防ぐ）
 let needsStartupFrontRegistration = true;
-let frontButtonStage = null;
 let isNoiseDeadzone = localStorage.getItem(CALIB_VERSION_KEY) === CALIB_VERSION_NOISE_DEADZONE;
 let debugRecenterDrift = 0;
 // キャリブレーションで決めた基準距離（0 = 未計測。その間は正面を取り直した時点の距離を基準にする）
@@ -979,41 +967,16 @@ function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
     debugDeltaYPx = nextY - targetY;
     debugRecenterDrift = 0;
 
-    const halfWidth = (bounds.maxX - bounds.minX) / 2;
-    const overshootUp = -rawY - upRange;
-    if (absStageForY !== frontButtonStage) {
-        frontButtonStage = absStageForY;
-        isFrontButtonArmed = false;
-    }
-    const frontButtonThreshold = Math.max(FRONT_BUTTON_MIN_OVERSHOOT_PX, FRONT_BUTTON_OVERSHOOT_RATIO * Math.max(upRange, downRange));
-    // 正面に戻してもバックラッシュの分だけ上に残るので、しきい値の半分まで戻れば有効にする
-    if (overshootUp <= frontButtonThreshold / 2) isFrontButtonArmed = true;
-    // シンプルモードは上の項目を選ぶ動きがそのまま上端越えになるので、顔操作での取り直しは使わない（メニューからは可能）
-    const frontButtonAvailable = verticalBounds !== null && !isSimpleMode();
-    const onFrontButton = frontButtonAvailable
-        && (isFrontButtonArmed || frontButtonHoverStartMs !== null)
-        && overshootUp >= frontButtonThreshold
-        && Math.abs(rawX) <= halfWidth * FRONT_BUTTON_X_BAND_RATIO
-        && Date.now() - lastVerticalStageSwitchAt >= FRONT_BUTTON_STAGE_LOCKOUT_MS
-        && !isConfirmInProgress && !pendingClickTimer && !isSettingsOpen();
     updatePostureHint(rawX, rawY, centerX - bounds.minX, bounds.maxX - centerX, upRange, downRange, timeMs);
-    // 上下に動けない画面ではボタンへ届かないので出さない
-    if (frontRecaptureTopBtn) frontRecaptureTopBtn.classList.toggle("unreachable", !verticalBounds && !isSimpleMode());
-    const buttonCenter = updateFrontButtonHover(onFrontButton, timeMs);
-    if (buttonCenter) {
-        nextX = buttonCenter.x;
-        nextY = buttonCenter.y;
-    }
     targetX = nextX;
     targetY = nextY;
 }
 
-const frontRecaptureTopBtn = document.getElementById("front-recapture-top");
-// 顔の滞留とは別に、マウスクリックでも取り直しを始められる
-frontRecaptureTopBtn?.addEventListener("click", () => startFrontRecapture());
-
+// 姿勢ずれのお知らせは、右上の ⚙ と介助者メニューの「正面取り直し」を光らせる
 function setPostureHint(isOn) {
-    if (frontRecaptureTopBtn) frontRecaptureTopBtn.classList.toggle("suggest", isOn);
+    ["controls-collapse-btn", "recapture-front-btn"].forEach((id) => {
+        document.getElementById(id)?.classList.toggle("suggest", isOn);
+    });
 }
 
 function clearPostureHint() {
@@ -1022,7 +985,7 @@ function clearPostureHint() {
     setPostureHint(false);
 }
 
-// 姿勢がずれると、正面のつもりでも片側の端に張り付いたままになる。長く続いたら取り直しボタンを光らせて知らせる
+// 姿勢がずれると、正面のつもりでも片側の端に張り付いたままになる。長く続いたら取り直しを促す
 function updatePostureHint(rawX, rawY, leftRange, rightRange, upRange, downRange, timeMs) {
     // 範囲 0 の側（症状モードの段ごとの正面）は設計上いつも端なので数えない
     const pinnedOn = (raw, negRange, posRange) => (posRange > 0 && raw >= posRange * POSTURE_HINT_PINNED_RATIO)
@@ -1046,32 +1009,6 @@ function updatePostureHint(rawX, rawY, leftRange, rightRange, upRange, downRange
     } else {
         postureHintCenteredSinceMs = null;
     }
-}
-
-function cancelFrontButtonHover() {
-    frontButtonHoverStartMs = null;
-    if (!frontRecaptureTopBtn) return;
-    frontRecaptureTopBtn.classList.remove("hover");
-    frontRecaptureTopBtn.style.setProperty("--front-hold", "0");
-}
-
-// 上端中央ボタンへの滞留。乗っている間はポインタをボタンの上に置き、滞留が溜まったら正面の登録を始める
-function updateFrontButtonHover(isOn, timeMs) {
-    if (!frontRecaptureTopBtn || !isOn) {
-        cancelFrontButtonHover();
-        return null;
-    }
-    if (frontButtonHoverStartMs === null) frontButtonHoverStartMs = timeMs;
-    const progress = clamp((timeMs - frontButtonHoverStartMs) / FRONT_BUTTON_DWELL_MS, 0, 1);
-    frontRecaptureTopBtn.classList.add("hover");
-    frontRecaptureTopBtn.style.setProperty("--front-hold", String(progress));
-    const rect = frontRecaptureTopBtn.getBoundingClientRect();
-    const center = { x: rect.left + (rect.width / 2), y: rect.top + (rect.height / 2) };
-    if (progress >= 1) {
-        cancelFrontButtonHover();
-        startFrontRecapture();
-    }
-    return center;
 }
 
 function getAngleOffsetAcceleration(currentAngle, calibratedAngle) {
@@ -2709,8 +2646,7 @@ function resetDwellProgress() {
 
 function updateDwellSelection(hasFace) {
     if (!isSimpleMode() || dwellTimeMs <= 0 || !hasFace || isCalibrating
-        || calibrationWizard.isActive() || isConfirmInProgress || pendingClickTimer
-        || frontButtonHoverStartMs !== null) {
+        || calibrationWizard.isActive() || isConfirmInProgress || pendingClickTimer) {
         resetDwellProgress();
         return;
     }
@@ -3127,6 +3063,9 @@ function renderQuestionButtons() {
         questionButtonsContainer.appendChild(note);
     }
     if (questionEndBtn) questionEndBtn.style.display = activeQuestion && !isQuestionMode() ? "" : "none";
+    // 質問モードは画面の上に同じ質問が並ぶので、メニューには出さない
+    const questionSection = questionButtonsContainer.closest(".drawer-section");
+    if (questionSection) questionSection.style.display = isQuestionMode() ? "none" : "";
 }
 
 // 「絵文字 表示名=発話文」を1行1つで受け取る（絵文字・発話文は省略可）
@@ -4831,7 +4770,6 @@ async function predictWebcam() {
     pointerElement.style.setProperty("--pointer-y", `${pointerY}px`);
 
     if (!hasFace) {
-        cancelFrontButtonHover();
         debugDeltaN = 0;
         debugDeltaY = 0;
         debugPixN = 0;
@@ -5277,29 +5215,11 @@ function updateGestureDetection(detectResults, primaryLandmarks = null) {
 function drawMouthDetectionOverlay(landmarks) {
     const isOpenDetected = isJawOpenVisualActive();
     const isClickFeedbackActive = Date.now() < clickFeedbackUntil;
-    // 色はクリック実行タイミングに合わせる（クリック時=赤、それ以外=緑）
+    // 色はクリック実行タイミングに合わせる（クリック時=赤、それ以外=緑）。
+    // 口の値の文字表示は、鏡像の映像に重ねると左右反転して読めないので出さない（計測値パネルに出る）
     const accent = (isClickFeedbackActive || isOpenDetected) ? "#ff5252" : "#00e676";
-    const label = isClickFeedbackActive
-        ? "CLICK!"
-        : (isOpenDetected ? "口OPEN 判定" : "口CLOSE 判定");
 
     canvasCtx.save();
-    canvasCtx.fillStyle = "rgba(0, 0, 0, 0.55)";
-    canvasCtx.fillRect(12, 12, 265, 52);
-
-    // 状態ラベルを色付きバッジ表示にして視認性を上げる
-    canvasCtx.strokeStyle = accent;
-    canvasCtx.lineWidth = 2;
-    canvasCtx.strokeRect(12, 12, 265, 52);
-    canvasCtx.fillStyle = accent;
-    canvasCtx.fillRect(18, 18, 132, 22);
-    canvasCtx.fillStyle = "#111111";
-    canvasCtx.font = "bold 15px sans-serif";
-    canvasCtx.fillText(label, 24, 34);
-
-    canvasCtx.fillStyle = "#ffffff";
-    canvasCtx.font = "14px monospace";
-    canvasCtx.fillText(`raw:${jawOpenRawScore.toFixed(3)} filt:${jawOpenFilteredScore.toFixed(3)}`, 22, 54);
 
     if (landmarks && landmarks[13]) {
         const mouthX = landmarks[13].x * canvasElement.width;
@@ -5336,7 +5256,7 @@ function showGestureFeedback() {
 }
 
 function triggerClick() {
-    if (calibrationWizard.isActive() || isSettingsOpen() || frontButtonHoverStartMs !== null) return false;
+    if (calibrationWizard.isActive() || isSettingsOpen()) return false;
     if (isConfirmInProgress) {
         logClickDebug("click_blocked_confirm_in_progress");
         return false;
@@ -6042,7 +5962,6 @@ const calibrationWizard = (() => {
         frontOnly = options.frontOnly === true;
         steps = frontOnly ? [{ type: "target", pass: "near", target: CALIB_TARGETS[0] }] : buildCalibrationSteps();
         lastFrameMs = null;
-        cancelFrontButtonHover();
         captures = [];
         neutralSamples = [];
         mouthSamples = [];
@@ -6268,8 +6187,6 @@ calibrateBtn.addEventListener("click", () => {
 // キャリブレーション画面の正面登録と同じく、中央の○を向いて静止したら登録する
 function startFrontRecapture({ collapse = true } = {}) {
     if (calibrationWizard.isActive()) return;
-    // 上を向いたまま登録が時間切れで閉じても、すぐにボタンへ乗って開き直さないよう、一度戻るまで無効にする
-    isFrontButtonArmed = false;
     if (collapse) collapseControls();
     calibrationWizard.start({ frontOnly: true });
 }
@@ -6352,18 +6269,9 @@ audioCacheBtn.addEventListener("click", () => {
 // 全画面表示の切り替え（ブラウザ版向け。Escでも解除される）
 const fullscreenBtn = document.getElementById("fullscreen-btn");
 
-// メニューを閉じていても右上（⚙の横）に全画面の切り替えアイコンを出す（全画面中は解除アイコン）
-const fullscreenExitBtn = document.getElementById("fullscreen-exit-btn");
-
 function updateFullscreenButton() {
     const isFullscreen = Boolean(document.fullscreenElement);
     document.body.classList.toggle("is-fullscreen", isFullscreen);
-    if (fullscreenExitBtn) {
-        fullscreenExitBtn.textContent = isFullscreen ? "⤡" : "⛶";
-        const title = isFullscreen ? "全画面を解除" : "全画面表示";
-        fullscreenExitBtn.title = title;
-        fullscreenExitBtn.setAttribute("aria-label", title);
-    }
     if (!fullscreenBtn) return;
     const label = fullscreenBtn.querySelector(".fullscreen-btn-label");
     if (label) label.textContent = isFullscreen ? "全画面を解除" : "全画面";
@@ -6372,7 +6280,6 @@ function updateFullscreenButton() {
 if (fullscreenBtn) {
     if (!document.fullscreenEnabled) {
         fullscreenBtn.style.display = "none";
-        if (fullscreenExitBtn) fullscreenExitBtn.style.display = "none";
     } else {
         fullscreenBtn.addEventListener("click", async () => {
             try {
@@ -6381,10 +6288,6 @@ if (fullscreenBtn) {
             } catch (error) {
                 console.warn("fullscreen toggle failed:", error);
             }
-        });
-        fullscreenExitBtn?.addEventListener("click", () => {
-            const toggle = document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
-            toggle.catch(error => console.warn("fullscreen toggle failed:", error));
         });
         document.addEventListener("fullscreenchange", updateFullscreenButton);
         updateFullscreenButton();
@@ -6874,7 +6777,6 @@ saveSettingsBtn.addEventListener("click", () => {
     if (pointerModeSelect && nextPointerMode !== pointerMode) {
         pointerMode = nextPointerMode;
         localStorage.setItem(POINTER_MODE_KEY, pointerMode);
-        cancelFrontButtonHover();
         clearPostureHint();
         resetPointerMotionHistory();
         applyPointerModeState();
