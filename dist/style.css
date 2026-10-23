@@ -437,6 +437,43 @@ header {
     position: relative;
 }
 
+/* 質問モード: 介助者がマウスで質問を切り替えるボタン列（ポインタの対象外） */
+#question-mode-bar {
+    flex: 0 0 auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    /* 右上の ⛶・⚙ アイコンに重ねない */
+    padding-right: 110px;
+}
+
+/* 正面固定のときは上端中央に「◎ 正面取り直し」が出るので、その下から並べる */
+body.pointer-absolute #question-mode-bar {
+    padding-top: 30px;
+}
+
+.question-mode-btn {
+    padding: 0.45rem 1rem;
+    border: 2px solid rgba(69, 123, 157, 0.45);
+    border-radius: 999px;
+    background: #fff;
+    color: var(--text);
+    font-family: inherit;
+    font-size: clamp(0.95rem, 1.6vw, 1.2rem);
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.question-mode-btn:hover {
+    background: #eef5fa;
+}
+
+.question-mode-btn.active {
+    background: #457b9d;
+    border-color: #457b9d;
+    color: #fff;
+}
+
 /* ページ送り・休憩のバー */
 #simple-bar {
     flex: 0 0 clamp(64px, 12vh, 110px);
@@ -1307,30 +1344,6 @@ body.calib-active #dwell-indicator {
 }
 
 /* ON/OFF スイッチ風ボタン（aria-pressed / .is-off を JS が切り替える） */
-.switch-btn {
-    width: 100%;
-    justify-content: space-between;
-    font-weight: 700;
-}
-
-.switch-btn::after {
-    content: "";
-    flex: 0 0 auto;
-    width: 40px;
-    height: 22px;
-    border-radius: 999px;
-    background:
-        radial-gradient(circle at 29px 50%, #fff 8px, transparent 8.5px),
-        #2d9d6b;
-    transition: background 0.2s;
-}
-
-.switch-btn.is-off::after {
-    background:
-        radial-gradient(circle at 11px 50%, #fff 8px, transparent 8.5px),
-        #9aa5b1;
-}
-
 /* 進捗表示（音声データ生成） */
 .status-info {
     display: flex;

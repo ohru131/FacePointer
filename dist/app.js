@@ -196,7 +196,9 @@ const APP_MODE_KEY = "app_mode";
 const APP_MODE_SYMPTOM = "symptom";
 const APP_MODE_SIMPLE = "simple";
 const APP_MODE_TALK = "talk";
-const APP_MODES = [APP_MODE_SYMPTOM, APP_MODE_SIMPLE, APP_MODE_TALK];
+// 質問モード: 上に並べた質問を介助者がマウスで切り替え、本人が回答パネルで答える。答えても質問モードのまま
+const APP_MODE_QUESTION = "question";
+const APP_MODES = [APP_MODE_SYMPTOM, APP_MODE_SIMPLE, APP_MODE_TALK, APP_MODE_QUESTION];
 // 旧「文づくりモード」はお話モードに置き換えた
 const APP_MODE_LEGACY = { compose: APP_MODE_TALK };
 const SIMPLE_ROW_ID = "s";
@@ -405,6 +407,10 @@ function isSimpleMode() {
 
 function isTalkScreen() {
     return appMode === APP_MODE_TALK && activeQuestion === null;
+}
+
+function isQuestionMode() {
+    return appMode === APP_MODE_QUESTION;
 }
 
 // 設定画面を開いている間は、確定・発話などの機能を止める
@@ -2374,6 +2380,8 @@ function getSimpleLayout() {
     let panels;
     if (activeQuestion) {
         panels = activeQuestion.answers;
+    } else if (isQuestionMode()) {
+        return { ...userSize, panels: [] };
     } else if (appMode === APP_MODE_TALK) {
         panels = getTalkPanels();
     } else {
@@ -2501,6 +2509,7 @@ function renderSimpleMode() {
 
     if (!simpleGridContainer || !simpleBarContainer) return;
 
+    renderQuestionModeBar();
     renderSimpleMessage();
     renderTalkTabs();
 
@@ -2541,7 +2550,7 @@ function renderSimpleMode() {
         appendSimpleControl(SIMPLE_CTRL_NEXT, "次へ ▶");
     }
     if (activeQuestion) {
-        appendSimpleControl(SIMPLE_CTRL_CANCEL, "✕ やめる", "simple-ctrl--cancel");
+        if (!isQuestionMode()) appendSimpleControl(SIMPLE_CTRL_CANCEL, "✕ やめる", "simple-ctrl--cancel");
     } else {
         if (isTalkScreen() && talkTab === TALK_TAB_TREE) {
             const isTop = talkPath.length === 0;
@@ -2557,7 +2566,9 @@ function renderSimpleMode() {
     if (panels.length === 0) {
         const notice = document.createElement("div");
         notice.className = "simple-empty-notice";
-        notice.textContent = isTalkScreen()
+        notice.textContent = isQuestionMode() && !activeQuestion
+            ? "出す質問がありません（設定 → 質問で選択）"
+            : isTalkScreen()
             ? (talkTab === TALK_TAB_FAVORITE ? "まだ話した文がありません（話すとここに出ます）" : "表示する言葉がありません（設定 → お話で選択）")
             : "表示するパネルがありません（設定 → シンプルモードで選択）";
         simpleGridContainer.appendChild(notice);
@@ -2588,6 +2599,8 @@ async function handleSimpleClick(item) {
 
     const answeredQuestionId = activeQuestion?.id ?? null;
     await speakSimpleSentence(sentence);
+    // 質問モードは答えても同じ質問のまま（次の質問は介助者が上のボタンで選ぶ）
+    if (isQuestionMode()) return;
     // 発話中に別の質問へ切り替わっていたら、そちらは閉じない
     if (answeredQuestionId && activeQuestion?.id === answeredQuestionId) endQuestion();
 }
@@ -2807,6 +2820,7 @@ function setAppMode(mode) {
     activeQuestion = null;
     pageBeforeQuestion = 0;
     resetSymptomModeState();
+    if (isQuestionMode()) ensureQuestionModeQuestion({ speak: true });
     renderQuestionButtons();
 
     // グリッド中央へ乗せ直す
@@ -2819,6 +2833,10 @@ function setAppMode(mode) {
 // =========================================================
 const QUESTION_CONFIG_KEY = "question_config_v1";
 const QUESTION_CUSTOM_KEY = "question_custom_v1";
+// 質問モードで最後に出していた質問
+const QUESTION_MODE_LAST_KEY = "question_mode_last_id";
+// 既定で出さない質問。保存済みの設定にも一度だけ当てる（設定 → 質問でチェックすれば出せる）
+const QUESTION_DEFAULT_HIDDEN_IDS = ["q-yes-no", "q-who"];
 // 回答がないまま放置されたら元の画面へ戻す
 const QUESTION_TIMEOUT_MS = 90000;
 
@@ -2937,12 +2955,13 @@ function loadQuestionCustom() {
 function loadQuestionConfig() {
     try {
         const parsed = JSON.parse(localStorage.getItem(QUESTION_CONFIG_KEY) || "null");
-        return {
-            hiddenIds: Array.isArray(parsed?.hiddenIds) ? parsed.hiddenIds.filter(id => typeof id === "string") : [],
-            speakQuestion: parsed?.speakQuestion !== false
-        };
+        const hiddenIds = Array.isArray(parsed?.hiddenIds) ? parsed.hiddenIds.filter(id => typeof id === "string") : [];
+        if (parsed?.defaultHiddenApplied !== true) {
+            QUESTION_DEFAULT_HIDDEN_IDS.forEach((id) => { if (!hiddenIds.includes(id)) hiddenIds.push(id); });
+        }
+        return { hiddenIds, speakQuestion: parsed?.speakQuestion !== false, defaultHiddenApplied: true };
     } catch {
-        return { hiddenIds: [], speakQuestion: true };
+        return { hiddenIds: [...QUESTION_DEFAULT_HIDDEN_IDS], speakQuestion: true, defaultHiddenApplied: true };
     }
 }
 
@@ -2957,9 +2976,67 @@ function getQuestionLabel(q) {
     return q.label || q.question;
 }
 
-function startQuestion(questionId) {
+// 出す質問（設定 → 質問でチェックしたもの）。質問モードの上のボタンと介助者メニューで共通
+function getVisibleQuestions() {
+    const hidden = new Set(questionConfig.hiddenIds);
+    return getQuestionCatalog().filter(q => !hidden.has(q.id));
+}
+
+// 質問モードで、出す質問の中から回答中の質問を決める（前回の質問 → 先頭の質問）。出す質問が無ければ空の画面
+function ensureQuestionModeQuestion({ speak: shouldSpeak = false } = {}) {
+    if (!isQuestionMode()) return;
+    const visible = getVisibleQuestions();
+    if (activeQuestion && visible.some(q => q.id === activeQuestion.id)) return;
+    const lastId = localStorage.getItem(QUESTION_MODE_LAST_KEY);
+    const next = visible.find(q => q.id === lastId) ?? visible[0];
+    if (next) {
+        startQuestion(next.id, { speak: shouldSpeak });
+    } else if (activeQuestion) {
+        activeQuestion = null;
+        renderAll();
+    }
+}
+
+function dismissConfirmOverlay() {
+    if (window.confirmTimer) clearTimeout(window.confirmTimer);
+    confirmOverlay.classList.remove("active");
+    resolveConfirmOverlayHideWaiters();
+}
+
+// 質問モードの上のボタン。回答の確定表示中でも待たせず、表示を閉じてから切り替える
+function selectQuestionFromBar(questionId) {
+    if (!isConfirmInProgress) {
+        startQuestion(questionId);
+        return;
+    }
+    dismissConfirmOverlay();
+    // 確定表示の後始末（isConfirmInProgress の解除）が済んでから切り替える
+    setTimeout(() => startQuestion(questionId), 0);
+}
+
+function renderQuestionModeBar() {
+    if (!questionModeBar) return;
+    questionModeBar.innerHTML = "";
+    if (!isQuestionMode()) {
+        questionModeBar.style.display = "none";
+        return;
+    }
+    questionModeBar.style.display = "";
+    getVisibleQuestions().forEach((q) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "question-mode-btn" + (activeQuestion?.id === q.id ? " active" : "");
+        btn.textContent = getQuestionLabel(q);
+        btn.title = q.question;
+        btn.addEventListener("click", () => selectQuestionFromBar(q.id));
+        questionModeBar.appendChild(btn);
+    });
+}
+
+function startQuestion(questionId, { speak: shouldSpeak = true } = {}) {
     const question = getQuestionCatalog().find(q => q.id === questionId);
     if (!question || isConfirmInProgress) return;
+    if (isQuestionMode()) localStorage.setItem(QUESTION_MODE_LAST_KEY, question.id);
 
     if (!activeQuestion) pageBeforeQuestion = simplePage;
     activeQuestion = {
@@ -2978,12 +3055,14 @@ function startQuestion(questionId) {
     centerPointerOnSimpleGrid();
     renderQuestionButtons();
 
-    if (questionConfig.speakQuestion) void speak(question.question);
+    if (shouldSpeak && questionConfig.speakQuestion) void speak(question.question);
 }
 
 function endQuestion() {
     // 回答の確認表示中は閉じない（表示が消えた後に handleSimpleClick が閉じる）
     if (!activeQuestion || isConfirmInProgress) return;
+    // 質問モードは質問を閉じない（切り替えだけ）
+    if (isQuestionMode()) return;
 
     activeQuestion = null;
     simplePage = pageBeforeQuestion;
@@ -2999,7 +3078,7 @@ function endQuestion() {
 }
 
 function checkQuestionTimeout() {
-    if (!activeQuestion || isConfirmInProgress) return;
+    if (!activeQuestion || isConfirmInProgress || isQuestionMode()) return;
     if (Date.now() - activeQuestionStartedAt >= QUESTION_TIMEOUT_MS) endQuestion();
 }
 
@@ -3008,8 +3087,7 @@ function renderQuestionButtons() {
     if (!questionButtonsContainer) return;
 
     questionButtonsContainer.innerHTML = "";
-    const hidden = new Set(questionConfig.hiddenIds);
-    const visible = getQuestionCatalog().filter(q => !hidden.has(q.id));
+    const visible = getVisibleQuestions();
     visible.forEach((q) => {
         const btn = document.createElement("button");
         btn.type = "button";
@@ -3021,7 +3099,8 @@ function renderQuestionButtons() {
                 endQuestion();
                 return;
             }
-            startQuestion(q.id);
+            if (isQuestionMode()) selectQuestionFromBar(q.id);
+            else startQuestion(q.id);
             // 利用者が回答画面を見られるようメニューは閉じる
             collapseControls();
         });
@@ -3033,7 +3112,7 @@ function renderQuestionButtons() {
         note.textContent = "表示する質問がありません（設定 → 質問）";
         questionButtonsContainer.appendChild(note);
     }
-    if (questionEndBtn) questionEndBtn.style.display = activeQuestion ? "" : "none";
+    if (questionEndBtn) questionEndBtn.style.display = activeQuestion && !isQuestionMode() ? "" : "none";
 }
 
 // 「絵文字 表示名=発話文」を1行1つで受け取る（絵文字・発話文は省略可）
@@ -3930,7 +4009,7 @@ function renderQuestionEditor() {
         const check = document.createElement("input");
         check.type = "checkbox";
         check.checked = isShown;
-        check.title = "介助者メニューに表示する";
+        check.title = "質問モードと介助者メニューに出す";
         check.addEventListener("change", () => {
             if (check.checked) questionHiddenDraft.delete(q.id);
             else questionHiddenDraft.add(q.id);
@@ -3999,7 +4078,8 @@ function addCustomQuestion() {
 function saveQuestionEditor() {
     const nextConfig = {
         hiddenIds: Array.from(questionHiddenDraft),
-        speakQuestion: questionSpeakInput ? questionSpeakInput.checked : questionConfig.speakQuestion
+        speakQuestion: questionSpeakInput ? questionSpeakInput.checked : questionConfig.speakQuestion,
+        defaultHiddenApplied: true
     };
     try {
         localStorage.setItem(QUESTION_CUSTOM_KEY, JSON.stringify(questionCustomDraft));
@@ -4011,8 +4091,9 @@ function saveQuestionEditor() {
     }
     questionCustom = questionCustomDraft;
     questionConfig = nextConfig;
-    // 回答中の質問が削除されたら終了する
-    if (activeQuestion && !getQuestionCatalog().some(q => q.id === activeQuestion.id)) endQuestion();
+    // 回答中の質問が削除されたら終了する（質問モードは出す質問の先頭へ切り替える）
+    if (isQuestionMode()) ensureQuestionModeQuestion();
+    else if (activeQuestion && !getQuestionCatalog().some(q => q.id === activeQuestion.id)) endQuestion();
     renderQuestionButtons();
     return true;
 }
@@ -6270,6 +6351,8 @@ audioCacheBtn.addEventListener("click", () => {
             ? "\n※ Gemini TTS は1文に数秒かかり、1日の回数制限で途中で止まることがあります（Cloud TTS・VOICEVOX がおすすめ）。"
             : "";
         if (confirm(`まだ音声にしていない ${missing} 文の音声を作ります（作成済みの文はそのまま）。\n作成中も話せます。${geminiNote}`)) {
+            const createStatus = document.getElementById("audio-cache-create-result");
+            if (createStatus) createStatus.textContent = `${missing} 文の作成を始めました（進み具合は介助者メニュー）`;
             void prefetchAllAudio();
         }
     })();
@@ -6398,6 +6481,7 @@ const talkGenerateBtn = document.getElementById("talk-generate-btn");
 const talkInterviewList = document.getElementById("talk-interview-list");
 const talkAiStatus = document.getElementById("talk-ai-status");
 const questionButtonsContainer = document.getElementById("question-buttons");
+const questionModeBar = document.getElementById("question-mode-bar");
 const questionEndBtn = document.getElementById("question-end-btn");
 const questionEditorList = document.getElementById("question-editor-list");
 const questionSpeakInput = document.getElementById("question-speak-input");
@@ -6705,7 +6789,7 @@ function shouldIgnoreMouseSpeech(event) {
 
     if (settingsModal && settingsModal.classList.contains("active")) return true;
     // 操作パネル・キャリブレーション画面のボタン操作では発話しない
-    if (target.closest && target.closest("#controls, #calib-wizard, #front-recapture-top")) return true;
+    if (target.closest && target.closest("#controls, #calib-wizard, #front-recapture-top, #question-mode-bar")) return true;
     if (target.closest("input, textarea, [contenteditable='true']")) return true;
 
     const activeTag = document.activeElement ? document.activeElement.tagName : "";
@@ -6754,6 +6838,8 @@ settingsBtn.addEventListener("click", () => {
     if (voicevoxStatus) voicevoxStatus.textContent = "";
     const cacheClearStatus = document.getElementById("audio-cache-clear-result");
     if (cacheClearStatus) cacheClearStatus.textContent = "";
+    const cacheCreateStatus = document.getElementById("audio-cache-create-result");
+    if (cacheCreateStatus) cacheCreateStatus.textContent = "";
     updateTtsCreditNote();
     if (ttsModelStatus) ttsModelStatus.textContent = "";
     if (geminiVoiceSelect) geminiVoiceSelect.value = geminiVoice;
@@ -6954,6 +7040,7 @@ settingsModal.addEventListener("click", (e) => {
 // =========================================================
 (async () => {
     await initDB();
+    if (isQuestionMode()) ensureQuestionModeQuestion();
     renderAll();
     await setupMediaPipe();
 })();

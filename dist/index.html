@@ -45,6 +45,8 @@
 
             <!-- Simple mode: panel grid (select to speak) -->
             <div id="simple-panel">
+                <!-- 質問モード: 介助者がマウスで質問を切り替えるボタン（ポインタの移動範囲・滞留の対象外） -->
+                <div id="question-mode-bar" style="display:none;"></div>
                 <!-- 質問文 / つなげた文の表示 -->
                 <div id="simple-message" aria-live="polite" style="display:none;"></div>
                 <!-- お話モードのタブ（お話・相づち・よく話す・相手） -->
@@ -199,6 +201,12 @@
                                         <span class="choice-card-title">お話モード</span>
                                         <span class="choice-card-desc">話題 → 内容…と2〜4回選んで会話の文を話す。相づち・よく話す文も1回で。</span>
                                     </label>
+                                    <label class="choice-card">
+                                        <input type="radio" name="app-mode" value="question">
+                                        <span class="choice-card-icon">❓</span>
+                                        <span class="choice-card-title">質問モード</span>
+                                        <span class="choice-card-desc">上に並んだ質問を介助者がマウスで選び、本人が回答パネルで答える。答えても質問モードのまま。</span>
+                                    </label>
                                 </div>
                             </section>
 
@@ -217,7 +225,7 @@
                                 <label class="toggle-row">
                                     <input type="checkbox" id="params-visible-input">
                                     <span class="toggle-switch" aria-hidden="true"></span>
-                                    <span>感度スライダーと計測値を出す<small>ポインタを動かしながら感度を合わせるとき用。普段は OFF でメニューがすっきりする</small></span>
+                                    <span>感度スライダーと計測値を出す<small>ポインタを動かしながら感度を合わせるとき用。使わないときは OFF にするとメニューがすっきりする</small></span>
                                 </label>
                                 <p class="settings-help">介助者メニューには、全画面・正面取り直し・キャリブレーション・質問など、使いながら押す操作だけを置いています。</p>
                             </section>
@@ -476,7 +484,7 @@
                         <div id="question-tab" class="settings-tab-content">
                             <section class="settings-section">
                                 <h4>質問への返事テンプレート</h4>
-                                <p class="settings-help">介助者メニュー（右上の ⚙）の「質問する」で選ぶと、画面が回答パネルだけに切り替わります。回答すると発話して元の画面へ戻ります（90秒操作がなければ自動で戻る）。</p>
+                                <p class="settings-help">質問モード（設定 → 基本）では、画面の上に質問が並び、介助者がマウスで切り替えて続けて答えてもらえます。<br>ほかのモードでも、介助者メニュー（右上の ⚙）の「質問する」で選ぶと回答パネルに切り替わり、回答すると元の画面へ戻ります（90秒操作がなければ自動で戻る）。</p>
                                 <label class="toggle-row">
                                     <input type="checkbox" id="question-speak-input">
                                     <span class="toggle-switch" aria-hidden="true"></span>
@@ -485,7 +493,7 @@
                             </section>
 
                             <section class="settings-section">
-                                <h4>介助者メニューに出す質問</h4>
+                                <h4>出す質問（質問モードの上のボタン・介助者メニュー）</h4>
                                 <div id="question-editor-list"></div>
                             </section>
 
@@ -555,7 +563,7 @@
                             <section class="settings-section">
                                 <h4>前もって作った音声</h4>
                                 <div class="settings-section-head">
-                                    <span class="settings-help">まだ音声にしていない文を前もって作っておくと、遅延なく話せます。保存済みの音声設定で作ります（変えたら先に「保存して閉じる」）。進み具合は介助者メニューに出ます。</span>
+                                    <span class="settings-help">まだ音声にしていない文を前もって作っておくと、遅延なく話せます。保存済みの音声設定で作ります（変えたら先に「保存して閉じる」）。進み具合は介助者メニューに出ます。<b id="audio-cache-create-result"></b></span>
                                     <button id="audio-cache-btn" class="ctrl-btn primary" type="button">🔊 音声データを作成</button>
                                 </div>
                                 <div class="settings-section-head">
