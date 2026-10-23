@@ -103,6 +103,11 @@
         <div id="gesture-indicator"></div>
 
         <!-- Caregiver drawer (top right) -->
+        <!-- 介助者がマウスですぐ押すボタン（右上の ⚙ の左）。ポインタ・滞留では選ばれない -->
+        <div id="quick-actions">
+            <button id="recapture-front-btn" class="quick-action-btn" type="button" title="正面取り直し（今の姿勢を正面にします。感度・揺れの計測値はそのまま）" aria-label="正面取り直し">◎</button>
+            <button id="fullscreen-btn" class="quick-action-btn" type="button" title="全画面表示（Escでも解除）" aria-label="全画面表示">⛶</button>
+        </div>
         <div id="controls">
             <div id="controls-top">
                 <div class="drawer-header">
@@ -114,8 +119,6 @@
                     <h4 class="drawer-heading">操作</h4>
                     <div class="drawer-actions">
                         <button id="settings-btn" class="drawer-action" type="button"><span class="drawer-action-icon">⚙️</span>設定</button>
-                        <button id="fullscreen-btn" class="drawer-action" type="button" title="画面いっぱいに表示します（Escでも解除）"><span class="drawer-action-icon">⛶</span><span class="fullscreen-btn-label">全画面</span></button>
-                        <button id="recapture-front-btn" class="drawer-action" type="button" title="今の姿勢を正面として取り直します（感度・揺れの計測値はそのまま）"><span class="drawer-action-icon">◎</span>正面取り直し</button>
                         <button id="calib-wizard-btn" class="drawer-action" type="button"><span class="drawer-action-icon">🎯</span>キャリブレーション</button>
                     </div>
                     <div id="audio-status" class="status-info" style="display:none;">
@@ -341,7 +344,7 @@
                                     <h4>画面の配置</h4>
                                     <span id="simple-panel-summary" class="settings-badge"></span>
                                 </div>
-                                <p class="settings-help">実際の画面と同じ並びです。タイルをドラッグで並べ替え、右の「追加できるパネル」からドラッグ（またはクリック）で追加、✕ で外せます。タイルをクリックすると滞留時間などを設定できます。</p>
+                                <p class="settings-help">実際の画面と同じ並びです。タイルをドラッグすると、落としたタイルの左半分なら前、右半分なら後ろに割り込みます。タイルをクリックして「🔀 移動」を押し、移動先のタイルをクリックしても動かせます（⏮ ◀ ▶ ⏭ で1つずつ・端へも）。✕ で外せます。</p>
                                 <div id="layout-pages" class="layout-pages"></div>
                                 <div id="layout-detail" class="layout-detail"></div>
                                 <div class="simple-editor-toolbar">
@@ -352,7 +355,7 @@
 
                             <section class="settings-section layout-palette-section">
                                 <h4>追加できるパネル</h4>
-                                <p class="settings-help">左の画面へドラッグ（クリックで末尾に追加）。ここへドラッグすると画面から外れます。</p>
+                                <p class="settings-help">左の画面へドラッグで好きな位置に追加。クリックすると、選んでいるタイルの後ろ（選んでいなければ最後）に追加します。ここへドラッグすると画面から外れます。</p>
                                 <div id="simple-panel-filter" class="filter-chips" aria-label="パネルの分類"></div>
                                 <div id="simple-panel-list" class="layout-palette"></div>
                             </section>
@@ -559,9 +562,16 @@
 
                             <section class="settings-section">
                                 <h4>前もって作った音声</h4>
+                                <p id="audio-cache-summary" class="audio-cache-summary" aria-live="polite"></p>
                                 <div class="settings-section-head">
-                                    <span class="settings-help">まだ音声にしていない文を前もって作っておくと、遅延なく話せます。保存済みの音声設定で作ります（変えたら先に「保存して閉じる」）。進み具合は介助者メニューに出ます。<b id="audio-cache-create-result"></b></span>
+                                    <span class="settings-help">まだ音声にしていない文を前もって作っておくと、遅延なく話せます。保存済みの音声設定で作ります（変えたら先に「保存して閉じる」）。<b id="audio-cache-create-result"></b></span>
                                     <button id="audio-cache-btn" class="ctrl-btn primary" type="button">🔊 音声データを作成</button>
+                                </div>
+                                <div id="audio-status-voice" class="status-info" style="display:none;" aria-live="polite">
+                                    <div class="status-label"></div>
+                                    <div class="status-progress-bar">
+                                        <div class="status-progress-fill"></div>
+                                    </div>
                                 </div>
                                 <div class="settings-section-head">
                                     <span class="settings-help">音声・話者・口調ごとに保存されます。容量が気になるときは消去できます。<b id="audio-cache-clear-result"></b></span>

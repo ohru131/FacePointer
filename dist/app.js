@@ -972,11 +972,9 @@ function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
     targetY = nextY;
 }
 
-// 姿勢ずれのお知らせは、右上の ⚙ と介助者メニューの「正面取り直し」を光らせる
+// 姿勢ずれのお知らせは、右上の「◎ 正面取り直し」を光らせる
 function setPostureHint(isOn) {
-    ["controls-collapse-btn", "recapture-front-btn"].forEach((id) => {
-        document.getElementById(id)?.classList.toggle("suggest", isOn);
-    });
+    document.getElementById("recapture-front-btn")?.classList.toggle("suggest", isOn);
 }
 
 function clearPostureHint() {
@@ -3096,6 +3094,8 @@ let simpleDwellDraft = {};    // パネルごとの滞留時間 { id: ms }
 let simpleCustomDraft = [];   // 保存前の任意パネル
 let simplePaletteFilter = "all";
 let simpleSelectedTileId = null;
+// 「🔀 移動」中のパネル。次にクリックしたマスの前へ入れる（ドラッグできない環境でも並べ替えられる）
+let simpleMovingTileId = null;
 let layoutDragId = null;
 const SIMPLE_FILTER_ALL = "all";
 const SIMPLE_GROUP_BASE = "基本";
@@ -3126,23 +3126,32 @@ function openSimplePanelEditor() {
     simpleDwellDraft = { ...simpleConfig.dwellOverrides };
     simplePaletteFilter = SIMPLE_FILTER_ALL;
     simpleSelectedTileId = null;
+    simpleMovingTileId = null;
     resetSimpleCustomForm();
     renderSimplePanelEditor();
 }
 
 // id を index の位置（そこにあったタイルの場所）へ移す。未配置なら追加する
+// insertIndex は動かす前の並びでの位置（そのパネルの前に入る。末尾なら並びの長さ）
 function moveLayoutPanel(id, insertIndex) {
     if (!id || !getDraftCatalogMap().has(id)) return;
+    let target = clamp(insertIndex, 0, simpleLayoutDraft.length);
     const from = simpleLayoutDraft.indexOf(id);
-    if (from !== -1) simpleLayoutDraft.splice(from, 1);
-    simpleLayoutDraft.splice(clamp(insertIndex, 0, simpleLayoutDraft.length), 0, id);
+    if (from !== -1) {
+        simpleLayoutDraft.splice(from, 1);
+        // 自分より後ろへ動かすときは、抜いた分だけ位置が前にずれる
+        if (from < target) target -= 1;
+    }
+    simpleLayoutDraft.splice(target, 0, id);
     simpleSelectedTileId = id;
+    simpleMovingTileId = null;
     renderSimplePanelEditor();
 }
 
 function removeLayoutPanel(id) {
     simpleLayoutDraft = simpleLayoutDraft.filter(x => x !== id);
     if (simpleSelectedTileId === id) simpleSelectedTileId = null;
+    if (simpleMovingTileId === id) simpleMovingTileId = null;
     renderSimplePanelEditor();
 }
 
@@ -3175,25 +3184,34 @@ function bindLayoutDrag(el, id) {
     el.addEventListener("dragend", () => {
         layoutDragId = null;
         el.classList.remove("dragging");
-        document.querySelectorAll(".drop-target").forEach(t => t.classList.remove("drop-target"));
+        document.querySelectorAll(".drop-target, .drop-before, .drop-after").forEach(t => t.classList.remove("drop-target", "drop-before", "drop-after"));
     });
 }
 
-function bindLayoutDrop(el, onDrop) {
+// sided: タイルの左半分なら前、右半分なら後ろへ入れる（onDrop の2番目の引数が true = 後ろ）
+function bindLayoutDrop(el, onDrop, { sided = false } = {}) {
+    const isAfter = e => sided && e.clientX > el.getBoundingClientRect().left + (el.getBoundingClientRect().width / 2);
+    const clearMarks = () => el.classList.remove("drop-target", "drop-before", "drop-after");
     el.addEventListener("dragover", (e) => {
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
         el.classList.add("drop-target");
+        if (sided) {
+            const after = isAfter(e);
+            el.classList.toggle("drop-after", after);
+            el.classList.toggle("drop-before", !after);
+        }
     });
-    el.addEventListener("dragleave", () => el.classList.remove("drop-target"));
+    el.addEventListener("dragleave", clearMarks);
     el.addEventListener("drop", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        el.classList.remove("drop-target");
+        const after = isAfter(e);
+        clearMarks();
         const id = e.dataTransfer.getData(LAYOUT_DRAG_TYPE) || layoutDragId;
         // 再描画でドラッグ元が消えると dragend が来ないことがあるので、ここで片付ける
         layoutDragId = null;
-        if (id) onDrop(id);
+        if (id) onDrop(id, after);
     });
 }
 
@@ -3213,6 +3231,25 @@ function renderSimplePanelEditor() {
     if (simplePanelSummary) simplePanelSummary.textContent = `表示中 ${count} 枚 ・ ${pageCount} ページ`;
 
     layoutPagesContainer.innerHTML = "";
+    // 画面に並んでいるパネルだけ動かせる（外したら移動もやめる）
+    const moving = simpleMovingTileId && simpleLayoutDraft.includes(simpleMovingTileId) ? byId.get(simpleMovingTileId) : null;
+    if (!moving) simpleMovingTileId = null;
+    layoutPagesContainer.classList.toggle("is-moving", Boolean(moving));
+    if (moving) {
+        const note = document.createElement("div");
+        note.className = "layout-move-note";
+        note.textContent = `「${moving.name}」の移動先をクリック（そのパネルの前に入ります。空きマスなら最後へ）`;
+        const cancel = document.createElement("button");
+        cancel.type = "button";
+        cancel.className = "ctrl-btn secondary";
+        cancel.textContent = "やめる";
+        cancel.addEventListener("click", () => {
+            simpleMovingTileId = null;
+            renderSimplePanelEditor();
+        });
+        note.appendChild(cancel);
+        layoutPagesContainer.appendChild(note);
+    }
     // 実画面と同じ縦横比で見せる（下の操作バーぶんを除く）
     const aspect = `${window.innerWidth} / ${Math.round(window.innerHeight * 0.8)}`;
 
@@ -3240,13 +3277,18 @@ function renderSimplePanelEditor() {
                 const empty = document.createElement("div");
                 empty.className = "layout-tile is-empty";
                 bindLayoutDrop(empty, dragId => moveLayoutPanel(dragId, simpleLayoutDraft.length));
+                empty.addEventListener("click", () => {
+                    if (simpleMovingTileId) moveLayoutPanel(simpleMovingTileId, simpleLayoutDraft.length);
+                });
                 grid.appendChild(empty);
                 continue;
             }
 
             const tile = document.createElement("div");
-            tile.className = "layout-tile" + (id === simpleSelectedTileId ? " selected" : "");
-            tile.title = `${item.name}（ドラッグで移動・クリックで詳細）`;
+            tile.className = "layout-tile" + (id === simpleSelectedTileId ? " selected" : "") + (id === simpleMovingTileId ? " moving" : "");
+            tile.title = moving
+                ? (id === simpleMovingTileId ? "移動をやめる" : `「${moving.name}」をここ（${item.name}の前）へ移動`)
+                : `${item.name}（ドラッグで移動・左半分なら前／右半分なら後ろ。クリックで詳細）`;
             tile.appendChild(createLayoutThumb(item));
             const name = document.createElement("div");
             name.className = "layout-tile-name";
@@ -3269,11 +3311,20 @@ function renderSimplePanelEditor() {
             });
             tile.appendChild(remove);
             tile.addEventListener("click", () => {
+                if (simpleMovingTileId) {
+                    if (simpleMovingTileId === id) {
+                        simpleMovingTileId = null;
+                        renderSimplePanelEditor();
+                    } else {
+                        moveLayoutPanel(simpleMovingTileId, index);
+                    }
+                    return;
+                }
                 simpleSelectedTileId = simpleSelectedTileId === id ? null : id;
                 renderSimplePanelEditor();
             });
             bindLayoutDrag(tile, id);
-            bindLayoutDrop(tile, dragId => moveLayoutPanel(dragId, index));
+            bindLayoutDrop(tile, (dragId, after) => moveLayoutPanel(dragId, index + (after ? 1 : 0)), { sided: true });
             grid.appendChild(tile);
         }
         pageEl.appendChild(grid);
@@ -3355,8 +3406,16 @@ function renderLayoutDetail(byId) {
         btn.addEventListener("click", handler);
         actions.appendChild(btn);
     };
+    const isMoving = simpleMovingTileId === id;
+    addAction(isMoving ? "移動をやめる" : "🔀 移動", "次にクリックしたマスへ移動（そのパネルの前に入る）", false, () => {
+        simpleMovingTileId = isMoving ? null : id;
+        renderSimplePanelEditor();
+    }, isMoving ? "secondary" : "primary");
+    const last = simpleLayoutDraft.length - 1;
+    addAction("⏮", "先頭へ", index === 0, () => moveLayoutPanel(id, 0));
     addAction("◀", "1つ前へ", index === 0, () => moveLayoutPanel(id, index - 1));
-    addAction("▶", "1つ後ろへ", index === simpleLayoutDraft.length - 1, () => moveLayoutPanel(id, index + 1));
+    addAction("▶", "1つ後ろへ", index === last, () => moveLayoutPanel(id, index + 2));
+    addAction("⏭", "最後へ", index === last, () => moveLayoutPanel(id, simpleLayoutDraft.length));
     addAction("外す", "画面から外す", false, () => removeLayoutPanel(id));
     if (item.custom) {
         addAction("削除", "この任意パネルを削除", false, () => {
@@ -3401,13 +3460,17 @@ function renderSimplePalette(byId) {
     visible.forEach((item) => {
         const el = document.createElement("div");
         el.className = "palette-item";
-        el.title = `「${buildSimpleSentence(item)}」（ドラッグで配置・クリックで末尾に追加）`;
+        el.title = `「${buildSimpleSentence(item)}」（ドラッグで配置・クリックで追加）`;
         el.appendChild(createLayoutThumb(item));
         const name = document.createElement("div");
         name.className = "layout-tile-name";
         name.textContent = item.name;
         el.appendChild(name);
-        el.addEventListener("click", () => moveLayoutPanel(item.id, simpleLayoutDraft.length));
+        // 画面のタイルを選んでいれば、その後ろへ割り込ませる（続けて押すと順に並ぶ）。選んでいなければ最後へ
+        el.addEventListener("click", () => {
+            const at = simpleSelectedTileId ? simpleLayoutDraft.indexOf(simpleSelectedTileId) : -1;
+            moveLayoutPanel(item.id, at >= 0 ? at + 1 : simpleLayoutDraft.length);
+        });
         if (item.custom) {
             const del = document.createElement("button");
             del.type = "button";
@@ -3495,12 +3558,14 @@ function addSimpleCustomPanel() {
 function clearSimpleLayout() {
     simpleLayoutDraft = [];
     simpleSelectedTileId = null;
+    simpleMovingTileId = null;
     renderSimplePanelEditor();
 }
 
 function resetSimplePanelSelection() {
     simpleLayoutDraft = getSimpleBasePanels().map(p => p.id);
     simpleSelectedTileId = null;
+    simpleMovingTileId = null;
     renderSimplePanelEditor();
 }
 
@@ -4379,8 +4444,11 @@ async function requestGeminiTts(text, model, signal, opts = {}) {
 
 let currentAudio = null;
 let currentAudioResolve = null;
-let currentSpeechController = null;
-let isSpeechFetching = false;
+const SPEECH_SYNTH_TIMEOUT_MS = 30000;
+// 話す文の音声を作っている数。裏の作成（prefetch）は、これが 0 になるまで待つ
+let speechFetchCount = 0;
+// 最後に頼まれた発話の番号。作り終えたとき別の文に変わっていたら、保存だけして流さない
+let speechRequestSeq = 0;
 
 const DB_NAME = "AudioCacheDB";
 const STORE_NAME = "audioBlobs";
@@ -4462,9 +4530,9 @@ window.speechSynthesis.onvoiceschanged = initVoices;
 initVoices();
 
 async function speakGemini(text, silent = false) {
-    // 前の文の音声を作っている途中なら、それは捨てて新しい文を話す
-    // （捨てないと新しい文が話されず、作り終えた古い音声が後から流れる）
-    if (currentSpeechController) currentSpeechController.abort();
+    // 前の文の音声を作っている途中でも、新しい文はすぐ話す。前の文は作り終えたら保存だけする
+    const seq = ++speechRequestSeq;
+    const isLatest = () => seq === speechRequestSeq;
     // ブラウザ内蔵の音声を選んでいれば、合成もキャッシュも使わない
     if (getTtsProvider() === "browser") return false;
 
@@ -4472,38 +4540,34 @@ async function speakGemini(text, silent = false) {
     const cacheKey = audioCacheKey(phrase);
     const cachedBlob = await getCachedAudio(cacheKey);
     if (cachedBlob) {
-        if (silent) return true;
+        if (silent || !isLatest()) return true;
         // 読めない音声は消して、ブラウザ内蔵の音声で話す（次は作り直す）
         if (await playBlob(cachedBlob) !== "invalid") return true;
         deleteCachedAudio(cacheKey);
-        return false;
+        return !isLatest();
     }
 
-    if (!canSynthesizeSpeech()) return false;
+    // 別の文に切り替わっていれば、この文をブラウザの音声で話さない
+    if (!canSynthesizeSpeech()) return !isLatest();
 
-    const controller = new AbortController();
-    currentSpeechController = controller;
-
-    isSpeechFetching = true;
+    speechFetchCount += 1;
     try {
-        const blob = await synthesizeSpeech(phrase, controller.signal);
+        // 応答が返らないと裏の作成が待ち続けるので、時間で打ち切る
+        const blob = await synthesizeSpeech(phrase, AbortSignal.timeout(SPEECH_SYNTH_TIMEOUT_MS));
+        // 初めて話した文も、作れた音声は保存して次からすぐ話す
         if (blob.size >= AUDIO_MIN_BYTES) await setCachedAudio(cacheKey, blob);
 
         // 作っている間に次の文へ切り替わっていたら流さない（作った音声は保存済み）
-        if (!silent && !controller.signal.aborted) {
+        if (!silent && isLatest()) {
             await playBlob(blob);
         }
         return true;
     } catch (err) {
-        if (err.name === "AbortError") return true;
         console.error("Gemini TTS Error:", err);
-        return false;
+        // 別の文に切り替わっていれば、この文をブラウザの音声で話し直さない
+        return !isLatest();
     } finally {
-        // 次の文の合成が始まっていれば、その合成中の状態は残す
-        if (currentSpeechController === controller) {
-            currentSpeechController = null;
-            isSpeechFetching = false;
-        }
+        speechFetchCount -= 1;
     }
 }
 
@@ -4579,18 +4643,59 @@ function getPrefetchIntervalMs() {
     return 150;
 }
 
+// 設定の音声タブ: 今の音声設定で、話す文のうち何件の音声が保存済みか
+function renderAudioCacheSummary(saved, total) {
+    const el = document.getElementById("audio-cache-summary");
+    if (!el) return;
+    el.textContent = `保存済み ${saved} / ${total} 文（今の音声設定）${saved >= total ? " ✓ すべてそろっています" : ""}`;
+}
+
+let audioCacheSummarySeq = 0;
+async function updateAudioCacheSummary() {
+    const el = document.getElementById("audio-cache-summary");
+    if (!el) return;
+    const seq = ++audioCacheSummarySeq;
+    if (getTtsProvider() === "browser") {
+        el.textContent = "ブラウザ内蔵の音声を使用中（保存は不要）";
+        return;
+    }
+    if (!db) {
+        el.textContent = "音声を保存できません（このブラウザでは保存領域が使えません）";
+        return;
+    }
+    const total = collectPrefetchPhrases().length;
+    const missing = (await getMissingPrefetchPhrases()).length;
+    if (seq !== audioCacheSummarySeq) return;
+    renderAudioCacheSummary(total - missing, total);
+}
+
+// 保存済みのキーを一度に読む（1文ずつ読むと千件以上の読み出しになる）
+function getCachedAudioKeys() {
+    if (!db) return Promise.resolve(new Set());
+    return new Promise((resolve) => {
+        try {
+            const request = db.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).getAllKeys();
+            request.onsuccess = () => resolve(new Set(request.result));
+            request.onerror = () => resolve(new Set());
+        } catch {
+            resolve(new Set());
+        }
+    });
+}
+
 // まだ音声にしていない文
 async function getMissingPrefetchPhrases(model = ttsModel) {
+    const saved = await getCachedAudioKeys();
     const missing = [];
     for (const text of collectPrefetchPhrases()) {
-        if (!(await getCachedAudio(audioCacheKey(text, model)))) missing.push(text);
+        if (!saved.has(audioCacheKey(text, model))) missing.push(text);
     }
     return missing;
 }
 
 // 話している・話す音声を作っている間は、裏の作成を待つ（VOICEVOX は1つずつしか合成できず、発話が遅れるため）
 async function waitForSpeechIdle() {
-    while (isSpeechFetching || currentAudio) await new Promise(r => setTimeout(r, 200));
+    while (speechFetchCount > 0 || currentAudio) await new Promise(r => setTimeout(r, 200));
 }
 
 // まだ音声にしていない文だけ作る。話すときの合成（speakGemini）とは別に動くので、作成中も話せる
@@ -4601,22 +4706,30 @@ async function prefetchAllAudio({ quiet = false } = {}) {
         // 手動で押されたら、次の回は進み具合を表示する
         prefetchQueued = { quiet: (prefetchQueued?.quiet ?? true) && quiet };
         if (!quiet) {
-            audioStatus.style.display = "block";
-            const label = audioStatus.querySelector(".status-label");
-            if (label) label.textContent = "音声を作成中です（終わったら続けて残りを作ります）";
+            [audioStatus, document.getElementById("audio-status-voice")].filter(Boolean).forEach((box) => {
+                box.style.display = "block";
+                const label = box.querySelector(".status-label");
+                if (label) label.textContent = "音声を作成中です（終わったら続けて残りを作ります）";
+            });
         }
         return;
     }
     isPrefetchRunning = true;
 
-    const statusLabel = audioStatus.querySelector(".status-label");
-    const statusFill = audioStatus.querySelector(".status-progress-fill");
+    // 進み具合は介助者メニューと設定の音声タブの両方に出す（設定を開いている間はメニューが閉じているため）
+    const statusBoxes = [audioStatus, document.getElementById("audio-status-voice")].filter(Boolean);
     const showStatus = (text, pct) => {
-        audioStatus.style.display = "block";
-        if (statusLabel) statusLabel.textContent = text;
-        if (statusFill && pct !== undefined) statusFill.style.width = `${pct}%`;
+        statusBoxes.forEach((box) => {
+            box.style.display = "block";
+            const label = box.querySelector(".status-label");
+            const fill = box.querySelector(".status-progress-fill");
+            if (label) label.textContent = text;
+            if (fill && pct !== undefined) fill.style.width = `${pct}%`;
+        });
     };
-    const hideStatus = (ms) => setTimeout(() => { if (!isPrefetchRunning) audioStatus.style.display = "none"; }, ms);
+    const hideStatus = (ms) => setTimeout(() => {
+        if (!isPrefetchRunning) statusBoxes.forEach((box) => { box.style.display = "none"; });
+    }, ms);
     // 途中で設定が変わっても、作り始めた音声の設定で作り、その設定のキーで保存する
     const model = ttsModel;
     let missing = [];
@@ -4624,7 +4737,11 @@ async function prefetchAllAudio({ quiet = false } = {}) {
     let failed = null;
     let stopped = false;
 
+    let total = 0;
     try {
+        if (!db) throw new Error("このブラウザでは音声を保存できません");
+        if (!quiet) showStatus("作る文を調べています…", 0);
+        total = collectPrefetchPhrases().length;
         missing = await getMissingPrefetchPhrases(model);
         for (const text of missing) {
             if (ttsModel !== model || !canSynthesizeSpeech()) {
@@ -4637,6 +4754,8 @@ async function prefetchAllAudio({ quiet = false } = {}) {
                 const blob = await synthesizeSpeech(text, undefined, { model });
                 if (blob.size >= AUDIO_MIN_BYTES) await setCachedAudio(audioCacheKey(text, model), blob);
                 createdCount++;
+                // 数え直さず、作った分だけ件数を進める
+                if (ttsModel === model) renderAudioCacheSummary(total - (missing.length - createdCount), total);
             } catch (error) {
                 console.error("audio prefetch failed:", error);
                 failed = error;
@@ -4645,6 +4764,10 @@ async function prefetchAllAudio({ quiet = false } = {}) {
             const interval = getPrefetchIntervalMs();
             if (interval > 0) await new Promise(r => setTimeout(r, interval));
         }
+    } catch (error) {
+        // 作る文を調べる段階の失敗（保存領域が使えないなど）
+        console.error("audio prefetch setup failed:", error);
+        failed = error;
     } finally {
         isPrefetchRunning = false;
     }
@@ -4660,6 +4783,7 @@ async function prefetchAllAudio({ quiet = false } = {}) {
         hideStatus(4000);
     }
 
+    void updateAudioCacheSummary();
     if (prefetchQueued) {
         const next = prefetchQueued;
         prefetchQueued = null;
@@ -6230,6 +6354,15 @@ function snapPointerToFrontRow() {
     else snapPointerToUpperRow();
 }
 
+// ファイルを画像入力以外に落としたとき、画面がそのファイルに切り替わってアプリが消えないようにする
+["dragover", "drop"].forEach((type) => {
+    document.addEventListener(type, (event) => {
+        if (!event.dataTransfer?.types?.includes("Files")) return;
+        if (event.target?.closest?.('input[type="file"]')) return;
+        event.preventDefault();
+    });
+});
+
 const recaptureFrontBtn = document.getElementById("recapture-front-btn");
 if (recaptureFrontBtn) {
     recaptureFrontBtn.addEventListener("click", startFrontRecapture);
@@ -6249,21 +6382,12 @@ audioCacheBtn.addEventListener("click", () => {
         return;
     }
     if (geminiAuthBlocked && provider !== "voicevox") geminiAuthBlocked = false;
-    void (async () => {
-        const missing = (await getMissingPrefetchPhrases()).length;
-        if (missing === 0) {
-            alert("すべての文の音声がそろっています。");
-            return;
-        }
-        const geminiNote = provider === "gemini"
-            ? "\n※ Gemini TTS は1文に数秒かかり、1日の回数制限で途中で止まることがあります（Cloud TTS・VOICEVOX がおすすめ）。"
-            : "";
-        if (confirm(`まだ音声にしていない ${missing} 文の音声を作ります（作成済みの文はそのまま）。\n作成中も話せます。${geminiNote}`)) {
-            const createStatus = document.getElementById("audio-cache-create-result");
-            if (createStatus) createStatus.textContent = `${missing} 文の作成を始めました（進み具合は介助者メニュー）`;
-            void prefetchAllAudio();
-        }
-    })();
+    // すぐ始め、進み具合をこのタブに出す（作成済みの文はそのまま。作成中も話せる）。
+    // Gemini TTS だけは1日の回数制限を使い切るおそれがあるので確かめる
+    if (provider === "gemini" && !confirm("Gemini TTS は1文に数秒かかり、1日の回数制限で途中で止まることがあります（Cloud TTS・VOICEVOX がおすすめ）。作成しますか？")) return;
+    const createStatus = document.getElementById("audio-cache-create-result");
+    if (createStatus) createStatus.textContent = "";
+    void prefetchAllAudio();
 });
 
 // 全画面表示の切り替え（ブラウザ版向け。Escでも解除される）
@@ -6273,8 +6397,10 @@ function updateFullscreenButton() {
     const isFullscreen = Boolean(document.fullscreenElement);
     document.body.classList.toggle("is-fullscreen", isFullscreen);
     if (!fullscreenBtn) return;
-    const label = fullscreenBtn.querySelector(".fullscreen-btn-label");
-    if (label) label.textContent = isFullscreen ? "全画面を解除" : "全画面";
+    fullscreenBtn.textContent = isFullscreen ? "⤡" : "⛶";
+    const title = isFullscreen ? "全画面を解除" : "全画面表示（Escでも解除）";
+    fullscreenBtn.title = title;
+    fullscreenBtn.setAttribute("aria-label", title);
 }
 
 if (fullscreenBtn) {
@@ -6588,6 +6714,7 @@ document.getElementById("audio-cache-clear-btn")?.addEventListener("click", () =
     clearAudioCache();
     const status = document.getElementById("audio-cache-clear-result");
     if (status) status.textContent = "消去しました。";
+    setTimeout(() => void updateAudioCacheSummary(), 300);
 });
 
 // 設定画面の未保存の値 (API Key / モデル / 話者 / 口調) でキャッシュを使わず即時発話する（音声タブの「試聴」）
@@ -6668,6 +6795,7 @@ settingsBtn.addEventListener("click", () => {
     if (cacheClearStatus) cacheClearStatus.textContent = "";
     const cacheCreateStatus = document.getElementById("audio-cache-create-result");
     if (cacheCreateStatus) cacheCreateStatus.textContent = "";
+    void updateAudioCacheSummary();
     updateTtsCreditNote();
     if (ttsModelStatus) ttsModelStatus.textContent = "";
     if (geminiVoiceSelect) geminiVoiceSelect.value = geminiVoice;

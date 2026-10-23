@@ -84,8 +84,42 @@ body {
     border: 2px solid rgba(255, 255, 255, 0.6);
 }
 
-/* 姿勢ずれのお知らせ: 端に張り付いたままのとき、右上の ⚙ とメニューの「正面取り直し」を光らせる */
-#controls-collapse-btn.suggest,
+/* 右上の ⚙ の左に並ぶ、介助者がマウスで押すボタン（全画面・正面取り直し） */
+#quick-actions {
+    position: fixed;
+    top: 12px;
+    right: 64px;
+    z-index: 590; /* ポインタ(600)の下。介助者メニュー(1000)を開くとその下に隠れる */
+    display: flex;
+    gap: 8px;
+}
+
+.quick-action-btn {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    border-radius: 999px;
+    border: 1px solid rgba(100, 116, 139, 0.35);
+    background: rgba(255, 255, 255, 0.85);
+    color: #334155;
+    font-size: 1.25rem;
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0.6;
+    pointer-events: auto;
+    transition: opacity 0.15s;
+}
+
+.quick-action-btn:hover {
+    opacity: 1;
+}
+
+body.calib-active #quick-actions,
+body.settings-open #quick-actions {
+    display: none;
+}
+
+/* 姿勢ずれのお知らせ: 端に張り付いたままのとき、「◎ 正面取り直し」を光らせる */
 #recapture-front-btn.suggest {
     opacity: 1;
     border-color: #f4a261;
@@ -404,8 +438,8 @@ header {
     display: flex;
     flex-wrap: wrap;
     gap: 0.4rem;
-    /* 右上の ⚙ に重ねない */
-    padding-right: 64px;
+    /* 右上の ◎ ⛶ ⚙ に重ねない */
+    padding-right: 170px;
 }
 
 .question-mode-btn {
@@ -1264,7 +1298,13 @@ body.calib-active #dwell-indicator {
     cursor: default;
 }
 
-/* ON/OFF スイッチ風ボタン（aria-pressed / .is-off を JS が切り替える） */
+/* 設定の音声タブ: 保存済みの件数 */
+.audio-cache-summary {
+    margin: 0 0 0.5rem;
+    font-weight: 700;
+    color: var(--text);
+}
+
 /* 進捗表示（音声データ生成） */
 .status-info {
     display: flex;
@@ -2284,9 +2324,9 @@ body.calib-active #dwell-indicator {
     font-size: 1.3em;
 }
 
-/* 右上の⚙と重ならないよう右側に余白を取る */
+/* 右上の ◎ ⛶ ⚙ と重ならないよう右側に余白を取る */
 #simple-message {
-    padding-right: 64px;
+    padding-right: 170px;
 }
 
 /* =========================================================
@@ -2484,6 +2524,39 @@ body.settings-open #dwell-indicator {
 .layout-palette.drop-target {
     border-color: var(--primary);
     box-shadow: inset 4px 0 0 var(--primary);
+}
+
+/* ドロップ位置: 左半分なら前、右半分なら後ろに入る */
+.layout-tile.drop-before {
+    box-shadow: inset 6px 0 0 var(--primary);
+}
+
+.layout-tile.drop-after {
+    box-shadow: inset -6px 0 0 var(--primary);
+}
+
+/* 「🔀 移動」中: 動かすタイルを点線にし、ほかのマスはクリックで移動先になる */
+.layout-tile.moving {
+    border-style: dashed;
+    border-color: var(--primary);
+    opacity: 0.6;
+}
+
+.layout-pages.is-moving .layout-tile:not(.moving) {
+    cursor: copy;
+}
+
+.layout-move-note {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: 0.45rem 0.7rem;
+    border-radius: 0.6rem;
+    background: rgba(230, 57, 70, 0.08);
+    color: var(--primary);
+    font-weight: 700;
+    font-size: 0.9rem;
 }
 
 .layout-thumb {
