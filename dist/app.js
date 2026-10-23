@@ -120,6 +120,8 @@ const VERTICAL_GAIN_RATIO_KEY = "vertical_gain_ratio";
 const SIDE_GAIN_RATIO_KEYS = { left: "side_gain_left", right: "side_gain_right", up: "side_gain_up", down: "side_gain_down" };
 const SIDE_GAIN_RATIO_LIMITS = { left: [0.5, 2], right: [0.5, 2], up: [0.3, 4], down: [0.3, 4] };
 const CALIB_SIDE_KEYS = { left: "dx", right: "dx", up: "dy", down: "dy" };
+// 向きごとの倍率は、同じ軸の両側を合算した倍率のこの倍まで（その逆数倍から）に収める
+const SIDE_GAIN_ASYMMETRY_MAX = 1.6;
 const CONTROLS_COLLAPSED_KEY = "controls_collapsed";
 const NOSE_GAIN_KEY = "nose_gain";
 const YAW_GAIN_KEY = "yaw_gain";
@@ -325,6 +327,8 @@ let calibratedNoseX = 0.5;
 let calibratedNoseY = 0.5;
 let calibratedYaw = 0;
 let calibratedPitch = 0;
+// 正面を登録したときに向いていた画面上の位置（画面に対する割合 {x, y}）。○で登録していなければ null
+let frontScreenPoint = null;
 let isCalibrating = true;
 let noseNoise = readStoredNumber(NOSE_NOISE_KEY, 0, 0, 0.01);
 let angleNoise = readStoredNumber(ANGLE_NOISE_KEY, 0, 0, 0.05);
@@ -915,7 +919,12 @@ function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
     const rawX = offset.x * distanceRatio;
     const rawY = offset.y * distanceRatio;
 
-    const centerX = (bounds.minX + bounds.maxX) / 2;
+    // シンプルモードは、正面 = 正面登録の○を向いていた画面上の位置。感度は画面上の実際の距離で合わせているので、
+    // 範囲の中央を正面にすると、○の位置と中央の差だけ画面全体で向いた場所からずれる。上下（左右）の範囲は不均等になってよい
+    const front = isSimpleMode() ? frontScreenPoint : null;
+    const centerX = front
+        ? clamp(front.x * window.innerWidth, bounds.minX, bounds.maxX)
+        : (bounds.minX + bounds.maxX) / 2;
     const leftRange = centerX - bounds.minX;
     const rightRange = bounds.maxX - centerX;
     const mapX = mapAbsoluteAxis(rawX, leftRange, rightRange, "left", "right");
@@ -932,7 +941,9 @@ function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
             absStageForY = stage;
         }
         // 症状モードは段ごとに正面の位置を変える（上段: 正面=上段、下段: 正面=下段）。下段で下を向き続けなくてよい
-        let centerY = (verticalBounds.minY + verticalBounds.maxY) / 2;
+        let centerY = front
+            ? clamp(front.y * window.innerHeight, verticalBounds.minY, verticalBounds.maxY)
+            : (verticalBounds.minY + verticalBounds.maxY) / 2;
         if (!isSimpleMode()) centerY = symptomStage === SYMPTOM_STAGE_BODY_PART ? verticalBounds.maxY : verticalBounds.minY;
         upRange = centerY - verticalBounds.minY;
         downRange = verticalBounds.maxY - centerY;
@@ -1219,6 +1230,8 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex,
     updateHeadDistance(detectResults, faceIndex, timeMs);
 
     if (isCalibrating) {
+        // ○を使わない登録は、どこを向いていたか分からないので範囲の中央を正面にする
+        frontScreenPoint = null;
         sessionDistanceRef = filteredHeadDistance ?? 0;
         calibratedNoseX = filteredNoseControlX;
         calibratedNoseY = filteredNoseControlY;
@@ -5527,32 +5540,43 @@ function fitCalibrationGain(entries, model) {
     return solveGainForTravel(travelAt, required);
 }
 
-// side（left/right/up/down）の○だけで「○までの距離 / 顔の動きから出る移動量」を求め、その向きの倍率にする
-function fitCalibrationSideRatio(entries, model, gain, side) {
-    const axis = CALIB_SIDE_KEYS[side];
-    const usable = entries.filter(e => e.key === side && Math.abs(e[axis]) > 1);
+// sides（同じ軸の向き）の○で「○までの距離 / 顔の動きから出る移動量」を求める（丸め・制限なし）
+function measureCalibrationRatio(entries, model, gain, sides) {
+    const axis = CALIB_SIDE_KEYS[sides[0]];
+    const usable = entries.filter(e => sides.includes(e.key) && Math.abs(e[axis]) > 1);
     if (usable.length === 0) return null;
     const travelOf = axis === "dx" ? horizontalTravel : verticalTravel;
     const required = usable.reduce((sum, e) => sum + Math.abs(e[axis]), 0);
     const travel = usable.reduce((sum, e) => (
         sum + (Math.sign(e[axis]) * travelOf(e.sample, e.center, gain, calibrationRatio(e.sample, model), model.noise))
     ), 0);
-    if (travel <= 1) return null;
-    return clamp(roundTo(required / travel, 0.05), ...SIDE_GAIN_RATIO_LIMITS[side]);
+    return travel > 1 ? required / travel : null;
 }
 
-// 4方向の倍率を求める。決められない向きは同じ軸の反対側の値、それも無ければ fallback を使う
+// 4方向の倍率を求める。各向きは○1〜2個で決まり、記録ミス1つで大きく外れるので、
+// 同じ軸の両側を合算した倍率の 1/SIDE_GAIN_ASYMMETRY_MAX〜SIDE_GAIN_ASYMMETRY_MAX 倍に収める。
+// 決められない向きは同じ軸の反対側の値、それも無ければ fallback を使う
 function fitCalibrationSideRatios(entries, model, gain, fallback) {
     const fitted = {};
-    Object.keys(SIDE_GAIN_RATIO_KEYS).forEach((side) => {
-        fitted[side] = fitCalibrationSideRatio(entries, model, gain, side);
+    const limited = [];
+    [["left", "right"], ["up", "down"]].forEach((pair) => {
+        const combined = measureCalibrationRatio(entries, model, gain, pair);
+        pair.forEach((side) => {
+            let value = measureCalibrationRatio(entries, model, gain, [side]);
+            if (value !== null && combined !== null) {
+                const bounded = clamp(value, combined / SIDE_GAIN_ASYMMETRY_MAX, combined * SIDE_GAIN_ASYMMETRY_MAX);
+                if (bounded !== value && !limited.includes(pair[0])) limited.push(pair[0]);
+                value = bounded;
+            }
+            fitted[side] = value === null ? null : clamp(roundTo(value, 0.05), ...SIDE_GAIN_RATIO_LIMITS[side]);
+        });
     });
     const opposite = { left: "right", right: "left", up: "down", down: "up" };
     const ratios = {};
     Object.keys(SIDE_GAIN_RATIO_KEYS).forEach((side) => {
         ratios[side] = fitted[side] ?? fitted[opposite[side]] ?? fallback[side];
     });
-    return { ratios, fitted };
+    return { ratios, fitted, limited };
 }
 
 // 距離補正なしで「必要な移動量 / 顔の動きから出る移動量」を求める。距離ごとのこの倍率の違いが距離補正の強さになる
@@ -5638,7 +5662,7 @@ function computeCalibrationResult(captures, neutralSamples, mouthSamples) {
         up: sideGainRatios.up,
         down: sideGainRatios.down
     };
-    const { ratios: sideRatios, fitted } = fitCalibrationSideRatios(allEntries, model, gain, fallback);
+    const { ratios: sideRatios, fitted, limited } = fitCalibrationSideRatios(allEntries, model, gain, fallback);
     const sideLabel = { left: "左", right: "右", up: "上", down: "下" };
     [["left", "right"], ["up", "down"]].forEach(([a, b]) => {
         if (fitted[a] === null && fitted[b] === null) {
@@ -5659,6 +5683,10 @@ function computeCalibrationResult(captures, neutralSamples, mouthSamples) {
         if (value <= min || value >= max) {
             warnings.push(`${sideLabel[side]}の倍率が上限・下限に達しました。○を向けていなかった場合はやり直してください`);
         }
+    });
+    limited.forEach((first) => {
+        const pair = first === "left" ? "左右" : "上下";
+        warnings.push(`${pair}の効きの差が大きいため、差を抑えました（${SIDE_GAIN_ASYMMETRY_MAX.toFixed(1)}倍まで）。○を向けていなかった場合はやり直してください`);
     });
     model.sideRatios = sideRatios;
 
@@ -5844,7 +5872,10 @@ const calibrationWizard = (() => {
             refitModel();
         }
         // 正面の登録だけのときは、静止中の平均をそのまま正面にする（表示の待ち時間の間に動いた姿勢を拾わない）
-        if (frontOnly) recaptureFrontPose(sample);
+        if (frontOnly) {
+            const pos = targetPx(step.target);
+            recaptureFrontPose(sample, { x: pos.x / window.innerWidth, y: pos.y / window.innerHeight });
+        }
         matchedElapsedMs = 0;
         targetEl.classList.add("matched");
         playChime();
@@ -6006,9 +6037,10 @@ const calibrationWizard = (() => {
         localStorage.setItem(CALIB_VERSION_KEY, CALIB_VERSION_NOISE_DEADZONE);
         syncTuningSliders();
         close();
-        // 正面位置も今の姿勢で取り直す
-        isCalibrating = true;
         jawClosedBaseline = null;
+        // 正面位置も今の姿勢で取り直す。絶対方式は正面がずれると全体がずれるので、○を向いて登録する
+        if (pointerMode === POINTER_MODE_ABSOLUTE) start({ frontOnly: true });
+        else isCalibrating = true;
     }
 
     function onTargetFrame(sample, timeMs, dt) {
@@ -6037,7 +6069,10 @@ const calibrationWizard = (() => {
             holdMs = 0;
         }
 
-        const required = isCenter ? CALIB_CENTER_HOLD_MS : (inCircle ? CALIB_TARGET_HOLD_IN_CIRCLE_MS : CALIB_TARGET_HOLD_MS);
+        // 上下の○は、予測カーソルが○に入っても短縮しない。予測には仮の倍率（上の○の倍率など）を使うので、
+        // 向いている途中で○に入ると、動きの小さい記録から倍率が大きく出てしまう
+        const allowQuickCapture = inCircle && CALIB_SIDE_KEYS[step.target.key] === "dx";
+        const required = isCenter ? CALIB_CENTER_HOLD_MS : (allowQuickCapture ? CALIB_TARGET_HOLD_IN_CIRCLE_MS : CALIB_TARGET_HOLD_MS);
         cursorEl.classList.toggle("in-circle", inCircle);
         if (holdMs >= required) capture(timeMs);
         else if (frontOnly && stepElapsedMs >= CALIB_FRONT_TIMEOUT_MS) {
@@ -6150,8 +6185,9 @@ function startFrontRecapture({ collapse = true } = {}) {
     calibrationWizard.start({ frontOnly: true });
 }
 
-// sample があれば（キャリブレーション画面の静止中の平均）それを正面にし、無ければ次のフレームの姿勢を正面にする
-function recaptureFrontPose(sample = null) {
+// sample があれば（キャリブレーション画面の静止中の平均）それを正面にし、無ければ次のフレームの姿勢を正面にする。
+// screenPoint は sample のときに向いていた画面上の位置（画面に対する割合）
+function recaptureFrontPose(sample = null, screenPoint = null) {
     clearPostureHint();
     resetPointerMotionHistory();
     if (sample && [sample.noseX, sample.noseY, sample.yaw, sample.pitch].every(Number.isFinite)) {
@@ -6161,17 +6197,26 @@ function recaptureFrontPose(sample = null) {
         calibratedYaw = sample.yaw;
         calibratedPitch = sample.pitch;
         if (Number.isFinite(sample.distance)) sessionDistanceRef = sample.distance;
+        frontScreenPoint = screenPoint;
         // 起動時の校正待ち（isCalibrating）が残っていると、次のフレームの姿勢で上書きされるので解除する
         isCalibrating = false;
         speak("完了");
     } else {
         isCalibrating = true;
     }
-    // 取り直した正面 = 移動範囲の中央なので、ポインタも中央へ置き直す
+    // 取り直した正面の位置（シンプルモードで○の位置が分かればそこ、それ以外は移動範囲の中央）へポインタを置き直す
     const bounds = getSymptomRowPointerBounds();
-    if (bounds) targetX = pointerX = (bounds.minX + bounds.maxX) / 2;
-    if (bounds && isSimpleMode()) targetY = pointerY = (bounds.minY + bounds.maxY) / 2;
-    else snapPointerToFrontRow();
+    const front = isSimpleMode() && !isCalibrating ? frontScreenPoint : null;
+    if (bounds) {
+        targetX = pointerX = front
+            ? clamp(front.x * window.innerWidth, bounds.minX, bounds.maxX)
+            : (bounds.minX + bounds.maxX) / 2;
+    }
+    if (bounds && isSimpleMode()) {
+        targetY = pointerY = front
+            ? clamp(front.y * window.innerHeight, bounds.minY, bounds.maxY)
+            : (bounds.minY + bounds.maxY) / 2;
+    } else snapPointerToFrontRow();
 }
 
 // 症状モードの縦: 絶対方式では今の段の行が正面、相対方式では上段から始める
