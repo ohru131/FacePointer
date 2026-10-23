@@ -5401,12 +5401,16 @@ const CALIB_PASSES = [
     { key: "near", label: "近い位置", sub: "いつもの位置（画面の近く）で" },
     { key: "far", label: "離れた位置", sub: "少し離れた位置で" }
 ];
+// 「離れた位置」の計測を行うか（OFF ならいつもの位置だけで計測し、距離補正は標準の強さ）
+const CALIB_FAR_PASS_KEY = "calib_far_pass_enabled";
+let isCalibFarPassEnabled = localStorage.getItem(CALIB_FAR_PASS_KEY) !== "0";
 const CALIB_HORIZONTAL_KEYS = ["left", "right"];
 const CALIB_VERTICAL_KEYS = ["up", "down"];
 
 function buildCalibrationSteps() {
     const steps = [];
-    CALIB_PASSES.forEach((pass, passIndex) => {
+    const passes = isCalibFarPassEnabled ? CALIB_PASSES : CALIB_PASSES.filter(pass => pass.key !== "far");
+    passes.forEach((pass, passIndex) => {
         if (passIndex > 0) steps.push({ type: "distance", pass: pass.key });
         CALIB_TARGETS.forEach((target) => steps.push({ type: "target", pass: pass.key, target }));
     });
@@ -5651,7 +5655,7 @@ function computeCalibrationResult(captures, neutralSamples, mouthSamples) {
         }
         // 基準は2つの距離の中間（幾何平均）にして、どちらの距離でも補正量を小さく保つ
         ref = Math.sqrt(ref * farCenter.distance);
-    } else if (!farCenter) {
+    } else if (!farCenter && isCalibFarPassEnabled) {
         warnings.push("離れた位置の計測を省略したため、距離補正は標準の強さにしました");
     }
     const model = { ref, exponent, noise, gain: noseGain, sideRatios: { ...sideGainRatios } };
@@ -6171,6 +6175,7 @@ const calibrationWizard = (() => {
 // Controls & Settings UI
 // =========================================================
 calibrateBtn.addEventListener("click", () => {
+    if (!confirm("静止時の揺れ幅と向きごとの倍率を初期値に戻し、今の向きを正面にします。よろしいですか？")) return;
     isCalibrating = true;
     resetPointerMotionHistory();
     jawClosedBaseline = null;
@@ -6245,12 +6250,13 @@ const audioCacheBtn = document.getElementById("audio-cache-btn");
 audioCacheBtn.addEventListener("click", () => {
     const provider = getTtsProvider();
     if (provider === "browser") {
-        alert("今はブラウザ内蔵の音声を使っています（前もって作る必要はありません）。\n設定 → 音声 で音声を変えると、ここで作れます。");
+        alert("今はブラウザ内蔵の音声を使っています（前もって作る必要はありません）。\n上の TTSモデルで音声を変えて保存すると、ここで作れます。");
         return;
     }
     if (provider !== "voicevox" && !GEMINI_API_KEY) {
-        alert("音声データを作るには、設定画面から Gemini API Key を入力してください。");
-        settingsBtn.click();
+        alert("音声データを作るには、Gemini API Key を入力して「保存して閉じる」を押してください。");
+        activateSettingsTab("voice-tab");
+        apiKeyInput?.focus();
         return;
     }
     if (geminiAuthBlocked && provider !== "voicevox") geminiAuthBlocked = false;
@@ -6361,8 +6367,15 @@ function radioGroup(name) {
 
 const modeSelect = radioGroup("app-mode");
 const dwellTimeSelect = radioGroup("dwell-time");
-const panelSnapSelect = radioGroup("panel-snap");
-const axisLockSelect = radioGroup("axis-lock");
+const pointerModeSelect = radioGroup("pointer-mode");
+const panelSnapInput = document.getElementById("panel-snap-input");
+const axisLockInput = document.getElementById("axis-lock-input");
+const distanceCompInput = document.getElementById("distance-comp-input");
+const recenterInput = document.getElementById("recenter-input");
+const verticalMoveInput = document.getElementById("vertical-move-input");
+const calibFarPassInput = document.getElementById("calib-far-pass-input");
+const paramsVisibleInput = document.getElementById("params-visible-input");
+const pointerTab = document.getElementById("pointer-tab");
 const simpleGridSizeSelect = radioGroup("simple-grid-size");
 const simplePanelFilter = document.getElementById("simple-panel-filter");
 const simpleTabsContainer = document.getElementById("simple-tabs");
@@ -6412,8 +6425,6 @@ const mouseClickFeedback = document.getElementById("mouse-click-feedback");
 const saveSettingsBtn = document.getElementById("save-settings");
 const closeSettingsBtn = document.getElementById("close-settings");
 const controlsRoot = document.getElementById("controls");
-const paramsToggleBtn = document.getElementById("params-toggle-btn");
-const verticalMoveToggleBtn = document.getElementById("vertical-move-btn");
 
 const controlsCollapseBtn = document.getElementById("controls-collapse-btn");
 const calibWizardBtn = document.getElementById("calib-wizard-btn");
@@ -6456,82 +6467,8 @@ if (calibWizardBtn) {
     });
 }
 
-function applyVerticalMoveToggleState() {
-    if (!verticalMoveToggleBtn) return;
-
-    verticalMoveToggleBtn.classList.toggle("is-off", !isVerticalMoveEnabled);
-    verticalMoveToggleBtn.setAttribute("aria-pressed", isVerticalMoveEnabled ? "true" : "false");
-}
-
-if (verticalMoveToggleBtn) {
-    verticalMoveToggleBtn.addEventListener("click", () => {
-        isVerticalMoveEnabled = !isVerticalMoveEnabled;
-        localStorage.setItem(VERTICAL_MOVE_KEY, isVerticalMoveEnabled ? "1" : "0");
-        applyVerticalMoveToggleState();
-        // OFF→ON / ON→OFF いずれも上段基準へ戻して仕切り直す
-        resetSymptomModeState();
-    });
-}
-
-applyVerticalMoveToggleState();
-
-const distanceCompToggleBtn = document.getElementById("distance-comp-btn");
-
-function applyDistanceCompToggleState() {
-    if (!distanceCompToggleBtn) return;
-
-    distanceCompToggleBtn.classList.toggle("is-off", !isDistanceCompEnabled);
-    distanceCompToggleBtn.setAttribute("aria-pressed", isDistanceCompEnabled ? "true" : "false");
-}
-
-if (distanceCompToggleBtn) {
-    distanceCompToggleBtn.addEventListener("click", () => {
-        isDistanceCompEnabled = !isDistanceCompEnabled;
-        localStorage.setItem(DISTANCE_COMP_KEY, isDistanceCompEnabled ? "1" : "0");
-        applyDistanceCompToggleState();
-    });
-}
-
-applyDistanceCompToggleState();
-
-const recenterToggleBtn = document.getElementById("recenter-btn");
-
-function applyRecenterToggleState() {
-    if (!recenterToggleBtn) return;
-
-    recenterToggleBtn.classList.toggle("is-off", !isRecenterEnabled);
-    recenterToggleBtn.setAttribute("aria-pressed", isRecenterEnabled ? "true" : "false");
-}
-
-if (recenterToggleBtn) {
-    recenterToggleBtn.addEventListener("click", () => {
-        isRecenterEnabled = !isRecenterEnabled;
-        localStorage.setItem(RECENTER_KEY, isRecenterEnabled ? "1" : "0");
-        applyRecenterToggleState();
-    });
-}
-
-applyRecenterToggleState();
-
-const pointerModeToggleBtn = document.getElementById("pointer-mode-btn");
-
 function applyPointerModeState() {
-    const isAbsolute = pointerMode === POINTER_MODE_ABSOLUTE;
-    document.body.classList.toggle("pointer-absolute", isAbsolute);
-    if (!pointerModeToggleBtn) return;
-    pointerModeToggleBtn.classList.toggle("is-off", !isAbsolute);
-    pointerModeToggleBtn.setAttribute("aria-pressed", isAbsolute ? "true" : "false");
-}
-
-if (pointerModeToggleBtn) {
-    pointerModeToggleBtn.addEventListener("click", () => {
-        pointerMode = pointerMode === POINTER_MODE_ABSOLUTE ? POINTER_MODE_RELATIVE : POINTER_MODE_ABSOLUTE;
-        localStorage.setItem(POINTER_MODE_KEY, pointerMode);
-        cancelFrontButtonHover();
-        clearPostureHint();
-        resetPointerMotionHistory();
-        applyPointerModeState();
-    });
+    document.body.classList.toggle("pointer-absolute", pointerMode === POINTER_MODE_ABSOLUTE);
 }
 
 applyPointerModeState();
@@ -6539,21 +6476,20 @@ applyPointerModeState();
 function applyParamPanelVisibility() {
     if (!controlsRoot) return;
     controlsRoot.classList.toggle("params-hidden", !isParamPanelVisible);
-    if (!paramsToggleBtn) return;
-
-    paramsToggleBtn.classList.toggle("is-off", !isParamPanelVisible);
-    paramsToggleBtn.setAttribute("aria-pressed", isParamPanelVisible ? "true" : "false");
-}
-
-if (paramsToggleBtn) {
-    paramsToggleBtn.addEventListener("click", () => {
-        isParamPanelVisible = !isParamPanelVisible;
-        localStorage.setItem(PARAM_PANEL_VISIBLE_KEY, isParamPanelVisible ? "1" : "0");
-        applyParamPanelVisibility();
-    });
 }
 
 applyParamPanelVisibility();
+
+// 設定画面: 選んだ動かし方で働かない補助を薄くする
+function refreshPointerOptionAvailability() {
+    if (!pointerTab || !pointerModeSelect) return;
+    const mode = pointerModeSelect.value;
+    pointerTab.querySelectorAll("[data-pointer-mode]").forEach((row) => {
+        row.classList.toggle("is-inactive", row.dataset.pointerMode !== mode);
+    });
+}
+
+pointerModeSelect?.addEventListener("change", refreshPointerOptionAvailability);
 
 function refreshTuningSliderLabels() {
     if (jawOpenThresholdValue) jawOpenThresholdValue.textContent = jawOpenThreshold.toFixed(2);
@@ -6826,8 +6762,15 @@ settingsBtn.addEventListener("click", () => {
     if (iconStyleSelect) iconStyleSelect.value = iconStyle;
     if (modeSelect) modeSelect.value = appMode;
     if (dwellTimeSelect) dwellTimeSelect.value = String(dwellTimeMs);
-    if (panelSnapSelect) panelSnapSelect.value = isPanelSnapEnabled ? "1" : "0";
-    if (axisLockSelect) axisLockSelect.value = isAxisLockEnabled ? "1" : "0";
+    if (pointerModeSelect) pointerModeSelect.value = pointerMode;
+    if (panelSnapInput) panelSnapInput.checked = isPanelSnapEnabled;
+    if (axisLockInput) axisLockInput.checked = isAxisLockEnabled;
+    if (distanceCompInput) distanceCompInput.checked = isDistanceCompEnabled;
+    if (recenterInput) recenterInput.checked = isRecenterEnabled;
+    if (verticalMoveInput) verticalMoveInput.checked = isVerticalMoveEnabled;
+    if (calibFarPassInput) calibFarPassInput.checked = isCalibFarPassEnabled;
+    if (paramsVisibleInput) paramsVisibleInput.checked = isParamPanelVisible;
+    refreshPointerOptionAvailability();
     openSimplePanelEditor();
     openQuestionEditor();
     openTalkEditor();
@@ -6900,18 +6843,51 @@ saveSettingsBtn.addEventListener("click", () => {
         dwellTimeMs = readStoredNumberFromValue(dwellTimeSelect.value, DWELL_TIME_DEFAULT_MS, 0, DWELL_TIME_MAX_MS);
         localStorage.setItem(DWELL_TIME_KEY, String(dwellTimeMs));
     }
-    if (panelSnapSelect) {
-        isPanelSnapEnabled = panelSnapSelect.value === "1";
+    if (panelSnapInput) {
+        isPanelSnapEnabled = panelSnapInput.checked;
         localStorage.setItem(PANEL_SNAP_KEY, isPanelSnapEnabled ? "1" : "0");
         resetPanelSnap();
     }
-    if (axisLockSelect) {
-        isAxisLockEnabled = axisLockSelect.value === "1";
+    if (axisLockInput) {
+        isAxisLockEnabled = axisLockInput.checked;
         localStorage.setItem(AXIS_LOCK_KEY, isAxisLockEnabled ? "1" : "0");
+    }
+    if (distanceCompInput) {
+        isDistanceCompEnabled = distanceCompInput.checked;
+        localStorage.setItem(DISTANCE_COMP_KEY, isDistanceCompEnabled ? "1" : "0");
+    }
+    if (recenterInput) {
+        isRecenterEnabled = recenterInput.checked;
+        localStorage.setItem(RECENTER_KEY, isRecenterEnabled ? "1" : "0");
+    }
+    if (calibFarPassInput) {
+        isCalibFarPassEnabled = calibFarPassInput.checked;
+        localStorage.setItem(CALIB_FAR_PASS_KEY, isCalibFarPassEnabled ? "1" : "0");
+    }
+    if (paramsVisibleInput) {
+        isParamPanelVisible = paramsVisibleInput.checked;
+        localStorage.setItem(PARAM_PANEL_VISIBLE_KEY, isParamPanelVisible ? "1" : "0");
+        applyParamPanelVisibility();
+    }
+    const nextPointerMode = pointerModeSelect?.value === POINTER_MODE_RELATIVE ? POINTER_MODE_RELATIVE : POINTER_MODE_ABSOLUTE;
+    if (pointerModeSelect && nextPointerMode !== pointerMode) {
+        pointerMode = nextPointerMode;
+        localStorage.setItem(POINTER_MODE_KEY, pointerMode);
+        cancelFrontButtonHover();
+        clearPostureHint();
+        resetPointerMotionHistory();
+        applyPointerModeState();
+    }
+    const isVerticalMoveChanged = verticalMoveInput && verticalMoveInput.checked !== isVerticalMoveEnabled;
+    if (isVerticalMoveChanged) {
+        isVerticalMoveEnabled = verticalMoveInput.checked;
+        localStorage.setItem(VERTICAL_MOVE_KEY, isVerticalMoveEnabled ? "1" : "0");
     }
 
     renderAll();
     if (modeSelect) setAppMode(modeSelect.value);
+    // ON→OFF / OFF→ON いずれも上段基準へ戻して仕切り直す
+    if (isVerticalMoveChanged) resetSymptomModeState();
     settingsModal.classList.remove("active");
     // 音声を変えたら、新しい音声で前もって作り始める（Gemini TTS は遅く回数制限があるので手動）。
     // 保存した文言で作るよう最後に呼ぶ

@@ -116,10 +116,8 @@
                     <div class="drawer-actions">
                         <button id="settings-btn" class="drawer-action" type="button"><span class="drawer-action-icon">⚙️</span>設定</button>
                         <button id="fullscreen-btn" class="drawer-action" type="button" title="画面いっぱいに表示します（Escでも解除）"><span class="drawer-action-icon">⛶</span><span class="fullscreen-btn-label">全画面</span></button>
-                        <button id="calib-wizard-btn" class="drawer-action" type="button"><span class="drawer-action-icon">🎯</span>キャリブレーション</button>
                         <button id="recapture-front-btn" class="drawer-action" type="button" title="今の姿勢を正面として取り直します（感度・揺れの計測値はそのまま）"><span class="drawer-action-icon">◎</span>正面取り直し</button>
-                        <button id="calibrate-btn" class="drawer-action" type="button"><span class="drawer-action-icon">↺</span>校正リセット</button>
-                        <button id="audio-cache-btn" class="drawer-action" type="button"><span class="drawer-action-icon">🔊</span>音声データを作成</button>
+                        <button id="calib-wizard-btn" class="drawer-action" type="button"><span class="drawer-action-icon">🎯</span>キャリブレーション</button>
                     </div>
                     <div id="audio-status" class="status-info" style="display:none;">
                         <div class="status-label"></div>
@@ -134,19 +132,10 @@
                     <div id="question-buttons" class="question-buttons"></div>
                     <button id="question-end-btn" class="ctrl-btn secondary" type="button" style="display:none;">質問を終了して戻る</button>
                 </section>
-
-                <section class="drawer-section">
-                    <h4 class="drawer-heading">表示</h4>
-                    <button id="params-toggle-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true">調整・計測値</button>
-                    <button id="vertical-move-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true">上下移動（症状モード）</button>
-                    <button id="distance-comp-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true" title="画面からの距離が変わっても、同じ向きで同じ位置を指せるように移動量を補正します">距離補正</button>
-                    <button id="pointer-mode-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true" title="ON: 正面を固定し、顔の向きがそのまま画面の位置になる（絶対） / OFF: 顔を動かした分だけ動く（相対）">正面固定（絶対位置）</button>
-                    <button id="recenter-btn" class="ctrl-btn switch-btn" type="button" aria-pressed="true" title="相対方式のとき、顔が正面付近にあるあいだ、顔を動かしている間だけポインタのずれを少しずつ戻します">中央補正（相対）</button>
-                </section>
             </div>
 
             <section id="controls-bottom" class="drawer-section control-advanced">
-                <h4 class="drawer-heading">感度調整（即時反映）</h4>
+                <h4 class="drawer-heading">感度（動かしながら調整・すぐ反映）</h4>
                 <div id="quick-tuning" aria-label="調整スライダー">
                     <div class="compact-slider-item">
                         <label for="jaw-open-threshold-slider">口の開き <span id="jaw-open-threshold-value">0.10</span></label>
@@ -178,7 +167,8 @@
 
                 <div class="settings-body">
                     <nav class="settings-tabs" aria-label="設定の分類">
-                        <button class="settings-tab-btn active" type="button" data-tab="basic-tab"><span>🧭</span>操作</button>
+                        <button class="settings-tab-btn active" type="button" data-tab="basic-tab"><span>🧭</span>基本</button>
+                        <button class="settings-tab-btn" type="button" data-tab="pointer-tab"><span>🎯</span>ポインタ</button>
                         <button class="settings-tab-btn" type="button" data-tab="simple-tab"><span>🔲</span>シンプルモード</button>
                         <button class="settings-tab-btn" type="button" data-tab="talk-tab"><span>💬</span>お話</button>
                         <button class="settings-tab-btn" type="button" data-tab="question-tab"><span>❓</span>質問</button>
@@ -213,6 +203,47 @@
                             </section>
 
                             <section class="settings-section">
+                                <h4><label for="icon-style-select">アイコンスタイル</label></h4>
+                                <select id="icon-style-select">
+                                    <option value="simple">シンプル（ピクトグラム）</option>
+                                    <option value="cute">かわいい（イラスト）</option>
+                                    <option value="comic">ヒーロー（イラスト）</option>
+                                    <option value="comic2">ヒーロー2（イラスト）</option>
+                                </select>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4>介助者メニュー（右上の ⚙）</h4>
+                                <label class="toggle-row">
+                                    <input type="checkbox" id="params-visible-input">
+                                    <span class="toggle-switch" aria-hidden="true"></span>
+                                    <span>感度スライダーと計測値を出す<small>ポインタを動かしながら感度を合わせるとき用。普段は OFF でメニューがすっきりする</small></span>
+                                </label>
+                                <p class="settings-help">介助者メニューには、全画面・正面取り直し・キャリブレーション・質問など、使いながら押す操作だけを置いています。</p>
+                            </section>
+                        </div>
+
+                        <!-- Pointer Tab -->
+                        <div id="pointer-tab" class="settings-tab-content">
+                            <section class="settings-section">
+                                <h4>ポインタの動かし方</h4>
+                                <div class="choice-cards">
+                                    <label class="choice-card">
+                                        <input type="radio" name="pointer-mode" value="absolute">
+                                        <span class="choice-card-icon">🎯</span>
+                                        <span class="choice-card-title">正面固定（おすすめ）</span>
+                                        <span class="choice-card-desc">顔の向きがそのまま画面の位置になる。正面を向けば必ず同じ位置に戻る。</span>
+                                    </label>
+                                    <label class="choice-card">
+                                        <input type="radio" name="pointer-mode" value="relative">
+                                        <span class="choice-card-icon">🖱️</span>
+                                        <span class="choice-card-title">相対</span>
+                                        <span class="choice-card-desc">顔を動かした分だけ動く（マウスに近い）。使ううちに位置がずれることがある。</span>
+                                    </label>
+                                </div>
+                            </section>
+
+                            <section class="settings-section">
                                 <h4>滞留で確定（シンプルモード）</h4>
                                 <div class="segmented" role="radiogroup" aria-label="滞留時間">
                                     <label><input type="radio" name="dwell-time" value="0"><span>OFF</span></label>
@@ -227,34 +258,50 @@
                             </section>
 
                             <section class="settings-section">
-                                <h4>パネル中央へ吸着（シンプルモード）</h4>
-                                <div class="segmented" role="radiogroup" aria-label="パネル中央へ吸着">
-                                    <label><input type="radio" name="panel-snap" value="0"><span>OFF</span></label>
-                                    <label><input type="radio" name="panel-snap" value="1"><span>ON</span></label>
+                                <h4>動きの補助</h4>
+                                <div class="toggle-list">
+                                    <label class="toggle-row">
+                                        <input type="checkbox" id="distance-comp-input">
+                                        <span class="toggle-switch" aria-hidden="true"></span>
+                                        <span>距離補正<small>画面からの距離が変わっても、同じ向きで同じ位置を指せるように移動量を補正する</small></span>
+                                    </label>
+                                    <label class="toggle-row" data-pointer-mode="absolute">
+                                        <input type="checkbox" id="panel-snap-input">
+                                        <span class="toggle-switch" aria-hidden="true"></span>
+                                        <span>パネル中央へ吸着<small>正面固定・シンプルモードのとき。パネルに入るとラベルの中央へゆっくり寄る</small></span>
+                                    </label>
+                                    <label class="toggle-row" data-pointer-mode="relative">
+                                        <input type="checkbox" id="axis-lock-input">
+                                        <span class="toggle-switch" aria-hidden="true"></span>
+                                        <span>軸ロック<small>相対のとき。横か縦のどちらかが優勢なら、もう片方を止めて斜めに流れにくくする</small></span>
+                                    </label>
+                                    <label class="toggle-row" data-pointer-mode="relative">
+                                        <input type="checkbox" id="recenter-input">
+                                        <span class="toggle-switch" aria-hidden="true"></span>
+                                        <span>中央補正<small>相対のとき。顔が正面付近にある間、ポインタのずれを少しずつ戻す</small></span>
+                                    </label>
+                                    <label class="toggle-row">
+                                        <input type="checkbox" id="vertical-move-input">
+                                        <span class="toggle-switch" aria-hidden="true"></span>
+                                        <span>上下移動（症状モード）<small>上下の首振りで「分類」と「内容」の段を行き来する</small></span>
+                                    </label>
                                 </div>
-                                <p class="settings-help">パネルに入ると、ポインタがラベルの中央へゆっくり寄ります。着いたらそのパネルでは吸着せず、その位置から相対的に動きます（正面は画面中央のまま、左右上下の動きの大きさだけ変わります）。「正面固定（絶対位置）」のときだけ働きます。</p>
+                                <p class="settings-help">選んだ動かし方では働かない項目は薄く表示しています。</p>
                             </section>
 
                             <section class="settings-section">
-                                <h4>軸ロック（上下左右だけに動かす）</h4>
-                                <div class="segmented" role="radiogroup" aria-label="軸ロック">
-                                    <label><input type="radio" name="axis-lock" value="0"><span>OFF</span></label>
-                                    <label><input type="radio" name="axis-lock" value="1"><span>ON</span></label>
+                                <h4>キャリブレーション</h4>
+                                <label class="toggle-row">
+                                    <input type="checkbox" id="calib-far-pass-input">
+                                    <span class="toggle-switch" aria-hidden="true"></span>
+                                    <span>離れた位置でも計測する<small>いつもの位置と離れた位置の2回計測して、距離補正の強さを決める。OFF ならいつもの位置だけで計測し、距離補正は標準の強さ</small></span>
+                                </label>
+                                <p class="settings-help">キャリブレーションは介助者メニュー（右上の ⚙）の「🎯 キャリブレーション」から始めます。</p>
+                                <div class="settings-section-head">
+                                    <span class="settings-help">静止時の揺れ幅と向きごとの倍率を初期値に戻し、今の向きを正面にします（すぐに反映。感度スライダーと距離補正の値は残る）。</span>
+                                    <button id="calibrate-btn" class="ctrl-btn secondary" type="button">↺ 校正リセット</button>
                                 </div>
-                                <p class="settings-help">横か縦のどちらかが優勢な動きのとき、もう片方を止めて斜めに流れにくくします。「正面固定（絶対位置）」では元から働かないので、相対方式のときだけ効きます。吸着と組み合わせるなら OFF でも使えます。</p>
                             </section>
-
-                            <section class="settings-section">
-                                <h4><label for="icon-style-select">アイコンスタイル</label></h4>
-                                <select id="icon-style-select">
-                                    <option value="simple">シンプル（ピクトグラム）</option>
-                                    <option value="cute">かわいい（イラスト）</option>
-                                    <option value="comic">ヒーロー（イラスト）</option>
-                                    <option value="comic2">ヒーロー2（イラスト）</option>
-                                </select>
-                            </section>
-
-                            <p class="settings-help">感度スライダーとキャリブレーションは、画面右上の ⚙（介助者メニュー）にあります。</p>
                         </div>
 
                         <!-- Simple Mode Tab -->
@@ -470,7 +517,7 @@
                                     <input type="password" id="api-key-input" placeholder="AIza..." autocomplete="off">
                                     <button id="api-key-reveal-btn" class="ctrl-btn secondary" type="button">表示</button>
                                 </div>
-                                <p class="settings-help">ブラウザに保存されます。未設定・通信エラー時は OS 標準の日本語音声で読み上げます。介助者メニューの「音声データを作成」で、まだ音声にしていない文を前もって作っておくと、遅延なく話せます。</p>
+                                <p class="settings-help">ブラウザに保存されます。未設定・通信エラー時は OS 標準の日本語音声で読み上げます。このタブ下の「音声データを作成」で、まだ音声にしていない文を前もって作っておくと、遅延なく話せます。</p>
                             </section>
 
                             <section class="settings-section">
@@ -507,6 +554,10 @@
 
                             <section class="settings-section">
                                 <h4>前もって作った音声</h4>
+                                <div class="settings-section-head">
+                                    <span class="settings-help">まだ音声にしていない文を前もって作っておくと、遅延なく話せます。保存済みの音声設定で作ります（変えたら先に「保存して閉じる」）。進み具合は介助者メニューに出ます。</span>
+                                    <button id="audio-cache-btn" class="ctrl-btn primary" type="button">🔊 音声データを作成</button>
+                                </div>
                                 <div class="settings-section-head">
                                     <span class="settings-help">音声・話者・口調ごとに保存されます。容量が気になるときは消去できます。<b id="audio-cache-clear-result"></b></span>
                                     <button id="audio-cache-clear-btn" class="ctrl-btn secondary" type="button">音声を消去</button>

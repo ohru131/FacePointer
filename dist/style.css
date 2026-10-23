@@ -1724,6 +1724,12 @@ body.calib-active #dwell-indicator {
     gap: 0.6rem;
 }
 
+/* 説明文が長くてもボタンの文字は折り返さない */
+.settings-section-head > .ctrl-btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
 .settings-badge {
     padding: 0.2rem 0.7rem;
     border-radius: 999px;
@@ -1927,6 +1933,11 @@ body.calib-active #dwell-indicator {
 .toggle-row input:focus-visible + .toggle-switch {
     outline: 3px solid rgba(230, 57, 70, 0.35);
     outline-offset: 2px;
+}
+
+/* 選んだポインタの動かし方では働かない補助（切り替えはできる） */
+.toggle-row.is-inactive {
+    opacity: 0.45;
 }
 
 /* 入力欄 */
