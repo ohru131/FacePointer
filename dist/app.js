@@ -4279,6 +4279,7 @@ function canSynthesizeSpeech() {
     const provider = getTtsProvider();
     if (provider === "browser") return false;
     if (provider === "voicevox") return true;
+    if (ttsDailyLimitModel === ttsModel) return false;
     return Boolean(GEMINI_API_KEY) && !geminiAuthBlocked;
 }
 
@@ -4371,8 +4372,42 @@ async function throwIfTtsError(response, blockOnAuthError) {
     if (blockOnAuthError && (response.status === 401 || response.status === 403)) {
         geminiAuthBlocked = true;
     }
-    throw new Error(`API Error: ${response.status}${errorBody ? ` ${errorBody}` : ""}`);
+    const error = new Error(`API Error: ${response.status}${errorBody ? ` ${errorBody}` : ""}`);
+    error.status = response.status;
+    error.body = errorBody;
+    throw error;
 }
+
+// 429（回数制限）の中身。retryMs: 待てば再開できる時間（応答の RetryInfo）、daily: 1日の上限に達した
+function parseTtsRateLimit(error) {
+    if (error?.status !== 429) return null;
+    let details = [];
+    let message = "";
+    try {
+        const data = JSON.parse(error.body || "{}");
+        details = data?.error?.details || [];
+        message = data?.error?.message || "";
+    } catch {
+        message = error.body || "";
+    }
+    const retryDelay = details.find(d => String(d?.["@type"] || "").endsWith("RetryInfo"))?.retryDelay;
+    const seconds = Number.parseFloat(String(retryDelay || ""));
+    const quotaIds = details.flatMap(d => (d?.violations || []).map(v => String(v?.quotaId || v?.quotaMetric || "")));
+    const daily = quotaIds.some(id => /per ?day/i.test(id)) || /per day|daily/i.test(message);
+    return { retryMs: Number.isFinite(seconds) ? seconds * 1000 : null, daily };
+}
+
+// 画面に出す短い説明（API の生の応答は長く、読んでも分かりにくい）
+function describeTtsError(error) {
+    const limit = parseTtsRateLimit(error);
+    if (limit?.daily) return "音声サービスの1日の上限（無料枠）に達しました。続きは明日、または音声を Cloud TTS か VOICEVOX に変えてください";
+    if (limit) return "音声サービスの回数制限（429）に達しました。しばらく待つと続けられます";
+    if (error?.status === 401 || error?.status === 403) return "API Key が使えません（設定 → 音声 で確認してください）";
+    return String(error?.message || error).slice(0, 80);
+}
+
+// 1日の上限に達した音声設定。その日はそれ以上頼まず、保存済みの音声とブラウザの音声で話す（設定を保存すると解除）
+let ttsDailyLimitModel = null;
 
 // opts: { apiKey, voice, style, preview } — 省略時は保存済み設定を使う。preview は試聴用で認証エラー時も発話をブロックしない
 async function requestCloudTts(text, voiceName, signal, opts = {}) {
@@ -4564,6 +4599,7 @@ async function speakGemini(text, silent = false) {
         return true;
     } catch (err) {
         console.error("Gemini TTS Error:", err);
+        if (parseTtsRateLimit(err)?.daily) ttsDailyLimitModel = ttsModel;
         // 別の文に切り替わっていれば、この文をブラウザの音声で話し直さない
         return !isLatest();
     } finally {
@@ -4637,6 +4673,11 @@ let isPrefetchRunning = false;
 let prefetchQueued = null; // 次に作るときの { quiet }
 
 // 合成の間隔: Gemini TTS は回数制限が厳しいので空ける。VOICEVOX は手元の PC で1つずつ合成するので、話す分の余裕を少し空ける
+// 回数制限（429）で待つとき: 応答に待ち時間が無ければ 30 秒、長くても 5 分。続けて 6 回来たら止める
+const PREFETCH_RATE_LIMIT_DEFAULT_WAIT_MS = 30000;
+const PREFETCH_RATE_LIMIT_MAX_WAIT_MS = 300000;
+const PREFETCH_RATE_LIMIT_MAX_WAITS = 6;
+
 function getPrefetchIntervalMs() {
     const provider = getTtsProvider();
     if (provider === "gemini") return 600;
@@ -4743,7 +4784,9 @@ async function prefetchAllAudio({ quiet = false } = {}) {
         if (!quiet) showStatus("作る文を調べています…", 0);
         total = collectPrefetchPhrases().length;
         missing = await getMissingPrefetchPhrases(model);
-        for (const text of missing) {
+        let rateLimitWaits = 0;
+        for (let i = 0; i < missing.length; i++) {
+            const text = missing[i];
             if (ttsModel !== model || !canSynthesizeSpeech()) {
                 stopped = true;
                 break;
@@ -4754,9 +4797,21 @@ async function prefetchAllAudio({ quiet = false } = {}) {
                 const blob = await synthesizeSpeech(text, undefined, { model });
                 if (blob.size >= AUDIO_MIN_BYTES) await setCachedAudio(audioCacheKey(text, model), blob);
                 createdCount++;
+                rateLimitWaits = 0;
                 // 数え直さず、作った分だけ件数を進める
                 if (ttsModel === model) renderAudioCacheSummary(total - (missing.length - createdCount), total);
             } catch (error) {
+                const limit = parseTtsRateLimit(error);
+                // 1分あたりの回数制限は、言われた時間だけ待って同じ文からやり直す（続けて何度も来たらあきらめる）
+                if (limit && !limit.daily && rateLimitWaits < PREFETCH_RATE_LIMIT_MAX_WAITS) {
+                    rateLimitWaits++;
+                    const waitMs = clamp(limit.retryMs ?? PREFETCH_RATE_LIMIT_DEFAULT_WAIT_MS, 1000, PREFETCH_RATE_LIMIT_MAX_WAIT_MS) + 1000;
+                    showStatus(`回数制限のため ${Math.ceil(waitMs / 1000)} 秒待ってから続けます（${createdCount}/${missing.length}）`, (createdCount / missing.length) * 100);
+                    await new Promise(r => setTimeout(r, waitMs));
+                    i--;
+                    continue;
+                }
+                if (limit?.daily) ttsDailyLimitModel = model;
                 console.error("audio prefetch failed:", error);
                 failed = error;
                 break;
@@ -4773,8 +4828,8 @@ async function prefetchAllAudio({ quiet = false } = {}) {
     }
 
     if (failed) {
-        showStatus(`⚠ 音声の作成を中断しました（${createdCount}/${missing.length}）: ${String(failed.message || failed).slice(0, 80)}`, 0);
-        hideStatus(8000);
+        showStatus(`⚠ 音声の作成を中断しました（${createdCount}/${missing.length}）: ${describeTtsError(failed)}`, 0);
+        hideStatus(20000);
     } else if (stopped) {
         showStatus("音声の設定が変わったため、作成を止めました", 0);
         hideStatus(3000);
@@ -6769,7 +6824,7 @@ async function previewTts(text, button) {
     } catch (err) {
         if (err.name === "AbortError") return;
         console.error("TTS preview error:", err);
-        setStatus(`発話失敗: ${err.message.slice(0, 200)}`);
+        setStatus(`発話失敗: ${describeTtsError(err)}`);
     } finally {
         button.classList.remove("is-loading");
         if (ttsPreviewController === controller) ttsPreviewController = null;
@@ -6845,6 +6900,7 @@ saveSettingsBtn.addEventListener("click", () => {
     const newKey = apiKeyInput.value.trim();
     GEMINI_API_KEY = newKey;
     geminiAuthBlocked = false;
+    ttsDailyLimitModel = null;
     localStorage.setItem("gemini_api_key", newKey);
     const previousTtsModel = ttsModel;
     if (ttsModelSelect && ttsModelSelect.value) {
