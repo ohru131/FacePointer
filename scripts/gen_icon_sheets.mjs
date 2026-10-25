@@ -9,6 +9,7 @@
 //   node scripts/gen_icon_sheets.mjs --split-only     保存済みシートを分割し直す（APIを呼ばない）
 //   node scripts/gen_icon_sheets.mjs --only greet-    id の前方一致で絞る（--force で作り直し）
 //   node scripts/gen_icon_sheets.mjs --list-models    画像を作れるモデルの一覧
+//   node scripts/gen_icon_sheets.mjs --import 画像.png  ほかで作ったシート（--dry-run の1シート目の指示＋見本画像で作ったもの）を取り込む
 
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -59,7 +60,7 @@ export function loadEnv() {
 }
 
 function parseArgs(argv) {
-    const args = { dryRun: false, splitOnly: false, force: false, listModels: false, limit: Infinity, only: "" };
+    const args = { dryRun: false, splitOnly: false, force: false, listModels: false, limit: Infinity, only: "", importFile: "" };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         if (a === "--dry-run") args.dryRun = true;
@@ -68,12 +69,14 @@ function parseArgs(argv) {
         else if (a === "--list-models") args.listModels = true;
         else if (a === "--limit") args.limit = Number.parseInt(argv[++i], 10);
         else if (a === "--only") args.only = argv[++i] || "";
+        else if (a === "--import") args.importFile = argv[++i] || "";
         else throw new Error(`Unknown option: ${a}`);
         // 値なしの --only は全件に一致し、--force と組み合わせると全シートを作り直してしまう
         if (a === "--only" && (!args.only || args.only.startsWith("--"))) throw new Error("--only には id の先頭部分を指定してください");
     }
     if (!(args.limit > 0)) throw new Error("--limit には 1 以上の数を指定してください");
     if (args.splitOnly && args.dryRun) throw new Error("--split-only と --dry-run は同時に指定できません");
+    if (argv.includes("--import") && (!args.importFile || args.importFile.startsWith("--"))) throw new Error("--import には取り込む画像のファイルを指定してください");
     return args;
 }
 
@@ -467,28 +470,44 @@ export async function generateIcons({ env, sheets, getAll, onLog = console.log }
             failed.push(i + 1);
             continue;
         }
-        await sharp(image).png().toFile(path.join(SHEET_DIR, file));
-        // 作っている間に削除などで書き換わることがあるので、追記する直前に読み直す
-        const log = readSheetLog();
-        log.push({ file, model: env.model, slots: slots.map(({ key, pad, desc }) => ({ key, pad, hash: descHash(desc) })) });
-        fs.writeFileSync(SHEET_LOG, JSON.stringify(log, null, 2));
-        let written;
         try {
-            written = await splitSheet(path.join(SHEET_DIR, file), slots);
+            const written = await saveAndSplitSheet({ image, file, model: env.model, slots, getAll });
+            onLog(`  → ${written.length} icons (${file})`);
         } catch (error) {
             // シートは保存済みなので --split-only で切り直せる。残りのシートは続けて作る
             onLog(`  分割に失敗: ${error.message}（${file}）`);
             failed.push(i + 1);
-            continue;
         }
-        const sources = readSources();
-        for (const slot of slots) if (!slot.pad) sources[slot.key] = descHash(slot.desc);
-        // 途中で止まっても作れた分は使えるよう、シートごとに一覧を更新する
-        writeSources(sources);
-        writeManifest(await getAll(), sources);
-        onLog(`  → ${written.length} icons (${file})`);
     }
     return { failed };
+}
+
+// シートを保存して記録し、1枚ずつに分けて、作ったときの内容と一覧を更新する
+async function saveAndSplitSheet({ image, file, model, slots, getAll }) {
+    await sharp(image).png().toFile(path.join(SHEET_DIR, file));
+    // 作っている間に削除などで書き換わることがあるので、追記する直前に読み直す
+    const log = readSheetLog();
+    log.push({ file, model, slots: slots.map(({ key, pad, desc }) => ({ key, pad, hash: descHash(desc) })) });
+    fs.writeFileSync(SHEET_LOG, JSON.stringify(log, null, 2));
+    const written = await splitSheet(path.join(SHEET_DIR, file), slots);
+    const sources = readSources();
+    for (const slot of slots) if (!slot.pad) sources[slot.key] = descHash(slot.desc);
+    // 途中で止まっても作れた分は使えるよう、シートごとに一覧を更新する
+    writeSources(sources);
+    writeManifest(await getAll(), sources);
+    return written;
+}
+
+// ほかで作ったシートを取り込む。--dry-run の1シート目と同じ並び（未作成の先頭20件。足りない枠は埋め草）で切り分ける
+async function importSheet(importFile, slots) {
+    const image = fs.readFileSync(path.resolve(importFile));
+    const gridError = await checkGrid(image);
+    if (gridError) throw new Error(`シートが${COLS}列×${ROWS}行になっていません（${gridError}）`);
+    fs.mkdirSync(SHEET_DIR, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
+    const file = `sheet-${stamp}-import.png`;
+    const written = await saveAndSplitSheet({ image, file, model: "import", slots, getAll: () => collectTargets() });
+    console.log(`取り込み: ${written.length} icons (${file}) → ${path.relative(ROOT, ICON_MANIFEST)}`);
 }
 
 async function main() {
@@ -532,6 +551,12 @@ async function main() {
 
     if (args.dryRun) {
         sheets.forEach((slots, i) => console.log(`\n=== sheet ${i + 1} ===\n${buildPrompt(slots)}`));
+        if (sheets.length > 0) console.log(`\n見本画像（指示と一緒に渡す）: ${path.relative(ROOT, STYLE_REFERENCE)}`);
+        return;
+    }
+    if (args.importFile) {
+        if (sheets.length === 0) throw new Error("未作成のアイコンがないので、取り込むものがありません");
+        await importSheet(args.importFile, sheets[0]);
         return;
     }
     if (sheets.length === 0) {
