@@ -484,7 +484,7 @@
                         <div id="question-tab" class="settings-tab-content">
                             <section class="settings-section">
                                 <h4>質問への返事テンプレート</h4>
-                                <p class="settings-help">質問モード（設定 → 基本）では、画面の上に質問が並び、介助者がマウスで押して利用者に答えてもらいます。答えると質問のボタンに ✓ と答えが付き、左端の「次の質問 ▶」に続けて聞く質問が出ます（答えに合わせた質問、無ければ下の並びの次）。「↺ 最初から」で答えの記録を消します。<br>ほかのモードでも、介助者メニュー（右上の ⚙）の「質問する」で選ぶと回答パネルに切り替わり、回答すると元の画面へ戻ります（90秒操作がなければ自動で戻る）。</p>
+                                <p class="settings-help">質問モード（設定 → 基本）では、画面の上に質問が並び、介助者がマウスで押して利用者に答えてもらいます。ボタンの並びは会話中も変わりません（押した質問だけ色が変わる）。答えは質問文の右に出ます。<br>ほかのモードでも、介助者メニュー（右上の ⚙）の「質問する」で選ぶと回答パネルに切り替わり、回答すると元の画面へ戻ります（90秒操作がなければ自動で戻る）。</p>
                                 <label class="toggle-row">
                                     <input type="checkbox" id="question-speak-input">
                                     <span class="toggle-switch" aria-hidden="true"></span>
@@ -493,10 +493,61 @@
                             </section>
 
                             <section class="settings-section">
-                                <h4>出す質問（質問モードの上のボタン・介助者メニュー）</h4>
-                                <p class="settings-help">▲▼ で会話の順に並べ替えます。🧩 の質問は、シンプルモードのパネルをそのまま答えにします。</p>
-                                <div id="question-editor-list"></div>
+                                <h4>回答パネルの数（1画面の最大）</h4>
+                                <div class="segmented" role="radiogroup" aria-label="回答パネルの数">
+                                    <label><input type="radio" name="question-grid-size" value=""><span>シンプルと同じ<small>グリッドサイズ</small></span></label>
+                                    <label><input type="radio" name="question-grid-size" value="2x2"><span>2×2<small>4枚</small></span></label>
+                                    <label><input type="radio" name="question-grid-size" value="3x2"><span>3×2<small>6枚</small></span></label>
+                                    <label><input type="radio" name="question-grid-size" value="3x3"><span>3×3<small>9枚</small></span></label>
+                                    <label><input type="radio" name="question-grid-size" value="4x3"><span>4×3<small>12枚</small></span></label>
+                                    <label><input type="radio" name="question-grid-size" value="4x4"><span>4×4<small>16枚</small></span></label>
+                                </div>
+                                <p class="settings-help">答えが少ない質問は、パネルを減らして大きく並べます（例: 答え4つなら 2×2）。ここで選んだ数より多い答えは「前へ / 次へ」でページ送り。質問ごとの数は下の「答えのパネル」で固定できます。</p>
                             </section>
+
+                            <section class="settings-section">
+                                <h4>出す質問（質問モードの上のボタン・介助者メニュー）</h4>
+                                <p class="settings-help">▲▼ で会話の順に並べ替えます。🧩 の質問は、シンプルモードのパネルをそのまま答えにします。「✏️ 答え」で下の「答えのパネル」を開きます。</p>
+                                <div id="question-editor-list"></div>
+                                <div class="simple-editor-toolbar">
+                                    <button id="question-reset-order-btn" class="ctrl-btn secondary" type="button">おすすめの並びに戻す</button>
+                                </div>
+                            </section>
+
+                            <div class="layout-editor">
+                            <section class="settings-section">
+                                <div class="settings-section-head">
+                                    <h4>答えのパネル</h4>
+                                    <span id="question-answer-summary" class="settings-badge"></span>
+                                </div>
+                                <label class="field field--row">
+                                    <span>質問</span>
+                                    <select id="question-answer-select"></select>
+                                </label>
+                                <div class="segmented segmented--compact" role="radiogroup" aria-label="この質問のパネルの数">
+                                    <label><input type="radio" name="question-answer-grid" value=""><span>自動<small>おまかせ</small></span></label>
+                                    <label><input type="radio" name="question-answer-grid" value="2x2"><span>2×2<small>4枚</small></span></label>
+                                    <label><input type="radio" name="question-answer-grid" value="3x2"><span>3×2<small>6枚</small></span></label>
+                                    <label><input type="radio" name="question-answer-grid" value="3x3"><span>3×3<small>9枚</small></span></label>
+                                    <label><input type="radio" name="question-answer-grid" value="4x3"><span>4×3<small>12枚</small></span></label>
+                                    <label><input type="radio" name="question-answer-grid" value="4x4"><span>4×4<small>16枚</small></span></label>
+                                </div>
+                                <p class="settings-help">上は、この質問の1画面のパネル数（自動なら、答えの数と「回答パネルの数」で決まる）。下は質問モードの画面と同じ並びです。タイルをドラッグすると、落としたタイルの左半分なら前、右半分なら後ろに入ります。クリックで選んで ⏮ ◀ ▶ ⏭ でも動かせます。✕ で外せます。</p>
+                                <div id="question-answer-pages" class="layout-pages"></div>
+                                <div id="question-answer-detail" class="layout-detail"></div>
+                                <div class="simple-editor-toolbar">
+                                    <button id="question-answer-reset-btn" class="ctrl-btn secondary" type="button">最初の答えに戻す</button>
+                                    <button id="question-answer-clear-btn" class="ctrl-btn secondary" type="button">すべて外す</button>
+                                </div>
+                            </section>
+
+                            <section class="settings-section layout-palette-section">
+                                <h4>追加できる答え</h4>
+                                <p class="settings-help">「この質問」の答えと、シンプルモードのパネル（任意パネルも）、お話モードの相づちを使えます。左へドラッグで好きな位置に追加。クリックすると、選んでいるタイルの後ろ（選んでいなければ最後）に追加します。ここへドラッグすると答えから外れます。</p>
+                                <div id="question-answer-filter" class="filter-chips" aria-label="答えの分類"></div>
+                                <div id="question-answer-palette" class="layout-palette"></div>
+                            </section>
+                            </div>
 
                             <section class="settings-section">
                                 <h4>質問を追加</h4>
@@ -508,6 +559,10 @@
                                     <label class="field">
                                         <span>メニューでの短い名前</span>
                                         <input type="text" id="question-custom-label-input" placeholder="空欄なら質問文" maxlength="16">
+                                    </label>
+                                    <label class="field">
+                                        <span>アイコン（絵文字）</span>
+                                        <input type="text" id="question-custom-emoji-input" placeholder="例: 🥤（空欄なら ❓）" maxlength="8">
                                     </label>
                                     <div class="field field--full">
                                         <span>答えにするパネル（押した順に並ぶ。グループ名で丸ごと選択）</span>

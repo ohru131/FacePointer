@@ -432,133 +432,86 @@ header {
     position: relative;
 }
 
-/* 質問モード: 介助者がマウスで質問を切り替えるボタン列（ポインタの対象外） */
-/* 左: 次の質問（大きく） / 中: 質問の一覧（折り返し） / 右: 最初から */
+/* 質問モード: 介助者がマウスで質問を切り替えるボタン（ポインタの対象外）
+   年配の介助者でも押しやすいよう、同じ大きさのボタンを左端から並べる。会話中も並びは変わらない */
 #question-mode-bar {
     flex: 0 0 auto;
-    display: flex;
-    align-items: stretch;
-    gap: 0.5rem;
+    display: grid;
+    /* 8つずつ2段（既定の16問）。どの画面幅でも同じ場所に同じボタンが来る */
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 0.45rem;
     /* 右上の ◎ ⛶ ⚙ に重ねない */
     padding-right: 170px;
 }
 
-.question-mode-list {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-wrap: wrap;
-    align-content: flex-start;
-    gap: 0.4rem;
+/* 縦が短い画面（ノートPCなど）は、回答パネルの高さを残すためボタンを低くする（アイコンと文字を横に並べる） */
+@media (max-height: 820px) {
+    #question-mode-bar {
+        gap: 0.35rem;
+    }
+
+    .question-mode-btn {
+        flex-direction: row;
+        gap: 0.25rem;
+        padding: 0.35rem 0.3rem;
+    }
+
+    .question-mode-icon {
+        font-size: 1.25em;
+    }
 }
 
-.question-mode-side {
-    flex: 0 0 auto;
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    max-width: 13rem;
-}
-
-.question-mode-next {
-    flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    align-items: flex-start;
-    padding: 0.2rem 0.9rem;
-    border: 2px solid #e76f51;
-    border-radius: 0.8rem;
-    background: linear-gradient(180deg, #f4a261 0%, #e76f51 100%);
-    color: #fff;
-    font-family: inherit;
-    font-size: clamp(0.95rem, 1.5vw, 1.25rem);
-    font-weight: 900;
-    line-height: 1.2;
-    text-align: left;
-    cursor: pointer;
-    pointer-events: auto;
-    box-shadow: 0 4px 12px rgba(231, 111, 81, 0.3);
-}
-
-.question-mode-next:hover {
-    filter: brightness(1.06);
-}
-
-.question-mode-next-head {
-    font-size: 0.72em;
-    font-weight: 700;
-    opacity: 0.92;
-}
-
-.question-mode-reset {
-    flex: 0 0 auto;
-    padding: 0.1rem 0.6rem;
-    border: 2px solid rgba(100, 116, 139, 0.4);
-    border-radius: 999px;
-    background: #f8fafc;
-    color: var(--text-dim);
-    font-family: inherit;
-    font-size: clamp(0.75rem, 1vw, 0.88rem);
-    font-weight: 700;
-    cursor: pointer;
-    pointer-events: auto;
-}
-
-.question-mode-reset:hover {
-    background: #eef2f6;
+/* 狭い画面では8列だと文字が切れるので、入るだけ並べる */
+@media (max-width: 1200px) {
+    #question-mode-bar {
+        grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+    }
 }
 
 .question-mode-btn {
-    padding: 0.2rem 0.7rem;
-    border: 2px solid rgba(69, 123, 157, 0.45);
-    border-radius: 999px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.1rem;
+    padding: 0.3rem 0.4rem;
+    border: 3px solid rgba(69, 123, 157, 0.45);
+    border-radius: 0.9rem;
     background: #fff;
     color: var(--text);
     font-family: inherit;
-    font-size: clamp(0.8rem, 1.15vw, 0.98rem);
-    font-weight: 700;
+    font-size: clamp(0.95rem, 1.3vw, 1.35rem);
+    font-weight: 900;
+    line-height: 1.15;
     cursor: pointer;
+    box-shadow: 0 3px 8px rgba(15, 23, 42, 0.08);
     /* #ui-layer は pointer-events: none なので、マウスで押せるようにボタンだけ戻す */
     pointer-events: auto;
 }
 
+.question-mode-icon {
+    font-size: 1.6em;
+    line-height: 1.1;
+}
+
+.question-mode-label {
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .question-mode-btn:hover {
     background: #eef5fa;
+    border-color: #457b9d;
 }
 
 .question-mode-btn.active {
     background: #457b9d;
-    border-color: #457b9d;
+    border-color: #1d3557;
     color: #fff;
-}
-
-/* 答えた質問: 答えを小さく添える */
-.question-mode-btn.is-answered {
-    border-color: rgba(42, 157, 143, 0.6);
-    background: #effaf7;
-}
-
-.question-mode-btn.is-answered.active {
-    background: #457b9d;
-    border-color: #457b9d;
-}
-
-.question-mode-answer {
-    margin-left: 0.4rem;
-    font-size: 0.82em;
-    font-weight: 700;
-    color: #2a9d8f;
-}
-
-.question-mode-btn.active .question-mode-answer {
-    color: #d8f3ee;
-}
-
-/* 次に勧める質問 */
-.question-mode-btn.is-next:not(.active) {
-    border-color: #e76f51;
-    border-style: dashed;
+    box-shadow: 0 0 0 3px rgba(69, 123, 157, 0.35);
 }
 
 /* ページ送り・休憩のバー */
@@ -2389,7 +2342,7 @@ body.calib-active #dwell-indicator {
 
 .question-custom-form {
     display: grid;
-    grid-template-columns: 1.6fr 1fr;
+    grid-template-columns: 1.6fr 1fr 0.8fr;
     gap: 0.7rem;
     align-items: end;
 }
@@ -3168,4 +3121,32 @@ body.settings-open #dwell-indicator {
 .tts-model-row button {
     flex-shrink: 0;
     white-space: nowrap;
+}
+
+/* 質問の答えのパネル: 枚数に合わせてマスが増えるので、最後に足す受け口を置く */
+.question-answer-dropzone {
+    padding: 0.7rem;
+    border: 2px dashed #c4ccd4;
+    border-radius: 0.8rem;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    font-weight: 700;
+    text-align: center;
+}
+
+.question-answer-dropzone.drop-target {
+    border-color: var(--primary);
+    background: #fff1f2;
+    color: var(--primary);
+}
+
+/* 答えのパネル: この質問のパネル数（狭い列に6つ並ぶので小さめ） */
+.segmented--compact label {
+    min-width: 52px;
+}
+
+.segmented--compact span {
+    min-height: 2.3rem;
+    padding: 0.2rem 0.3rem;
+    font-size: 0.85rem;
 }

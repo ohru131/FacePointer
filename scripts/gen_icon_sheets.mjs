@@ -78,6 +78,13 @@ function parseArgs(argv) {
 }
 
 // app.js はブラウザ用でそのまま読み込めないため、定数の配列リテラルだけ取り出して評価する
+// 配列の中で参照している文字列の定数（const NAME = "..."）も読めるようにする
+function stringConstants(source) {
+    const context = {};
+    for (const m of source.matchAll(/^const ([A-Z][A-Z0-9_]*) = ("(?:[^"\\]|\\.)*");/gm)) context[m[1]] = JSON.parse(m[2]);
+    return context;
+}
+
 export function extractArrayLiteral(source, name) {
     const head = `const ${name} = [`;
     const start = source.indexOf(head);
@@ -94,7 +101,7 @@ export function extractArrayLiteral(source, name) {
         if (ch === "\"" || ch === "'" || ch === "`") quote = ch;
         else if (ch === "[") depth++;
         else if (ch === "]" && --depth === 0) {
-            return vm.runInNewContext(`(${source.slice(start + head.length - 1, i + 1)})`);
+            return vm.runInNewContext(`(${source.slice(start + head.length - 1, i + 1)})`, stringConstants(source));
         }
     }
     throw new Error(`${name} is not terminated`);
@@ -180,7 +187,8 @@ export async function collectTargets({ extraSets = [] } = {}) {
     }
 
     for (const q of extractArrayLiteral(appSource, "QUESTION_PRESETS")) {
-        q.answers.forEach((a, i) => {
+        // 既存パネルを答えにする質問（panelSource）は、パネル側のアイコンを使う
+        (q.answers || []).forEach((a, i) => {
             if (a.icon && !isPictogram(a.icon)) return;
             targets.push({
                 key: `${q.id}-a${i}`,

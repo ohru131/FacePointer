@@ -2115,26 +2115,6 @@ function resolveTalkSentence(say, partner = getTalkPartner()) {
     return say.replace(TALK_CALL_PLACEHOLDER, partner ? `${partner.name}、` : "").replaceAll("{呼}", partner ? partner.name : "");
 }
 
-// 音声を前もって作るための、今のパターンで話しうる全文。呼びかけのある文は「相手なし」と各相手の分を作る
-// （その相手のときだけ出る言葉は、その相手の分だけ）
-function collectTalkSentences() {
-    const partners = getActiveTalkSet().partners;
-    const sentences = TALK_AIZUCHI.map(item => item.sentence);
-    const visit = (nodes, allowed) => {
-        nodes.forEach((node) => {
-            if (talkConfig.hiddenIds.includes(node.id)) return;
-            const nodeAllowed = Array.isArray(node.for) ? allowed.filter(p => node.for.includes(p.id)) : allowed;
-            if (node.say) {
-                sentences.push(resolveTalkSentence(node.say, null));
-                if (TALK_CALL_PLACEHOLDER.test(node.say)) nodeAllowed.forEach(p => sentences.push(resolveTalkSentence(node.say, p)));
-            }
-            if (node.children) visit(node.children, nodeAllowed);
-        });
-    };
-    visit(getTalkTree(), partners);
-    return sentences;
-}
-
 function getTalkCurrentNode() {
     return talkPath[talkPath.length - 1] || null;
 }
@@ -2314,7 +2294,8 @@ function getSimpleLayout() {
     const userSize = SIMPLE_GRID_SIZES[simpleConfig.gridSize] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
     let panels;
     if (activeQuestion) {
-        panels = activeQuestion.answers;
+        const { cols, rows } = getQuestionGridSize(activeQuestion.id, activeQuestion.answers.length);
+        return { cols, rows, panels: activeQuestion.answers };
     } else if (isQuestionMode()) {
         return { ...userSize, panels: [] };
     } else if (appMode === APP_MODE_TALK) {
@@ -2323,16 +2304,27 @@ function getSimpleLayout() {
         return { ...userSize, panels: getEnabledSimplePanels() };
     }
 
-    const n = panels.length;
+    const { cols, rows } = getAutoGridSize(panels.length, userSize);
+    return { cols, rows, panels: repeatTalkSayPanel(panels, cols * rows) };
+}
+
+// 質問の回答パネルのグリッド。質問ごとに決めた大きさ（固定）→ 枚数に合わせて自動（質問タブの最大、未設定ならシンプルモードと同じ）
+function getQuestionGridSize(questionId, n, { gridSize = questionConfig.gridSize, gridSizes = questionConfig.gridSizes, simpleGridSize = simpleConfig.gridSize } = {}) {
+    const fixed = SIMPLE_GRID_SIZES[gridSizes?.[questionId]];
+    if (fixed) return fixed;
+    const max = SIMPLE_GRID_SIZES[gridSize] || SIMPLE_GRID_SIZES[simpleGridSize] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
+    return getAutoGridSize(n, max);
+}
+
+// 枚数に合わせたグリッド（少ないほど大きく並べる。設定のグリッドより細かくはしない）
+function getAutoGridSize(n, userSize) {
     const auto = n <= 3 ? { cols: Math.max(1, n), rows: 1 }
         : n <= 4 ? { cols: 2, rows: 2 }
         : n <= 6 ? { cols: 3, rows: 2 }
         : n <= 9 ? { cols: 3, rows: 3 }
         : n <= 12 ? { cols: 4, rows: 3 }
         : { cols: 4, rows: 4 };
-    const cols = Math.min(auto.cols, userSize.cols);
-    const rows = Math.min(auto.rows, userSize.rows);
-    return { cols, rows, panels: repeatTalkSayPanel(panels, cols * rows) };
+    return { cols: Math.min(auto.cols, userSize.cols), rows: Math.min(auto.rows, userSize.rows) };
 }
 
 // 「これで話す」は複数ページになっても各ページの先頭に置く（どのページからでも確定できる）
@@ -2354,14 +2346,14 @@ function renderSimpleMessage() {
         simpleMessageContainer.style.display = "";
         const text = document.createElement("div");
         text.className = "simple-message-question";
-        text.textContent = `❓ ${activeQuestion.question}`;
+        text.textContent = `${getQuestionEmoji(activeQuestion)} ${activeQuestion.question}`;
         simpleMessageContainer.appendChild(text);
         // 質問モード: 直前の答えを右に出す（この質問への答えは強調、前の質問への答えは控えめに）
-        if (isQuestionMode() && lastQuestionAnswer) {
-            const isCurrent = lastQuestionAnswer.questionId === activeQuestion.id;
+        const shown = isQuestionMode() ? getShownQuestionAnswer() : null;
+        if (shown) {
             const answer = document.createElement("div");
-            answer.className = "simple-message-answer" + (isCurrent ? " is-current" : "");
-            answer.textContent = `${isCurrent ? "💬" : "前の答え:"} ${lastQuestionAnswer.sentence}`;
+            answer.className = "simple-message-answer" + (shown.isCurrent ? " is-current" : "");
+            answer.textContent = `${shown.isCurrent ? "💬" : "前の答え:"} ${shown.sentence}`;
             simpleMessageContainer.appendChild(answer);
         }
         return;
@@ -2471,8 +2463,8 @@ function renderSimpleMode() {
         simpleGridContainer.appendChild(createSimpleButton(item.id, item.name, {
             icon: item.icon,
             emoji: item.emoji,
-            // 質問の答えにしたパネルは id が振り直されているので、元のパネルの生成アイコンを引く
-            image: item.image || (item.panelId ? getGeneratedIcon(item.panelId, item.icon) : ""),
+            // 質問の答えは id が振り直されているので、元のパネル・元の答えの生成アイコンを引く
+            image: item.image || (item.iconId ? getGeneratedIcon(item.iconId, item.icon) : ""),
             className: item.type ? `talk-panel talk-panel--${item.type}${item.selected ? " is-selected" : ""}` : "",
             onClick: () => (isTalkScreen() ? handleTalkPanel(item) : handleSimpleClick(item))
         }));
@@ -2513,6 +2505,8 @@ function renderSimpleMode() {
         notice.className = "simple-empty-notice";
         notice.textContent = isQuestionMode() && !activeQuestion
             ? "出す質問がありません（設定 → 質問で選択）"
+            : activeQuestion
+            ? "答えがありません（設定 → 質問 →「答えのパネル」で追加）"
             : isTalkScreen()
             ? (talkTab === TALK_TAB_FAVORITE ? "まだ話した文がありません（話すとここに出ます）" : "表示する言葉がありません（設定 → お話で選択）")
             : "表示するパネルがありません（設定 → シンプルモードで選択）";
@@ -2543,10 +2537,9 @@ async function handleSimpleClick(item) {
     lockSimpleKeyAfterConfirm(getSimpleRowKey(item.id));
 
     const answeredQuestionId = activeQuestion?.id ?? null;
-    // 質問モード: 答えを記録して、上のボタン（✓ と次の質問）と質問文の横の答えを更新する
+    // 質問モード: 質問文の横に答えを出す（上のボタンは変えない）
     if (isQuestionMode() && activeQuestion) {
         recordQuestionAnswer(item);
-        renderQuestionModeBar();
         renderSimpleMessage();
     }
     await speakSimpleSentence(sentence);
@@ -2768,6 +2761,7 @@ function setAppMode(mode) {
     talkFavoriteOrder = null;
     // 質問中に切り替えたら質問は終える（終了後に古いページへ戻らないようにする）
     activeQuestion = null;
+    lastQuestionAnswer = null;
     pageBeforeQuestion = 0;
     resetSymptomModeState();
     if (isQuestionMode()) ensureQuestionModeQuestion({ speak: true });
@@ -2786,46 +2780,38 @@ const QUESTION_CUSTOM_KEY = "question_custom_v1";
 // 質問モードで最後に出していた質問
 const QUESTION_MODE_LAST_KEY = "question_mode_last_id";
 // 既定で出さない質問。保存済みの設定には、まだ知らない質問にだけ当てる（設定 → 質問でチェックすれば出せる）
-const QUESTION_DEFAULT_HIDDEN_IDS = ["q-yes-no", "q-who", "q-pastime"];
+const QUESTION_DEFAULT_HIDDEN_IDS = ["q-condition", "q-pastime", "q-who"];
 // knownIds を持たない古い設定が、すでに知っている質問（このあとに足した質問だけ既定の非表示を当てる）
 const QUESTION_LEGACY_PRESET_IDS = ["q-yes-no", "q-pain-where", "q-pain-level", "q-itch-where", "q-feeling", "q-temperature", "q-position", "q-want", "q-who"];
 // 答えを既存のパネルから出す質問の panelSource。それ以外はパネルのグループ名（基本・体調・ケア… 任意）
 const QUESTION_PANEL_SOURCE_LAYOUT = "layout"; // シンプルモードの画面に並べたパネル
-// 会話の記録で、ボタンに出す答えの文字数
-const QUESTION_ANSWER_MARK_MAX = 10;
+// お話モードの相づちも答えの候補にする（このグループ名で並ぶ）
+const QUESTION_PANEL_GROUP_AIZUCHI = "相づち";
 // 回答がないまま放置されたら元の画面へ戻す
 const QUESTION_TIMEOUT_MS = 90000;
 
-// 並びは会話の流れ（あいさつ代わりの気分 → 体のこと → してほしいこと → 気持ち・家族 → ほかに）。設定 → 質問で並べ替えられる
-// next: 答えたあとに勧める次の質問（答えの next / nextByPanel が優先。無ければ並びの次）
+// 並び: 1段目は体のこと（気分 → 症状 → 痛み・かゆみ → 暑さ寒さ・体の向き・吸引）、
+// 2段目は返事と会話（はい・いいえ、わかった？、相づち）→ お願い・したいこと・気持ち・家族 → ほかに。
+// 8つずつ2段に収まるよう、重なる質問（体調は？・過ごし方は？・誰に会いたい？）は既定で出さない。設定 → 質問で並べ替えられる
+// emoji: 質問モードの上のボタン・介助者メニューに出すアイコン
 // panelSource: 答えを既存のパネルから出す（パネルのグループ名、または QUESTION_PANEL_SOURCE_LAYOUT）
+// silent: 切り替えても質問文を読み上げない
 const QUESTION_PRESETS = [
     {
-        id: "q-yes-no", label: "はい・いいえ", question: "はい・いいえで答えてください",
-        answers: [
-            { name: "はい", emoji: "⭕", sentence: "はい。" },
-            { name: "いいえ", emoji: "❌", sentence: "いいえ。" },
-            { name: "わからない", emoji: "❓", sentence: "わからないです。" },
-            { name: "もう一度", emoji: "🔁", sentence: "もう一度言ってください。" }
-        ]
-    },
-    {
-        id: "q-feeling", label: "気分は？", question: "気分はどうですか？",
+        id: "q-feeling", emoji: "😊", label: "気分は？", question: "気分はどうですか？",
         answers: [
             { name: "いい", emoji: "😊", sentence: "気分はいいです。" },
             { name: "ふつう", emoji: "😐", sentence: "ふつうです。" },
-            { name: "悪い", emoji: "😣", sentence: "気分が悪いです。", next: "q-condition" },
+            { name: "悪い", emoji: "😣", sentence: "気分が悪いです。" },
             { name: "疲れた", emoji: "😩", sentence: "疲れました。" }
         ]
     },
     {
-        id: "q-what", label: "どうした？", question: "どうしましたか？",
-        panelSource: "基本",
-        // 症状モードの「痛い」「かゆい」などを選んだら、その中身を聞く
-        nextByPanel: { "base-0-0": "q-itch-where", "base-0-1": "q-pain-where", "base-0-3": "q-temperature", "base-1-1": "q-position" }
+        id: "q-what", emoji: "🤒", label: "どうした？", question: "どうしましたか？",
+        panelSource: "基本"
     },
     {
-        id: "q-pain-where", label: "どこが痛い？", question: "どこが痛いですか？", next: "q-pain-level",
+        id: "q-pain-where", emoji: "🤕", label: "どこが痛い？", question: "どこが痛いですか？",
         answers: [
             { name: "頭", icon: "media/body-head.png", sentence: "頭が痛いです。" },
             { name: "首", sentence: "首が痛いです。" },
@@ -2842,7 +2828,7 @@ const QUESTION_PRESETS = [
         ]
     },
     {
-        id: "q-pain-level", label: "痛さは？", question: "どのくらい痛いですか？",
+        id: "q-pain-level", emoji: "😣", label: "痛さは？", question: "どのくらい痛いですか？",
         answers: [
             { name: "少し", emoji: "🙂", sentence: "少し痛いです。" },
             { name: "まあまあ", emoji: "😐", sentence: "まあまあ痛いです。" },
@@ -2851,7 +2837,7 @@ const QUESTION_PRESETS = [
         ]
     },
     {
-        id: "q-itch-where", label: "どこがかゆい？", question: "どこがかゆいですか？",
+        id: "q-itch-where", emoji: "🖐️", label: "かゆい所は？", question: "どこがかゆいですか？",
         answers: [
             { name: "頭", icon: "media/body-head.png", sentence: "頭がかゆいです。" },
             { name: "顔", sentence: "顔がかゆいです。" },
@@ -2864,7 +2850,7 @@ const QUESTION_PRESETS = [
         ]
     },
     {
-        id: "q-temperature", label: "暑い？寒い？", question: "暑いですか？寒いですか？",
+        id: "q-temperature", emoji: "🌡️", label: "暑い？寒い？", question: "暑いですか？寒いですか？",
         answers: [
             { name: "暑い", icon: "media/symptom-hot.png", sentence: "暑いです。" },
             { name: "寒い", icon: "media/symptom-cold.png", sentence: "寒いです。" },
@@ -2872,7 +2858,7 @@ const QUESTION_PRESETS = [
         ]
     },
     {
-        id: "q-position", label: "体の向きは？", question: "体の向きはどうしますか？",
+        id: "q-position", emoji: "🛏️", label: "体の向きは？", question: "体の向きはどうしますか？",
         answers: [
             { name: "右向き", emoji: "➡️", sentence: "右向きにしてください。" },
             { name: "左向き", emoji: "⬅️", sentence: "左向きにしてください。" },
@@ -2882,14 +2868,42 @@ const QUESTION_PRESETS = [
             { name: "このまま", emoji: "👌", sentence: "このままでいいです。" }
         ]
     },
+    // 気管切開のため吸引の確認は多い
     {
-        id: "q-condition", label: "体調は？", question: "体調はどうですか？",
-        panelSource: "体調",
-        nextByPanel: { "p-head-pain": "q-pain-level", "p-body-pain": "q-pain-where", "p-hand-pain": "q-pain-level", "p-leg-pain": "q-pain-level" }
+        id: "q-suction", emoji: "💨", label: "吸引は？", question: "吸引しますか？",
+        answers: [
+            { name: "してほしい", emoji: "🙆‍♀️", sentence: "吸引してください。" },
+            { name: "すぐに", emoji: "🆘", sentence: "すぐに吸引してください。" },
+            { name: "あとで", emoji: "⏱️", sentence: "あとでお願いします。" },
+            { name: "今はいい", emoji: "👌", sentence: "今は大丈夫です。" }
+        ]
     },
-    { id: "q-care", label: "してほしいこと？", question: "何かしてほしいことはありますか？", panelSource: "ケア" },
     {
-        id: "q-want", label: "何がしたい？", question: "何がしたいですか？",
+        id: "q-yes-no", emoji: "⭕", label: "はい・いいえ", question: "はい・いいえで答えてください",
+        answers: [
+            { name: "はい", emoji: "⭕", sentence: "はい。" },
+            { name: "いいえ", emoji: "❌", sentence: "いいえ。" },
+            { name: "わからない", emoji: "❓", sentence: "わからないです。" },
+            { name: "もう一度", emoji: "🔁", sentence: "もう一度言ってください。" }
+        ]
+    },
+    // 失語症のため、介助者の話が伝わったかを確かめる
+    {
+        id: "q-understand", emoji: "👂", label: "わかった？", question: "わかりましたか？",
+        answers: [
+            { name: "わかった", emoji: "🙆‍♀️", sentence: "わかりました。" },
+            { name: "少しわかった", emoji: "🤏", sentence: "少しわかりました。" },
+            { name: "わからない", emoji: "🙅‍♀️", sentence: "わかりません。" },
+            { name: "もう一度", emoji: "🔁", sentence: "もう一度言ってください。" },
+            { name: "ゆっくり", emoji: "🐢", sentence: "ゆっくり話してください。" },
+            { name: "書いて", emoji: "✍️", sentence: "紙に書いてください。" }
+        ]
+    },
+    // 介助者が話している間に使うので、切り替えても読み上げない（silent）
+    { id: "q-aizuchi", emoji: "😄", label: "相づち", question: "お話に、ひとことで返します", panelSource: QUESTION_PANEL_GROUP_AIZUCHI, silent: true },
+    { id: "q-care", emoji: "🙏", label: "お願いは？", question: "何かしてほしいことはありますか？", panelSource: "ケア" },
+    {
+        id: "q-want", emoji: "✨", label: "何がしたい？", question: "何がしたいですか？",
         answers: [
             { name: "寝たい", emoji: "😴", sentence: "寝たいです。" },
             { name: "体を起こして", emoji: "🛏️", sentence: "体を起こしてください。" },
@@ -2899,11 +2913,16 @@ const QUESTION_PRESETS = [
             { name: "お話したい", emoji: "💬", sentence: "お話ししたいです。" }
         ]
     },
-    { id: "q-pastime", label: "過ごし方は？", question: "どう過ごしたいですか？", panelSource: "過ごし方" },
-    { id: "q-heart", label: "気持ちは？", question: "今の気持ちはどうですか？", panelSource: "気持ち" },
-    { id: "q-family", label: "家族のこと？", question: "家族のことで何かありますか？", panelSource: "家族" },
+    { id: "q-heart", emoji: "💗", label: "気持ちは？", question: "今の気持ちはどうですか？", panelSource: "気持ち" },
+    { id: "q-family", emoji: "👨‍👩‍👧", label: "家族のこと？", question: "家族のことで何かありますか？", panelSource: "家族" },
+    { id: "q-other", emoji: "💬", label: "ほかには？", question: "ほかに何かありますか？", panelSource: QUESTION_PANEL_SOURCE_LAYOUT },
     {
-        id: "q-who", label: "誰に会いたい？", question: "誰に会いたいですか？",
+        id: "q-condition", emoji: "🩺", label: "体調は？", question: "体調はどうですか？",
+        panelSource: "体調"
+    },
+    { id: "q-pastime", emoji: "📺", label: "過ごし方は？", question: "どう過ごしたいですか？", panelSource: "過ごし方" },
+    {
+        id: "q-who", emoji: "👥", label: "誰に会いたい？", question: "誰に会いたいですか？",
         answers: [
             { name: "お母さん", emoji: "👩", sentence: "お母さんに会いたいです。" },
             { name: "お父さん", emoji: "👨", sentence: "お父さんに会いたいです。" },
@@ -2912,8 +2931,7 @@ const QUESTION_PRESETS = [
             { name: "友だち", emoji: "👭", sentence: "友だちに会いたいです。" },
             { name: "先生", emoji: "🩺", sentence: "先生と話したいです。" }
         ]
-    },
-    { id: "q-other", label: "ほかには？", question: "ほかに何かありますか？", panelSource: QUESTION_PANEL_SOURCE_LAYOUT }
+    }
 ];
 
 function loadQuestionCustom() {
@@ -2933,6 +2951,16 @@ function loadQuestionCustom() {
     }
 }
 
+// 質問 id → 答えの key の並び（答えを編集した質問だけ）
+function sanitizeQuestionAnswerLayouts(raw) {
+    const result = {};
+    if (!raw || typeof raw !== "object") return result;
+    Object.entries(raw).forEach(([id, keys]) => {
+        if (Array.isArray(keys)) result[id] = keys.filter(key => typeof key === "string");
+    });
+    return result;
+}
+
 function loadQuestionConfig() {
     const presetIds = QUESTION_PRESETS.map(q => q.id);
     try {
@@ -2947,20 +2975,32 @@ function loadQuestionConfig() {
             hiddenIds,
             speakQuestion: parsed?.speakQuestion !== false,
             order: Array.isArray(parsed?.order) ? parsed.order.filter(id => typeof id === "string") : [],
+            answerLayouts: sanitizeQuestionAnswerLayouts(parsed?.answerLayouts),
+            // 回答パネルの数: gridSize は自動のときの最大（"" ならシンプルモードと同じ）、gridSizes は質問ごとに固定した大きさ
+            gridSize: SIMPLE_GRID_SIZES[parsed?.gridSize] ? parsed.gridSize : "",
+            gridSizes: Object.fromEntries(Object.entries(parsed?.gridSizes && typeof parsed.gridSizes === "object" ? parsed.gridSizes : {})
+                .filter(([, size]) => SIMPLE_GRID_SIZES[size])),
             knownIds: presetIds
         };
     } catch {
-        return { hiddenIds: [...QUESTION_DEFAULT_HIDDEN_IDS], speakQuestion: true, order: [], knownIds: presetIds };
+        return { hiddenIds: [...QUESTION_DEFAULT_HIDDEN_IDS], speakQuestion: true, order: [], answerLayouts: {}, gridSize: "", gridSizes: {}, knownIds: presetIds };
     }
 }
 
 let questionCustom = loadQuestionCustom();
 let questionConfig = loadQuestionConfig();
 
-// 並べ替えた順（order に無い質問は後ろに、元の順で並ぶ）
+// 並べ替えた順。order に無いプリセット（後から増えた質問）は、プリセットの並びで直前にある、出している質問の後ろに入る
+// （出していない質問は並びの端に置かれていることがあるので目印にしない）。order に無い任意の質問は最後
 function getQuestionCatalog(custom = questionCustom, order = questionConfig.order) {
     const catalog = [...QUESTION_PRESETS, ...custom.map(q => ({ ...q, custom: true }))];
     const rank = new Map(order.map((id, i) => [id, i]));
+    const hidden = new Set(questionConfig?.hiddenIds || []);
+    let previous = -1;
+    QUESTION_PRESETS.forEach((q, i) => {
+        if (!rank.has(q.id)) rank.set(q.id, previous + (i + 1) / 1000);
+        else if (!hidden.has(q.id)) previous = rank.get(q.id);
+    });
     return catalog
         .map((q, i) => ({ q, i, r: rank.has(q.id) ? rank.get(q.id) : order.length + i }))
         .sort((a, b) => a.r - b.r || a.i - b.i)
@@ -2971,23 +3011,42 @@ function getQuestionLabel(q) {
     return q.label || q.question;
 }
 
-// 質問の答え。既存パネル（panelSource / panelIds）→ 文字で書いた答え の順。panelId は元のパネル（アイコン・次の質問を引く）
-function getQuestionAnswers(q, customPanels = simpleCustomPanels) {
-    const catalog = getSimpleCatalog(customPanels);
-    let panels = [];
+// 質問の答えに使えるパネル: シンプルモードのパネル ＋ お話モードの相づち
+function getAnswerPanelCatalog(customPanels = simpleCustomPanels) {
+    return [...getSimpleCatalog(customPanels), ...TALK_AIZUCHI.map(a => ({ ...a, group: QUESTION_PANEL_GROUP_AIZUCHI }))];
+}
+
+// 質問の答えの候補。key は、既存パネルならパネルの id、質問に書いた答えなら「質問id#番号」。
+// panelId は元のパネル（アイコンを引く）
+function getQuestionAnswerCandidates(q, customPanels = simpleCustomPanels) {
+    const map = new Map();
+    (Array.isArray(q.answers) ? q.answers : []).forEach((answer, i) => {
+        const key = `${q.id}#${i}`;
+        // 生成アイコンは元の並びの番号で作ってある（scripts/gen_icon_sheets.mjs）ので、並べ替えても元の番号で引く
+        map.set(key, { ...answer, key, iconId: `${q.id}-a${i}` });
+    });
+    getAnswerPanelCatalog(customPanels).forEach(p => map.set(p.id, { ...p, key: p.id, panelId: p.id, iconId: p.id }));
+    return map;
+}
+
+// 答えを編集していない質問の並び: 既存パネル（panelSource / panelIds）→ 質問に書いた答え
+function getDefaultQuestionAnswerKeys(q, { customPanels = simpleCustomPanels, layoutIds = simpleConfig.panelIds } = {}) {
+    let keys = [];
     if (q.panelSource === QUESTION_PANEL_SOURCE_LAYOUT) {
-        panels = customPanels === simpleCustomPanels ? getEnabledSimplePanels() : [];
+        keys = [...layoutIds];
     } else if (q.panelSource) {
-        panels = catalog.filter(p => getSimplePanelGroup(p) === q.panelSource);
+        keys = getAnswerPanelCatalog(customPanels).filter(p => getSimplePanelGroup(p) === q.panelSource).map(p => p.id);
     }
-    if (Array.isArray(q.panelIds) && q.panelIds.length > 0) {
-        const byId = new Map(catalog.map(p => [p.id, p]));
-        panels = panels.concat(q.panelIds.map(id => byId.get(id)).filter(Boolean));
-    }
-    return [
-        ...panels.map(p => ({ ...p, panelId: p.id })),
-        ...(Array.isArray(q.answers) ? q.answers : [])
-    ];
+    if (Array.isArray(q.panelIds)) keys = keys.concat(q.panelIds);
+    (Array.isArray(q.answers) ? q.answers : []).forEach((_, i) => keys.push(`${q.id}#${i}`));
+    return [...new Set(keys)];
+}
+
+// 質問の答え（設定 → 質問 の「答えのパネル」で並べ替えた質問は、その並び）
+function getQuestionAnswers(q, { customPanels = simpleCustomPanels, layoutIds = simpleConfig.panelIds, answerLayouts = questionConfig.answerLayouts } = {}) {
+    const candidates = getQuestionAnswerCandidates(q, customPanels);
+    const keys = answerLayouts?.[q.id] || getDefaultQuestionAnswerKeys(q, { customPanels, layoutIds });
+    return [...new Set(keys)].map(key => candidates.get(key)).filter(Boolean);
 }
 
 // 出す質問（設定 → 質問でチェックしたもの）。質問モードの上のボタンと介助者メニューで共通
@@ -2996,39 +3055,26 @@ function getVisibleQuestions() {
     return getQuestionCatalog().filter(q => !hidden.has(q.id));
 }
 
-// ---------------------------------------------------------
-// 質問モードの会話の記録（この画面を開いている間だけ。↺ で消す）
-// questionAnswered: 質問 id → 答えた名前（同じ質問に何度か答えたら並べる）
-// ---------------------------------------------------------
-let questionAnswered = new Map();
-let lastQuestionAnswer = null; // { questionId, name, sentence, next }
+// 質問モードで直前に答えた文（質問文の右に出す）。別の質問の横に「前の答え」として出すのは数分だけ
+let lastQuestionAnswer = null; // { questionId, sentence, silent, at }
+const QUESTION_LAST_ANSWER_KEEP_MS = 180000;
 
 function recordQuestionAnswer(item) {
     if (!activeQuestion) return;
-    const names = questionAnswered.get(activeQuestion.id) || [];
-    if (!names.includes(item.name)) names.push(item.name);
-    questionAnswered.set(activeQuestion.id, names);
-    const next = item.next || (item.panelId && activeQuestion.nextByPanel?.[item.panelId]) || null;
-    lastQuestionAnswer = { questionId: activeQuestion.id, name: item.name, sentence: buildSimpleSentence(item), next };
+    lastQuestionAnswer = { questionId: activeQuestion.id, sentence: buildSimpleSentence(item), silent: Boolean(activeQuestion.silent), at: Date.now() };
 }
 
-function clearQuestionConversation() {
-    questionAnswered = new Map();
-    lastQuestionAnswer = null;
+// 今の質問の横に出す答え（null なら出さない）。相づちは次の質問に持ち越さない
+function getShownQuestionAnswer() {
+    if (!activeQuestion || !lastQuestionAnswer) return null;
+    const isCurrent = lastQuestionAnswer.questionId === activeQuestion.id;
+    if (!isCurrent && (lastQuestionAnswer.silent || Date.now() - lastQuestionAnswer.at > QUESTION_LAST_ANSWER_KEEP_MS)) return null;
+    return { ...lastQuestionAnswer, isCurrent };
 }
 
-// 次に聞く質問: 答えに合わせた質問 → 質問の next → 並びの次（まだ答えていないものを優先）。出していない質問は勧めない
-function getSuggestedNextQuestion() {
-    const visible = getVisibleQuestions();
-    if (visible.length === 0) return null;
-    const byId = new Map(visible.map(q => [q.id, q]));
-    const currentId = activeQuestion?.id;
-    const answerNext = lastQuestionAnswer?.questionId === currentId ? lastQuestionAnswer.next : null;
-    const explicit = [answerNext, activeQuestion?.next].find(id => id && id !== currentId && byId.has(id));
-    if (explicit) return byId.get(explicit);
-    const start = visible.findIndex(q => q.id === currentId);
-    const rotated = [...visible.slice(start + 1), ...visible.slice(0, Math.max(0, start))];
-    return rotated.find(q => !questionAnswered.has(q.id)) ?? rotated[0] ?? null;
+// 質問のアイコン（自作の質問で未設定なら ❓）
+function getQuestionEmoji(q) {
+    return q.emoji || "❓";
 }
 
 // 質問モードで、出す質問の中から回答中の質問を決める（前回の質問 → 先頭の質問）。出す質問が無ければ空の画面
@@ -3063,6 +3109,7 @@ function selectQuestionFromBar(questionId) {
     setTimeout(() => startQuestion(questionId), 0);
 }
 
+// 質問のボタンは会話で並びも中身も変わらない（介助者が場所で覚えられるよう固定。押した質問だけ色が変わる）
 function renderQuestionModeBar() {
     if (!questionModeBar) return;
     questionModeBar.innerHTML = "";
@@ -3071,65 +3118,21 @@ function renderQuestionModeBar() {
         return;
     }
     questionModeBar.style.display = "";
-    const visible = getVisibleQuestions();
-    if (visible.length === 0) return;
-
-    // 介助者が押し続けるだけで会話が進むよう、次の質問を先頭に大きく出す（その下に ↺ 最初から）
-    const side = document.createElement("div");
-    side.className = "question-mode-side";
-    questionModeBar.appendChild(side);
-    const next = getSuggestedNextQuestion();
-    if (next) {
-        const nextBtn = document.createElement("button");
-        nextBtn.type = "button";
-        nextBtn.className = "question-mode-next";
-        nextBtn.title = `次の質問: ${next.question}`;
-        const head = document.createElement("span");
-        head.className = "question-mode-next-head";
-        head.textContent = "次の質問 ▶";
-        const label = document.createElement("span");
-        label.textContent = getQuestionLabel(next);
-        nextBtn.append(head, label);
-        nextBtn.addEventListener("click", () => selectQuestionFromBar(next.id));
-        side.appendChild(nextBtn);
-    }
-
-    const list = document.createElement("div");
-    list.className = "question-mode-list";
-    visible.forEach((q) => {
+    getVisibleQuestions().forEach((q) => {
         const btn = document.createElement("button");
         btn.type = "button";
-        const answered = questionAnswered.get(q.id);
-        btn.className = "question-mode-btn"
-            + (activeQuestion?.id === q.id ? " active" : "")
-            + (answered ? " is-answered" : "")
-            + (next?.id === q.id ? " is-next" : "");
-        btn.textContent = getQuestionLabel(q);
-        if (answered) {
-            const mark = document.createElement("span");
-            mark.className = "question-mode-answer";
-            const joined = answered.join("・");
-            mark.textContent = `✓ ${joined.length > QUESTION_ANSWER_MARK_MAX ? `${joined.slice(0, QUESTION_ANSWER_MARK_MAX)}…` : joined}`;
-            btn.appendChild(mark);
-        }
-        btn.title = activeQuestion?.id === q.id ? `${q.question}（押すともう一度読み上げ）` : q.question;
+        btn.className = "question-mode-btn" + (activeQuestion?.id === q.id ? " active" : "");
+        const icon = document.createElement("span");
+        icon.className = "question-mode-icon";
+        icon.textContent = getQuestionEmoji(q);
+        const label = document.createElement("span");
+        label.className = "question-mode-label";
+        label.textContent = getQuestionLabel(q);
+        btn.append(icon, label);
+        btn.title = activeQuestion?.id === q.id && !q.silent ? `${q.question}（押すともう一度読み上げ）` : q.question;
         btn.addEventListener("click", () => selectQuestionFromBar(q.id));
-        list.appendChild(btn);
+        questionModeBar.appendChild(btn);
     });
-    questionModeBar.appendChild(list);
-
-    if (questionAnswered.size > 0) {
-        const reset = document.createElement("button");
-        reset.type = "button";
-        reset.className = "question-mode-reset";
-        reset.textContent = "↺ 最初から";
-        reset.title = "答えの記録を消して、最初の質問から聞き直す";
-        reset.addEventListener("click", () => {
-            clearQuestionConversation();
-            selectQuestionFromBar(visible[0].id);
-        });
-        side.appendChild(reset);
-    }
 }
 
 function startQuestion(questionId, { speak: shouldSpeak = true } = {}) {
@@ -3153,7 +3156,8 @@ function startQuestion(questionId, { speak: shouldSpeak = true } = {}) {
     // 回答 id は質問ごとに振り直す（パネルの元の id は panelId に残る）
     activeQuestion = {
         ...question,
-        answers: getQuestionAnswers(question).map((answer, i) => ({ ...answer, id: `${question.id}-a${i}` }))
+        // 画面の id は並び順の番号。生成アイコンの id（${質問}-a${元の番号}）と重ならないよう別の形にする
+        answers: getQuestionAnswers(question).map((answer, i) => ({ ...answer, id: `${question.id}-ans${i}` }))
     };
     activeQuestionStartedAt = Date.now();
     isSimplePaused = false;
@@ -3167,7 +3171,7 @@ function startQuestion(questionId, { speak: shouldSpeak = true } = {}) {
     centerPointerOnSimpleGrid();
     renderQuestionButtons();
 
-    if (shouldSpeak && questionConfig.speakQuestion) void speak(question.question);
+    if (shouldSpeak && questionConfig.speakQuestion && !question.silent) void speak(question.question);
 }
 
 function endQuestion() {
@@ -3204,7 +3208,7 @@ function renderQuestionButtons() {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "question-btn" + (activeQuestion?.id === q.id ? " active" : "");
-        btn.textContent = getQuestionLabel(q);
+        btn.textContent = `${getQuestionEmoji(q)} ${getQuestionLabel(q)}`;
         btn.title = q.question;
         btn.addEventListener("click", () => {
             if (activeQuestion?.id === q.id && !isQuestionMode()) {
@@ -3323,7 +3327,7 @@ function removeLayoutPanel(id) {
 function createLayoutThumb(item, className = "layout-thumb") {
     const thumb = document.createElement("div");
     thumb.className = className;
-    const src = item.image || getGeneratedIcon(item.id, item.icon) || item.icon;
+    const src = item.image || getGeneratedIcon(item.iconId || item.id, item.icon) || item.icon;
     if (src) {
         const img = document.createElement("img");
         img.src = src;
@@ -4124,8 +4128,6 @@ async function generateTalkSetFromInterview() {
         const isSettingsStillOpen = settingsModal.classList.contains("active");
         if (isSettingsStillOpen) setActiveTalkSet(id);
         else talkInterviewDraft = [];
-        // 新しい文の音声を裏で作っておく（Gemini TTS は遅く回数制限があるので自動では作らない）
-        if (isSettingsStillOpen && getTtsProvider() !== "gemini") void prefetchAllAudio({ quiet: true });
         talkEditorFilter = "";
         renderTalkSetList();
         renderTalkInterview();
@@ -4171,15 +4173,29 @@ let questionHiddenDraft = new Set();
 let questionCustomDraft = [];
 let questionOrderDraft = [];  // 並び順（質問 id。画面の上のボタン・介助者メニューの順）
 let questionPanelPickDraft = []; // 追加する質問の答えにする既存パネル（選んだ順）
+let questionAnswerLayoutsDraft = {}; // 答えを編集した質問の答えの並び（質問 id → key）
+let questionAnswerEditId = null;     // 「答えのパネル」で編集中の質問
+let questionAnswerSelectedKey = null;
+let questionAnswerPaletteFilter = SIMPLE_FILTER_ALL;
+let questionGridSizesDraft = {}; // 質問ごとに固定した回答パネルの数（質問 id → "3x3" など）
+const QUESTION_ANSWER_GROUP_OWN = "この質問";
 
 function openQuestionEditor() {
     questionHiddenDraft = new Set(questionConfig.hiddenIds);
     questionCustomDraft = questionCustom.map(q => ({ ...q, answers: q.answers.map(a => ({ ...a })), panelIds: [...q.panelIds] }));
     questionOrderDraft = getQuestionCatalog(questionCustomDraft).map(q => q.id);
     questionPanelPickDraft = [];
+    questionAnswerLayoutsDraft = Object.fromEntries(Object.entries(questionConfig.answerLayouts).map(([id, keys]) => [id, [...keys]]));
+    questionGridSizesDraft = { ...questionConfig.gridSizes };
+    if (questionGridSizeSelect) questionGridSizeSelect.value = questionConfig.gridSize;
+    // 質問モードで出している質問の答えから編集を始める
+    questionAnswerEditId = activeQuestion?.id ?? null;
+    questionAnswerSelectedKey = null;
+    questionAnswerPaletteFilter = SIMPLE_FILTER_ALL;
     if (questionSpeakInput) questionSpeakInput.checked = questionConfig.speakQuestion;
     if (questionCustomTextInput) questionCustomTextInput.value = "";
     if (questionCustomLabelInput) questionCustomLabelInput.value = "";
+    if (questionCustomEmojiInput) questionCustomEmojiInput.value = "";
     if (questionCustomAnswersInput) questionCustomAnswersInput.value = "";
     renderQuestionEditor();
     renderQuestionPanelPicker();
@@ -4187,9 +4203,28 @@ function openQuestionEditor() {
 
 // 一覧に出す答えの説明（パネルはシンプルモードの編集中の任意パネルも含める）
 function describeQuestionAnswers(q) {
-    if (q.panelSource === QUESTION_PANEL_SOURCE_LAYOUT) return "🧩 シンプルモードの画面に並べたパネル";
-    const names = getQuestionAnswers(q, simpleCustomDraft).map(a => `${a.emoji ? a.emoji + " " : ""}${a.name}`).join(" ／ ");
+    const edited = Boolean(questionAnswerLayoutsDraft[q.id]);
+    if (!edited && q.panelSource === QUESTION_PANEL_SOURCE_LAYOUT) return "🧩 シンプルモードの画面に並べたパネル";
+    const names = getDraftQuestionAnswers(q).map(a => `${a.emoji ? a.emoji + " " : ""}${a.name}`).join(" ／ ");
+    if (edited) return `✏️ ${names || "（答えなし）"}`;
     return q.panelSource ? `🧩 パネル「${q.panelSource}」: ${names}` : names;
+}
+
+// 編集中の内容（シンプルモードの任意パネル・画面配置も編集中のもの）での答え
+function getDraftQuestionAnswerOptions() {
+    return { customPanels: simpleCustomDraft, layoutIds: simpleLayoutDraft, answerLayouts: questionAnswerLayoutsDraft };
+}
+
+function getDraftQuestionAnswers(q) {
+    return getQuestionAnswers(q, getDraftQuestionAnswerOptions());
+}
+
+// 並び・出す質問を既定に戻す（作った質問は残して、おすすめの並びの後ろに置く）
+function resetQuestionOrder() {
+    questionOrderDraft = getQuestionCatalog(questionCustomDraft, []).map(q => q.id);
+    const customIds = new Set(questionCustomDraft.map(q => q.id));
+    questionHiddenDraft = new Set([...QUESTION_DEFAULT_HIDDEN_IDS, ...[...questionHiddenDraft].filter(id => customIds.has(id))]);
+    renderQuestionEditor();
 }
 
 function moveQuestionInDraft(id, step) {
@@ -4225,7 +4260,7 @@ function renderQuestionEditor() {
         const text = document.createElement("div");
         text.className = "simple-editor-text";
         const title = document.createElement("strong");
-        title.textContent = q.question;
+        title.textContent = `${getQuestionEmoji(q)} ${q.question}`;
         if (q.custom) {
             const badge = document.createElement("span");
             badge.className = "simple-editor-group";
@@ -4249,6 +4284,12 @@ function renderQuestionEditor() {
             btn.addEventListener("click", onClick);
             actions.appendChild(btn);
         };
+        addAction("✏️ 答え", "答えのパネルをドラッグで編集", false, () => {
+            questionAnswerEditId = q.id;
+            questionAnswerSelectedKey = null;
+            renderQuestionAnswerEditor();
+            questionAnswerPagesContainer?.closest(".settings-section")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
         addAction("▲", "前へ（先に聞く）", index === 0, () => moveQuestionInDraft(q.id, -1));
         addAction("▼", "後ろへ", index === ordered.length - 1, () => moveQuestionInDraft(q.id, 1));
         if (q.custom) {
@@ -4256,6 +4297,7 @@ function renderQuestionEditor() {
                 questionCustomDraft = questionCustomDraft.filter(c => c.id !== q.id);
                 questionOrderDraft = questionOrderDraft.filter(id => id !== q.id);
                 questionHiddenDraft.delete(q.id);
+                delete questionAnswerLayoutsDraft[q.id];
                 renderQuestionEditor();
             });
         }
@@ -4263,6 +4305,274 @@ function renderQuestionEditor() {
 
         questionEditorList.appendChild(row);
     });
+    renderQuestionAnswerEditor();
+}
+
+// ---------------------------------------------------------
+// 設定画面: 質問の答えのパネル（シンプルモードの画面配置と同じく、ドラッグで並べ替え・追加・外す）
+// ---------------------------------------------------------
+function getAnswerEditQuestion() {
+    const catalog = getQuestionCatalog(questionCustomDraft, questionOrderDraft);
+    return catalog.find(q => q.id === questionAnswerEditId) ?? catalog[0] ?? null;
+}
+
+function getDraftAnswerKeys(q) {
+    const candidates = getQuestionAnswerCandidates(q, simpleCustomDraft);
+    const keys = questionAnswerLayoutsDraft[q.id]
+        || getDefaultQuestionAnswerKeys(q, { customPanels: simpleCustomDraft, layoutIds: simpleLayoutDraft });
+    return [...new Set(keys)].filter(key => candidates.has(key));
+}
+
+// key を insertIndex の位置へ移す（未配置なら追加）。insertIndex は動かす前の並びでの位置
+function moveQuestionAnswer(key, insertIndex) {
+    const q = getAnswerEditQuestion();
+    if (!q || !getQuestionAnswerCandidates(q, simpleCustomDraft).has(key)) return;
+    const keys = getDraftAnswerKeys(q);
+    let target = clamp(insertIndex, 0, keys.length);
+    const from = keys.indexOf(key);
+    if (from !== -1) {
+        // 同じ場所に落としただけなら何もしない（選択だけ移す）
+        if (target === from || target === from + 1) {
+            questionAnswerSelectedKey = key;
+            renderQuestionAnswerEditor();
+            return;
+        }
+        keys.splice(from, 1);
+        if (from < target) target -= 1;
+    }
+    keys.splice(target, 0, key);
+    questionAnswerLayoutsDraft[q.id] = keys;
+    questionAnswerSelectedKey = key;
+    renderQuestionEditor();
+}
+
+function removeQuestionAnswer(key) {
+    const q = getAnswerEditQuestion();
+    // 答えに入っていない候補を候補の一覧へ落としたときなどは何もしない
+    if (!q || !getDraftAnswerKeys(q).includes(key)) return;
+    questionAnswerLayoutsDraft[q.id] = getDraftAnswerKeys(q).filter(k => k !== key);
+    if (questionAnswerSelectedKey === key) questionAnswerSelectedKey = null;
+    renderQuestionEditor();
+}
+
+function resetQuestionAnswers() {
+    const q = getAnswerEditQuestion();
+    if (!q) return;
+    delete questionAnswerLayoutsDraft[q.id];
+    questionAnswerSelectedKey = null;
+    renderQuestionEditor();
+}
+
+function clearQuestionAnswers() {
+    const q = getAnswerEditQuestion();
+    if (!q) return;
+    questionAnswerLayoutsDraft[q.id] = [];
+    questionAnswerSelectedKey = null;
+    renderQuestionEditor();
+}
+
+function getQuestionAnswerGroup(item) {
+    return item.panelId ? getSimplePanelGroup(item) : QUESTION_ANSWER_GROUP_OWN;
+}
+
+function renderQuestionAnswerEditor() {
+    if (!questionAnswerPagesContainer) return;
+    const q = getAnswerEditQuestion();
+    questionAnswerEditId = q?.id ?? null;
+
+    if (questionAnswerSelect) {
+        questionAnswerSelect.innerHTML = "";
+        getQuestionCatalog(questionCustomDraft, questionOrderDraft).forEach((item) => {
+            const edited = questionAnswerLayoutsDraft[item.id] ? " ✏️" : "";
+            questionAnswerSelect.add(new Option(`${getQuestionEmoji(item)} ${getQuestionLabel(item)}${edited}`, item.id));
+        });
+        if (q) questionAnswerSelect.value = q.id;
+    }
+    questionAnswerPagesContainer.innerHTML = "";
+    if (!q) return;
+
+    const candidates = getQuestionAnswerCandidates(q, simpleCustomDraft);
+    const keys = getDraftAnswerKeys(q);
+    if (!keys.includes(questionAnswerSelectedKey)) questionAnswerSelectedKey = null;
+    const { cols, rows } = getQuestionGridSize(q.id, keys.length, {
+        gridSize: questionGridSizeSelect?.value ?? questionConfig.gridSize,
+        gridSizes: questionGridSizesDraft,
+        simpleGridSize: simpleGridSizeSelect?.value || simpleConfig.gridSize
+    });
+    if (questionAnswerGridSelect) questionAnswerGridSelect.value = questionGridSizesDraft[q.id] || "";
+    const pageSize = cols * rows;
+    const pageCount = Math.max(1, Math.ceil(keys.length / pageSize));
+    if (questionAnswerSummary) {
+        questionAnswerSummary.textContent = `${keys.length} 枚 ・ ${cols}×${rows} ・ ${pageCount} ページ${questionAnswerLayoutsDraft[q.id] ? " ・ 編集済み" : ""}`;
+    }
+
+    const aspect = `${window.innerWidth} / ${Math.round(window.innerHeight * 0.7)}`;
+    for (let page = 0; page < pageCount; page++) {
+        const pageEl = document.createElement("div");
+        pageEl.className = "layout-page";
+        const label = document.createElement("div");
+        label.className = "layout-page-label";
+        label.textContent = `${page + 1}ページ目`;
+        pageEl.appendChild(label);
+
+        const grid = document.createElement("div");
+        grid.className = "layout-grid";
+        grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
+        grid.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
+        grid.style.aspectRatio = aspect;
+        for (let slot = 0; slot < pageSize; slot++) {
+            const index = page * pageSize + slot;
+            const key = keys[index];
+            const item = key ? candidates.get(key) : null;
+            if (!item) {
+                const empty = document.createElement("div");
+                empty.className = "layout-tile is-empty";
+                bindLayoutDrop(empty, dragKey => moveQuestionAnswer(dragKey, keys.length));
+                grid.appendChild(empty);
+                continue;
+            }
+            const tile = document.createElement("div");
+            tile.className = "layout-tile" + (key === questionAnswerSelectedKey ? " selected" : "");
+            tile.title = `${item.name}（ドラッグで移動・左半分なら前／右半分なら後ろ。クリックで選択）`;
+            tile.appendChild(createLayoutThumb(item));
+            const name = document.createElement("div");
+            name.className = "layout-tile-name";
+            name.textContent = item.name;
+            tile.appendChild(name);
+            const remove = document.createElement("button");
+            remove.type = "button";
+            remove.className = "layout-tile-remove";
+            remove.title = "答えから外す";
+            remove.textContent = "✕";
+            remove.addEventListener("click", (e) => {
+                e.stopPropagation();
+                removeQuestionAnswer(key);
+            });
+            tile.appendChild(remove);
+            tile.addEventListener("click", () => {
+                questionAnswerSelectedKey = questionAnswerSelectedKey === key ? null : key;
+                renderQuestionAnswerEditor();
+            });
+            bindLayoutDrag(tile, key);
+            bindLayoutDrop(tile, (dragKey, after) => moveQuestionAnswer(dragKey, index + (after ? 1 : 0)), { sided: true });
+            grid.appendChild(tile);
+        }
+        pageEl.appendChild(grid);
+        questionAnswerPagesContainer.appendChild(pageEl);
+    }
+
+    // 枚数に合わせてマスが増えるので、空きマスが無くても最後へ足せる受け口を置く
+    const dropzone = document.createElement("div");
+    dropzone.className = "question-answer-dropzone";
+    dropzone.textContent = "＋ ここへドロップすると最後に追加";
+    bindLayoutDrop(dropzone, dragKey => moveQuestionAnswer(dragKey, keys.length));
+    questionAnswerPagesContainer.appendChild(dropzone);
+
+    renderQuestionAnswerDetail(candidates, keys);
+    renderQuestionAnswerPalette(candidates, keys);
+}
+
+function renderQuestionAnswerDetail(candidates, keys) {
+    if (!questionAnswerDetail) return;
+    questionAnswerDetail.innerHTML = "";
+    const key = questionAnswerSelectedKey;
+    const item = key ? candidates.get(key) : null;
+    const index = key ? keys.indexOf(key) : -1;
+    if (!item || index === -1) {
+        questionAnswerDetail.classList.add("is-empty");
+        questionAnswerDetail.textContent = "タイルをクリックすると、ここで1つずつ動かせます。";
+        return;
+    }
+    questionAnswerDetail.classList.remove("is-empty");
+    questionAnswerDetail.appendChild(createLayoutThumb(item, "simple-editor-thumb"));
+
+    const text = document.createElement("div");
+    text.className = "simple-editor-text";
+    const name = document.createElement("strong");
+    name.textContent = item.name;
+    const badge = document.createElement("span");
+    badge.className = "simple-editor-group";
+    badge.textContent = getQuestionAnswerGroup(item);
+    name.appendChild(badge);
+    const info = document.createElement("small");
+    info.textContent = `${index + 1}番目 ／ 「${buildSimpleSentence(item)}」`;
+    text.append(name, info);
+    questionAnswerDetail.appendChild(text);
+
+    const actions = document.createElement("div");
+    actions.className = "simple-editor-actions";
+    const addAction = (label, title, disabled, handler) => {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ctrl-btn secondary";
+        btn.textContent = label;
+        btn.title = title;
+        btn.disabled = disabled;
+        btn.addEventListener("click", handler);
+        actions.appendChild(btn);
+    };
+    const last = keys.length - 1;
+    addAction("⏮", "先頭へ", index === 0, () => moveQuestionAnswer(key, 0));
+    addAction("◀", "1つ前へ", index === 0, () => moveQuestionAnswer(key, index - 1));
+    addAction("▶", "1つ後ろへ", index === last, () => moveQuestionAnswer(key, index + 2));
+    addAction("⏭", "最後へ", index === last, () => moveQuestionAnswer(key, keys.length));
+    addAction("外す", "答えから外す", false, () => removeQuestionAnswer(key));
+    questionAnswerDetail.appendChild(actions);
+}
+
+// 答えにしていない候補（この質問の答え・シンプルモードのパネル）。ドラッグかクリックで追加
+function renderQuestionAnswerPalette(candidates, keys) {
+    if (!questionAnswerPalette) return;
+    const used = new Set(keys);
+    const unused = Array.from(candidates.values()).filter(item => !used.has(item.key));
+
+    if (questionAnswerFilter) {
+        const groups = [];
+        unused.forEach((item) => {
+            const group = getQuestionAnswerGroup(item);
+            if (!groups.includes(group)) groups.push(group);
+        });
+        if (questionAnswerPaletteFilter !== SIMPLE_FILTER_ALL && !groups.includes(questionAnswerPaletteFilter)) questionAnswerPaletteFilter = SIMPLE_FILTER_ALL;
+        questionAnswerFilter.innerHTML = "";
+        [{ key: SIMPLE_FILTER_ALL, label: "すべて" }, ...groups.map(g => ({ key: g, label: g }))].forEach(({ key, label }) => {
+            const chip = document.createElement("button");
+            chip.type = "button";
+            chip.className = "filter-chip" + (key === questionAnswerPaletteFilter ? " active" : "");
+            const count = key === SIMPLE_FILTER_ALL ? unused.length : unused.filter(i => getQuestionAnswerGroup(i) === key).length;
+            chip.append(label, Object.assign(document.createElement("span"), { className: "filter-chip-count", textContent: String(count) }));
+            chip.addEventListener("click", () => {
+                questionAnswerPaletteFilter = key;
+                renderQuestionAnswerEditor();
+            });
+            questionAnswerFilter.appendChild(chip);
+        });
+    }
+
+    questionAnswerPalette.innerHTML = "";
+    const visible = unused.filter(item => questionAnswerPaletteFilter === SIMPLE_FILTER_ALL || getQuestionAnswerGroup(item) === questionAnswerPaletteFilter);
+    visible.forEach((item) => {
+        const el = document.createElement("div");
+        el.className = "palette-item";
+        el.title = `「${buildSimpleSentence(item)}」（ドラッグで配置・クリックで追加）`;
+        el.appendChild(createLayoutThumb(item));
+        const name = document.createElement("div");
+        name.className = "layout-tile-name";
+        name.textContent = item.name;
+        el.appendChild(name);
+        // 選んでいるタイルの後ろへ（選んでいなければ最後へ）
+        el.addEventListener("click", () => {
+            const at = questionAnswerSelectedKey ? keys.indexOf(questionAnswerSelectedKey) : -1;
+            moveQuestionAnswer(item.key, at >= 0 ? at + 1 : keys.length);
+        });
+        bindLayoutDrag(el, item.key);
+        questionAnswerPalette.appendChild(el);
+    });
+    if (visible.length === 0) {
+        const note = document.createElement("p");
+        note.className = "settings-help";
+        note.textContent = "すべて答えに入っています。";
+        questionAnswerPalette.appendChild(note);
+    }
 }
 
 // 追加する質問の答えを既存のパネルから選ぶ（グループごと。見出しを押すとグループを丸ごと選ぶ／外す）
@@ -4271,7 +4581,7 @@ function renderQuestionPanelPicker() {
     questionPanelPicker.innerHTML = "";
 
     const groups = new Map();
-    getSimpleCatalog(simpleCustomDraft).forEach((p) => {
+    getAnswerPanelCatalog(simpleCustomDraft).forEach((p) => {
         const group = getSimplePanelGroup(p);
         if (!groups.has(group)) groups.set(group, []);
         groups.get(group).push(p);
@@ -4345,24 +4655,55 @@ function addCustomQuestion() {
     questionCustomDraft.push({
         id,
         label: questionCustomLabelInput?.value.trim() || "",
+        emoji: questionCustomEmojiInput?.value.trim() || "",
         question,
         answers,
         panelIds
     });
     questionOrderDraft.push(id);
+    questionAnswerEditId = id;
+    questionAnswerSelectedKey = null;
     questionCustomTextInput.value = "";
     if (questionCustomLabelInput) questionCustomLabelInput.value = "";
+    if (questionCustomEmojiInput) questionCustomEmojiInput.value = "";
     questionCustomAnswersInput.value = "";
     questionPanelPickDraft = [];
     renderQuestionEditor();
     renderQuestionPanelPicker();
 }
 
+// 最初の答えと同じ並びに戻した質問は保存しない（パネルの増減や画面配置の変更に、元どおり追従させる）
+function getQuestionAnswerLayoutsToSave() {
+    const result = {};
+    getQuestionCatalog(questionCustomDraft, questionOrderDraft).forEach((q) => {
+        const keys = questionAnswerLayoutsDraft[q.id];
+        if (!keys) return;
+        const candidates = getQuestionAnswerCandidates(q, simpleCustomDraft);
+        const defaults = getDefaultQuestionAnswerKeys(q, { customPanels: simpleCustomDraft, layoutIds: simpleLayoutDraft }).filter(key => candidates.has(key));
+        if (keys.length === defaults.length && keys.every((key, i) => key === defaults[i])) return;
+        result[q.id] = [...keys];
+    });
+    return result;
+}
+
 function saveQuestionEditor() {
+    // 答えを全部外した質問は、出しても本人が答えられないので保存しない
+    const empty = getQuestionCatalog(questionCustomDraft, questionOrderDraft).filter(q => questionAnswerLayoutsDraft[q.id]?.length === 0);
+    if (empty.length > 0) {
+        alert(`答えがない質問があります: ${empty.map(getQuestionLabel).join("、")}
+設定 → 質問 →「答えのパネル」で答えを追加するか、「最初の答えに戻す」を押してください。`);
+        questionAnswerEditId = empty[0].id;
+        activateSettingsTab("question-tab");
+        return false;
+    }
     const nextConfig = {
         hiddenIds: Array.from(questionHiddenDraft),
         speakQuestion: questionSpeakInput ? questionSpeakInput.checked : questionConfig.speakQuestion,
         order: [...questionOrderDraft],
+        answerLayouts: getQuestionAnswerLayoutsToSave(),
+        gridSize: questionGridSizeSelect ? questionGridSizeSelect.value : questionConfig.gridSize,
+        gridSizes: Object.fromEntries(Object.entries(questionGridSizesDraft)
+            .filter(([id, size]) => SIMPLE_GRID_SIZES[size] && getQuestionCatalog(questionCustomDraft).some(q => q.id === id))),
         knownIds: QUESTION_PRESETS.map(q => q.id)
     };
     try {
@@ -4914,7 +5255,8 @@ function playBlob(blob) {
 }
 
 const audioStatus = document.getElementById("audio-status");
-// 前もって音声にしておく文（すべてのモードの文 + お話モードの全文・呼び名違い・相づち）
+// 前もって音声にしておく文: パネルを選んですぐ話す文（症状・シンプルモード・質問と答え）だけ。
+// お話モードの文は数が多く使わないものも多いので作らない（話したときに作った音声を保存して、次からすぐ話す）
 function collectPrefetchPhrases() {
     const phrases = [];
 
@@ -4930,11 +5272,12 @@ function collectPrefetchPhrases() {
     });
 
     getQuestionCatalog().forEach(q => {
-        phrases.push(q.question);
+        if (!q.silent) phrases.push(q.question);
         getQuestionAnswers(q).forEach(answer => phrases.push(buildSimpleSentence(answer)));
     });
 
-    phrases.push(...collectTalkSentences());
+    // お話モードの相づちタブもパネルを選んですぐ話すので作る
+    TALK_AIZUCHI.forEach(item => phrases.push(item.sentence));
 
     return Array.from(new Set(phrases.map(p => (p || "").trim()).filter(Boolean)));
 }
@@ -6830,6 +7173,15 @@ const questionEditorList = document.getElementById("question-editor-list");
 const questionSpeakInput = document.getElementById("question-speak-input");
 const questionCustomTextInput = document.getElementById("question-custom-text-input");
 const questionCustomLabelInput = document.getElementById("question-custom-label-input");
+const questionCustomEmojiInput = document.getElementById("question-custom-emoji-input");
+const questionAnswerSelect = document.getElementById("question-answer-select");
+const questionGridSizeSelect = radioGroup("question-grid-size");
+const questionAnswerGridSelect = radioGroup("question-answer-grid");
+const questionAnswerSummary = document.getElementById("question-answer-summary");
+const questionAnswerPagesContainer = document.getElementById("question-answer-pages");
+const questionAnswerDetail = document.getElementById("question-answer-detail");
+const questionAnswerFilter = document.getElementById("question-answer-filter");
+const questionAnswerPalette = document.getElementById("question-answer-palette");
 const questionCustomAnswersInput = document.getElementById("question-custom-answers-input");
 const questionPanelPicker = document.getElementById("question-panel-picker");
 const questionPanelPickSummary = document.getElementById("question-panel-pick-summary");
@@ -7258,6 +7610,11 @@ saveSettingsBtn.addEventListener("click", () => {
 function activateSettingsTab(tabId) {
     settingsTabButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tabId));
     settingsTabContents.forEach(content => content.classList.toggle("active", content.id === tabId));
+    // シンプルモードのタブで足した任意パネル・画面配置を、質問の答えの候補に反映する
+    if (tabId === "question-tab") {
+        renderQuestionEditor();
+        renderQuestionPanelPicker();
+    }
 }
 
 settingsTabButtons.forEach(btn => {
@@ -7268,6 +7625,24 @@ if (simpleGridSizeSelect) simpleGridSizeSelect.addEventListener("change", render
 if (simpleCustomAddBtn) simpleCustomAddBtn.addEventListener("click", addSimpleCustomPanel);
 document.getElementById("question-custom-add-btn")?.addEventListener("click", addCustomQuestion);
 questionPanelPickClearBtn?.addEventListener("click", clearQuestionPanelPick);
+questionAnswerSelect?.addEventListener("change", () => {
+    questionAnswerEditId = questionAnswerSelect.value;
+    questionAnswerSelectedKey = null;
+    renderQuestionAnswerEditor();
+});
+document.getElementById("question-answer-reset-btn")?.addEventListener("click", resetQuestionAnswers);
+document.getElementById("question-reset-order-btn")?.addEventListener("click", resetQuestionOrder);
+questionGridSizeSelect?.addEventListener("change", renderQuestionAnswerEditor);
+questionAnswerGridSelect?.addEventListener("change", () => {
+    const q = getAnswerEditQuestion();
+    if (!q) return;
+    if (questionAnswerGridSelect.value) questionGridSizesDraft[q.id] = questionAnswerGridSelect.value;
+    else delete questionGridSizesDraft[q.id];
+    renderQuestionAnswerEditor();
+});
+document.getElementById("question-answer-clear-btn")?.addEventListener("click", clearQuestionAnswers);
+// 候補の一覧へドラッグすると答えから外す
+if (questionAnswerPalette) bindLayoutDrop(questionAnswerPalette, key => removeQuestionAnswer(key));
 if (questionEndBtn) questionEndBtn.addEventListener("click", endQuestion);
 renderQuestionButtons();
 document.getElementById("simple-clear-layout-btn")?.addEventListener("click", clearSimpleLayout);
