@@ -621,14 +621,14 @@
                                     <input type="text" id="gemini-style-input" placeholder="例: 明るく、はきはきと読み上げてください">
                                     <button id="gemini-style-reset-btn" class="ctrl-btn secondary" type="button">既定に戻す</button>
                                 </div>
-                                <p class="settings-help">空欄なら口調指示なし。変更後は「音声データを作成」で作り直してください。</p>
+                                <p class="settings-help">空欄なら口調指示なし。作成済みの文は作り直さないので、変えた声にそろえるときは「音声を消去」してから「音声データを作成」を押してください。</p>
                             </section>
 
                             <section class="settings-section">
                                 <h4>前もって作った音声</h4>
                                 <p id="audio-cache-summary" class="audio-cache-summary" aria-live="polite"></p>
                                 <div class="settings-section-head">
-                                    <span class="settings-help">まだ音声にしていない文を前もって作っておくと、遅延なく話せます。保存済みの音声設定で作ります（変えたら先に「保存して閉じる」）。<b id="audio-cache-create-result"></b></span>
+                                    <span class="settings-help">まだ音声にしていない文を前もって作っておくと、遅延なく話せます。このタブで入力した API Key・音声設定を保存して作ります。<b id="audio-cache-create-result"></b></span>
                                     <button id="audio-cache-btn" class="ctrl-btn primary" type="button">🔊 音声データを作成</button>
                                 </div>
                                 <div id="audio-status-voice" class="status-info" style="display:none;" aria-live="polite">
@@ -638,8 +638,14 @@
                                     </div>
                                 </div>
                                 <div class="settings-section-head">
-                                    <span class="settings-help">音声・話者・口調ごとに保存されます。容量が気になるときは消去できます。<b id="audio-cache-clear-result"></b></span>
+                                    <span class="settings-help">音声は文ごとに1つ保存し、どのモデル・話者で作ったものも使います（モデルを変えても作り直さず、無い文だけ作ります）。声をそろえ直すときや容量が気になるときは消去できます。<b id="audio-cache-clear-result"></b></span>
                                     <button id="audio-cache-clear-btn" class="ctrl-btn secondary" type="button">音声を消去</button>
+                                </div>
+                                <div class="settings-section-head">
+                                    <span class="settings-help">保存した音声を1つのファイルに書き出し、ほかの端末で読み込めます（読み込むと、書き出したときの TTSモデル・話者・口調に切り替わります。API Key は入りません）。<b id="audio-cache-transfer-result" aria-live="polite"></b></span>
+                                    <button id="audio-cache-export-btn" class="ctrl-btn secondary" type="button">書き出し</button>
+                                    <button id="audio-cache-import-btn" class="ctrl-btn secondary" type="button">読み込み</button>
+                                    <input type="file" id="audio-cache-import-input" accept=".fdaudio" hidden>
                                 </div>
                             </section>
 
