@@ -26,22 +26,7 @@
         <!-- UI Layer -->
         <div id="ui-layer">
 
-            <div id="mode-prompt" aria-live="polite"></div>
-
-
-            <!-- 3 rows of 4 buttons each -->
-            <div id="hierarchy-panel">
-                <div class="row-label">① 大分類</div>
-                <div id="row1" class="btn-row"></div>
-
-                <div class="row-label">② 中分類</div>
-                <div id="row2" class="btn-row"></div>
-
-                <div class="row-label">③ 決定</div>
-                <div id="row3" class="btn-row btn-row--confirm"></div>
-            </div>
-
-            <!-- Simple mode: panel grid (select to speak) -->
+            <!-- パネルの画面（質問への回答・お話）。パネルを選ぶと話す -->
             <div id="simple-panel">
                 <!-- 質問モード: 介助者がマウスで質問を切り替えるボタン（ポインタの移動範囲・滞留の対象外） -->
                 <div id="question-mode-bar" style="display:none;"></div>
@@ -129,9 +114,8 @@
                         <button class="settings-tab-btn" type="button" data-tab="pointer-tab"><span>🎯</span>ポインタと確定</button>
                         <button class="settings-tab-btn" type="button" data-tab="voice-tab"><span>🔊</span>音声</button>
                         <span class="settings-tab-group">画面ごとの中身</span>
-                        <button class="settings-tab-btn" type="button" data-tab="simple-tab"><span>🔲</span>シンプルモード</button>
-                        <button class="settings-tab-btn" type="button" data-tab="talk-tab"><span>💬</span>お話モード</button>
                         <button class="settings-tab-btn" type="button" data-tab="question-tab"><span>❓</span>質問モード</button>
+                        <button class="settings-tab-btn" type="button" data-tab="talk-tab"><span>💬</span>お話モード</button>
                     </nav>
 
                     <div class="settings-panes">
@@ -149,7 +133,7 @@
                                     </li>
                                     <li><b>使う画面（モード）を選ぶ</b><span>このタブの下で選びます。</span></li>
                                     <li><b>声を選ぶ</b><span>そのままでも OS の声で話します。変えるときは <button class="link-btn" type="button" data-goto-tab="voice-tab">🔊 音声</button></span></li>
-                                    <li><b>パネルの中身を本人に合わせる</b><span><button class="link-btn" type="button" data-goto-tab="simple-tab">🔲 シンプルモード</button> <button class="link-btn" type="button" data-goto-tab="talk-tab">💬 お話モード</button> <button class="link-btn" type="button" data-goto-tab="question-tab">❓ 質問モード</button></span></li>
+                                    <li><b>パネルの中身を本人に合わせる</b><span><button class="link-btn" type="button" data-goto-tab="question-tab">❓ 質問モード</button> <button class="link-btn" type="button" data-goto-tab="talk-tab">💬 お話モード</button></span></li>
                                 </ol>
                             </section>
 
@@ -158,28 +142,16 @@
                                 <p class="settings-help">「保存して閉じる」で切り替わります。</p>
                                 <div class="choice-cards">
                                     <label class="choice-card">
-                                        <input type="radio" name="app-mode" value="symptom">
-                                        <span class="choice-card-icon">🩺</span>
-                                        <span class="choice-card-title">症状モード</span>
-                                        <span class="choice-card-desc">分類 → 内容の2段階で選ぶ。上下の首振りで段階を移動。</span>
-                                    </label>
-                                    <label class="choice-card">
-                                        <input type="radio" name="app-mode" value="simple">
-                                        <span class="choice-card-icon">🔲</span>
-                                        <span class="choice-card-title">シンプルモード</span>
-                                        <span class="choice-card-desc">パネルを選ぶだけで発話。止まる（滞留）か口を開けて確定。</span>
+                                        <input type="radio" name="app-mode" value="question">
+                                        <span class="choice-card-icon">❓</span>
+                                        <span class="choice-card-title">質問モード</span>
+                                        <span class="choice-card-desc">上に並んだ質問を介助者がマウスで選び、本人が回答パネルで答える。答えても質問モードのまま。</span>
                                     </label>
                                     <label class="choice-card">
                                         <input type="radio" name="app-mode" value="talk">
                                         <span class="choice-card-icon">💬</span>
                                         <span class="choice-card-title">お話モード</span>
                                         <span class="choice-card-desc">話題 → 内容…と2〜4回選んで会話の文を話す。相づち・よく話す文も1回で。</span>
-                                    </label>
-                                    <label class="choice-card">
-                                        <input type="radio" name="app-mode" value="question">
-                                        <span class="choice-card-icon">❓</span>
-                                        <span class="choice-card-title">質問モード</span>
-                                        <span class="choice-card-desc">上に並んだ質問を介助者がマウスで選び、本人が回答パネルで答える。答えても質問モードのまま。</span>
                                     </label>
                                 </div>
                             </section>
@@ -228,7 +200,23 @@
                                     <label><input type="radio" name="dwell-time" value="2500"><span>2.5秒</span></label>
                                     <label><input type="radio" name="dwell-time" value="3000"><span>3.0秒</span></label>
                                 </div>
-                                <p class="settings-help">パネル上でポインタを止めると円が埋まり、満タンで発話（シンプル・お話・質問モード）。口を開けても確定できます。OFF なら口を開けたときだけ確定。</p>
+                                <p class="settings-help">パネル上でポインタを止めると円が埋まり、満タンで発話。口を開けても確定できます。OFF なら口を開けたときだけ確定。</p>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4>休憩・確定音</h4>
+                                <div class="toggle-list">
+                                    <label class="toggle-row">
+                                        <input type="checkbox" id="simple-show-rest-input">
+                                        <span class="toggle-switch" aria-hidden="true"></span>
+                                        <span>休憩パネルを表示<small>休憩中は「再開」以外を確定しない</small></span>
+                                    </label>
+                                    <label class="toggle-row">
+                                        <input type="checkbox" id="simple-confirm-sound-input">
+                                        <span class="toggle-switch" aria-hidden="true"></span>
+                                        <span>確定音を鳴らす<small>確定時に短い「ピポッ」</small></span>
+                                    </label>
+                                </div>
                             </section>
 
                             <section class="settings-section">
@@ -242,7 +230,7 @@
                                     <label class="toggle-row" data-pointer-mode="absolute">
                                         <input type="checkbox" id="panel-snap-input">
                                         <span class="toggle-switch" aria-hidden="true"></span>
-                                        <span>パネル中央へ吸着<small>正面固定・シンプルモードのとき。パネルに入るとラベルの中央へゆっくり寄る</small></span>
+                                        <span>パネル中央へ吸着<small>正面固定のとき。パネルに入るとラベルの中央へゆっくり寄る</small></span>
                                     </label>
                                     <label class="toggle-row" data-pointer-mode="relative">
                                         <input type="checkbox" id="axis-lock-input">
@@ -253,11 +241,6 @@
                                         <input type="checkbox" id="recenter-input">
                                         <span class="toggle-switch" aria-hidden="true"></span>
                                         <span>中央補正<small>相対のとき。顔が正面付近にある間、ポインタのずれを少しずつ戻す</small></span>
-                                    </label>
-                                    <label class="toggle-row">
-                                        <input type="checkbox" id="vertical-move-input">
-                                        <span class="toggle-switch" aria-hidden="true"></span>
-                                        <span>上下移動（症状モード）<small>上下の首振りで「分類」と「内容」の段を行き来する</small></span>
                                     </label>
                                 </div>
                                 <p class="settings-help">選んだ動かし方では働かない項目は薄く表示しています。</p>
@@ -388,97 +371,23 @@
                             </section>
                         </div>
 
-                        <!-- Simple Mode Tab -->
-                        <div id="simple-tab" class="settings-tab-content">
-                            <p class="settings-pane-lead">シンプルモードの画面に並べるパネル。ここで作ったパネルは質問モードの答えにも使えます。</p>
+                        <!-- Talk Tab -->
+                        <div id="talk-tab" class="settings-tab-content">
+                            <p class="settings-pane-lead">お話モードの会話。「話題 → 内容 → …」と2〜4回選び、どの段でも「🔊 これで話す」で話せます。画面上のタブ「👤 相手」で来ている人を選ぶと「お母さん、〜」のように呼びかけが入り、その人向けの話題も出ます。</p>
 
                             <section class="settings-section">
                                 <h4>1画面のパネルの数</h4>
                                 <div class="segmented" role="radiogroup" aria-label="1画面のパネルの数">
                                     <label><input type="radio" name="simple-grid-size" value="3x1"><span>3×1<small>3枚</small></span></label>
+                                    <label><input type="radio" name="simple-grid-size" value="4x1"><span>4×1<small>4枚</small></span></label>
                                     <label><input type="radio" name="simple-grid-size" value="2x2"><span>2×2<small>4枚</small></span></label>
                                     <label><input type="radio" name="simple-grid-size" value="3x2"><span>3×2<small>6枚</small></span></label>
                                     <label><input type="radio" name="simple-grid-size" value="3x3"><span>3×3<small>9枚</small></span></label>
                                     <label><input type="radio" name="simple-grid-size" value="4x3"><span>4×3<small>12枚</small></span></label>
                                     <label><input type="radio" name="simple-grid-size" value="4x4"><span>4×4<small>16枚</small></span></label>
                                 </div>
-                                <p class="settings-help">入りきらない分は、パネルの左右の「前へ / 次へ」でページ送り。寝た姿勢などで首を縦に動かしにくい人は 3×1（横1列）。下の「画面の配置」に、この数で並びます。</p>
+                                <p class="settings-help">入りきらない分は、パネルの左右の「前へ / 次へ」でページ送り。言葉が少ない段は自動で数を減らして大きく並べます。寝た姿勢などで首を縦に動かしにくい人は 3×1・4×1（横1列）。</p>
                             </section>
-
-                            <div class="layout-editor">
-                            <section class="settings-section">
-                                <div class="settings-section-head">
-                                    <h4>画面の配置</h4>
-                                    <span id="simple-panel-summary" class="settings-badge"></span>
-                                </div>
-                                <p class="settings-help">実際の画面と同じ並びです。タイルをドラッグすると、落としたタイルの左半分なら前、右半分なら後ろに割り込みます。タイルをクリックして「🔀 移動」を押し、移動先のタイルをクリックしても動かせます（⏮ ◀ ▶ ⏭ で1つずつ・端へも）。✕ で外せます。</p>
-                                <div id="layout-pages" class="layout-pages"></div>
-                                <div id="layout-detail" class="layout-detail"></div>
-                                <div class="simple-editor-toolbar">
-                                    <button id="simple-reset-panels-btn" class="ctrl-btn secondary" type="button">初期状態に戻す</button>
-                                    <button id="simple-clear-layout-btn" class="ctrl-btn secondary" type="button">すべて外す</button>
-                                </div>
-                            </section>
-
-                            <section class="settings-section layout-palette-section">
-                                <h4>追加できるパネル</h4>
-                                <p class="settings-help">左の画面へドラッグで好きな位置に追加。クリックすると、選んでいるタイルの後ろ（選んでいなければ最後）に追加します。ここへドラッグすると画面から外れます。</p>
-                                <div id="simple-panel-filter" class="filter-chips" aria-label="パネルの分類"></div>
-                                <div id="simple-panel-list" class="layout-palette"></div>
-                            </section>
-                            </div>
-
-                            <section class="settings-section">
-                                <h4>自分でパネルを作る（任意パネル）</h4>
-                                <p class="settings-help">作ったパネルは上の「追加できるパネル」の「任意」に入ります。</p>
-                                <div class="simple-custom-form">
-                                    <label class="field">
-                                        <span>表示名 <em>必須</em></span>
-                                        <input type="text" id="simple-custom-name-input" placeholder="例: テレビ" maxlength="20">
-                                    </label>
-                                    <label class="field field--wide">
-                                        <span>発話文</span>
-                                        <input type="text" id="simple-custom-sentence-input" placeholder="空欄なら表示名を読み上げ" maxlength="80">
-                                    </label>
-                                    <label class="field field--narrow">
-                                        <span>絵文字</span>
-                                        <input type="text" id="simple-custom-emoji-input" placeholder="📺" maxlength="8">
-                                    </label>
-                                    <div class="field field--image">
-                                        <span>画像（絵文字より優先）</span>
-                                        <div class="image-picker">
-                                            <label class="ctrl-btn secondary image-picker-btn">
-                                                画像を選ぶ
-                                                <input type="file" id="simple-custom-image-input" accept="image/*">
-                                            </label>
-                                            <img id="simple-custom-image-preview" alt="" style="display:none;">
-                                        </div>
-                                    </div>
-                                    <button id="simple-custom-add-btn" class="ctrl-btn primary" type="button">＋ 追加</button>
-                                </div>
-                                <p class="settings-help">画像は 256px に縮小してブラウザに保存されます。</p>
-                            </section>
-
-                            <section class="settings-section">
-                                <h4>休憩・確定音</h4>
-                                <div class="toggle-list">
-                                    <label class="toggle-row">
-                                        <input type="checkbox" id="simple-show-rest-input">
-                                        <span class="toggle-switch" aria-hidden="true"></span>
-                                        <span>休憩パネルを表示<small>休憩中は「再開」以外を確定しない</small></span>
-                                    </label>
-                                    <label class="toggle-row">
-                                        <input type="checkbox" id="simple-confirm-sound-input">
-                                        <span class="toggle-switch" aria-hidden="true"></span>
-                                        <span>確定音を鳴らす<small>確定時に短い「ピポッ」</small></span>
-                                    </label>
-                                </div>
-                            </section>
-                        </div>
-
-                        <!-- Talk Tab -->
-                        <div id="talk-tab" class="settings-tab-content">
-                            <p class="settings-pane-lead">お話モードの会話。「話題 → 内容 → …」と2〜4回選び、どの段でも「🔊 これで話す」で話せます。画面上のタブ「👤 相手」で来ている人を選ぶと「お母さん、〜」のように呼びかけが入り、その人向けの話題も出ます。</p>
 
                             <section class="settings-section">
                                 <h4>会話パターン</h4>
@@ -562,20 +471,20 @@
 
                         <!-- Question Tab -->
                         <div id="question-tab" class="settings-tab-content">
-                            <p class="settings-pane-lead">介助者が質問を選び、本人が回答パネルで答えます。ほかのモードでも、下の「今すぐ質問する」から出せます（答えると元の画面へ戻る）。</p>
+                            <p class="settings-pane-lead">介助者が質問を選び、本人が回答パネルで答えます。お話モードでも、下の「今すぐ質問する」から出せます（答えるとお話の画面へ戻る）。</p>
 
                             <section class="settings-section">
                                 <h4>1画面のパネルの数</h4>
                                 <div class="segmented" role="radiogroup" aria-label="1画面のパネルの数">
-                                    <label><input type="radio" name="question-grid-size" value=""><span>シンプル<small>と同じ数</small></span></label>
                                     <label><input type="radio" name="question-grid-size" value="3x1"><span>3×1<small>3枚</small></span></label>
+                                    <label><input type="radio" name="question-grid-size" value="4x1"><span>4×1<small>4枚</small></span></label>
                                     <label><input type="radio" name="question-grid-size" value="2x2"><span>2×2<small>4枚</small></span></label>
                                     <label><input type="radio" name="question-grid-size" value="3x2"><span>3×2<small>6枚</small></span></label>
                                     <label><input type="radio" name="question-grid-size" value="3x3"><span>3×3<small>9枚</small></span></label>
                                     <label><input type="radio" name="question-grid-size" value="4x3"><span>4×3<small>12枚</small></span></label>
                                     <label><input type="radio" name="question-grid-size" value="4x4"><span>4×4<small>16枚</small></span></label>
                                 </div>
-                                <p class="settings-help">入りきらない分は、パネルの左右の「前へ / 次へ」でページ送り。答えが少ない質問は自動で数を減らして大きく並べます（例: 答え4つなら 2×2）。</p>
+                                <p class="settings-help">入りきらない分は、パネルの左右の「前へ / 次へ」でページ送り。答えが少ない質問は自動で数を減らして大きく並べます（例: 答え4つなら 2×2）。寝た姿勢などで首を縦に動かしにくい人は 3×1・4×1（横1列）。</p>
                             </section>
 
                             <section id="question-now-section" class="settings-section">
@@ -587,7 +496,7 @@
 
                             <section class="settings-section">
                                 <h4>出す質問</h4>
-                                <p class="settings-help">チェックした質問が、質問モードの画面の上と「今すぐ質問する」に並びます。▲▼ で会話の順に並べ替えます。🧩 の質問は、シンプルモードのパネルをそのまま答えにします。「✏️ 答え」で下の「答えのパネル」を開きます。</p>
+                                <p class="settings-help">チェックした質問が、質問モードの画面の上と「今すぐ質問する」に並びます。▲▼ で会話の順に並べ替えます。🧩 の質問は、用意してあるパネル（返事・家族・体調…）をそのまま答えにします。「✏️ 答え」で下の「答えのパネル」を開きます。</p>
                                 <div id="question-editor-list"></div>
                                 <div class="simple-editor-toolbar">
                                     <button id="question-reset-order-btn" class="ctrl-btn secondary" type="button">おすすめの並びに戻す</button>
@@ -615,12 +524,42 @@
 
                             <section class="settings-section layout-palette-section">
                                 <h4>追加できる答え</h4>
-                                <p class="settings-help">「この質問」の答えと、シンプルモードのパネル（任意パネルも）、お話モードの相づちを使えます。左へドラッグで好きな位置に追加。クリックすると、選んでいるタイルの後ろ（選んでいなければ最後）に追加します。ここへドラッグすると答えから外れます。</p>
+                                <p class="settings-help">「この質問」の答えと、用意してあるパネル（下で作った任意パネルも）、お話モードの相づちを使えます。左へドラッグで好きな位置に追加。クリックすると、選んでいるタイルの後ろ（選んでいなければ最後）に追加します。ここへドラッグすると答えから外れます。</p>
                                 <div id="question-answer-filter" class="filter-chips" aria-label="答えの分類"></div>
                                 <div id="question-answer-palette" class="layout-palette"></div>
                             </section>
                             </div>
 
+                            <section class="settings-section">
+                                <h4>自分でパネルを作る（任意パネル）</h4>
+                                <p class="settings-help">作ったパネルは、上で編集中の質問の答えの最後に入ります。「追加できる答え」の「任意」から、ほかの質問にも使えます（🗑 で削除）。</p>
+                                <div class="simple-custom-form">
+                                    <label class="field">
+                                        <span>表示名 <em>必須</em></span>
+                                        <input type="text" id="simple-custom-name-input" placeholder="例: テレビ" maxlength="20">
+                                    </label>
+                                    <label class="field field--wide">
+                                        <span>発話文</span>
+                                        <input type="text" id="simple-custom-sentence-input" placeholder="空欄なら表示名を読み上げ" maxlength="80">
+                                    </label>
+                                    <label class="field field--narrow">
+                                        <span>絵文字</span>
+                                        <input type="text" id="simple-custom-emoji-input" placeholder="📺" maxlength="8">
+                                    </label>
+                                    <div class="field field--image">
+                                        <span>画像（絵文字より優先）</span>
+                                        <div class="image-picker">
+                                            <label class="ctrl-btn secondary image-picker-btn">
+                                                画像を選ぶ
+                                                <input type="file" id="simple-custom-image-input" accept="image/*">
+                                            </label>
+                                            <img id="simple-custom-image-preview" alt="" style="display:none;">
+                                        </div>
+                                    </div>
+                                    <button id="simple-custom-add-btn" class="ctrl-btn primary" type="button">＋ 追加</button>
+                                </div>
+                                <p class="settings-help">画像は 256px に縮小してブラウザに保存されます。</p>
+                            </section>
                             <section class="settings-section">
                                 <h4>質問を追加</h4>
                                 <div class="question-custom-form">

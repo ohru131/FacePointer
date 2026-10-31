@@ -21,15 +21,10 @@ const loadingOverlay = document.getElementById("loading");
 const gestureIndicator = document.getElementById("gesture-indicator");
 const telemetryValues = document.getElementById("telemetry-values");
 
-const row1Container = document.getElementById("row1");
-const row2Container = document.getElementById("row2");
-const row3Container = document.getElementById("row3");
 const confirmOverlay = document.getElementById("confirm-overlay");
 const confirmText = document.getElementById("confirm-text");
 const confirmZone = document.getElementById("confirm-zone");
-const confirmZonePreview = document.getElementById("confirm-zone-preview");
 const appRoot = document.getElementById("app");
-const modePrompt = document.getElementById("mode-prompt");
 const simplePanelContainer = document.getElementById("simple-panel");
 const simpleGridContainer = document.getElementById("simple-grid");
 const simpleBarContainer = document.getElementById("simple-bar");
@@ -140,16 +135,11 @@ const YAW_ACCEL_MAX_MULTIPLIER = 3.6;
 const YAW_ACCEL_EXPONENT = 1.7;
 
 // 上下移動（鼻の縦位置 + 顔の上下向き）。横移動と同じゲインスライダーを共有する
-const VERTICAL_MOVE_KEY = "vertical_move_enabled";
 // 縦の可動域は横より狭いので、必要ならこの比率で感度を落とす
 const VERTICAL_NOSE_SCALE_RATIO = 1.0;
 const VERTICAL_PITCH_SCALE_RATIO = 1.0;
 // 顔を下へ向けた時にポインタが下がる向き。逆に感じる場合は -1 にする
 const PITCH_MIRROR_SIGN = 1;
-// 行を跨いだ直後の往復（チャタリング）を防ぐロックアウト
-const VERTICAL_STAGE_SWITCH_LOCKOUT_MS = 420;
-// 上下限（各行のボタン中央）と階層切替ラインの最小間隔
-const VERTICAL_STAGE_TRIGGER_MARGIN_PX = 24;
 const VERTICAL_MIN_TRAVEL_PX = 40;
 
 // 軸ロック: 横/縦どちらかが明らかに優勢な速度のとき、もう片方の移動を止めてふらつきを防ぐ
@@ -177,24 +167,19 @@ const ICON_STYLE_COMIC2 = "comic2";
 
 const JAW_OPEN_THRESHOLD_DEFAULT = 0.10;
 
-const SYMPTOM_STAGE_SYMPTOM = "symptom";
-const SYMPTOM_STAGE_BODY_PART = "body-part";
-const SYMPTOM_IDLE_RESET_MS = 30000;
-
-const SYMPTOM_FLOW_DIRECT = "direct";
-
-// 操作モード: 2段階の症状モード / パネルを選ぶだけのシンプルモード / 会話を選んでいくお話モード
+// 操作モード
+// 質問モード（既定）: 上に並べた質問を介助者がマウスで切り替え、本人が回答パネルで答える。答えても質問モードのまま
+// お話モード: 会話を選んでいく
 const APP_MODE_KEY = "app_mode";
-const APP_MODE_SYMPTOM = "symptom";
-const APP_MODE_SIMPLE = "simple";
 const APP_MODE_TALK = "talk";
-// 質問モード: 上に並べた質問を介助者がマウスで切り替え、本人が回答パネルで答える。答えても質問モードのまま
 const APP_MODE_QUESTION = "question";
-const APP_MODES = [APP_MODE_SYMPTOM, APP_MODE_SIMPLE, APP_MODE_TALK, APP_MODE_QUESTION];
-// 旧「文づくりモード」はお話モードに置き換えた
-const APP_MODE_LEGACY = { compose: APP_MODE_TALK };
+const APP_MODES = [APP_MODE_QUESTION, APP_MODE_TALK];
+// 旧「文づくりモード」はお話モードに、廃止した症状モード・シンプルモードは質問モードに置き換えた
+const APP_MODE_LEGACY = { compose: APP_MODE_TALK, symptom: APP_MODE_QUESTION, simple: APP_MODE_QUESTION };
 const SIMPLE_ROW_ID = "s";
 const SIMPLE_CONFIRM_DISPLAY_MS = 2200;
+// 次へと右上の ⛶ ⚙ ◎ の列とのすき間
+const QUICK_ACTIONS_CLEAR_GAP_PX = 8;
 // 滞留(dwell)選択: 同じパネル上でしばらく動かなければ確定する
 const DWELL_TIME_KEY = "dwell_time_ms";
 const DWELL_TIME_DEFAULT_MS = 1500;
@@ -210,11 +195,9 @@ const DWELL_LOCK_FIRST_HOVER = "*";
 // お話の画面が入れ替わった直後にポインタの下にあるパネルは、外さなくても選べるが、意図せず選ばないよう長めに滞留させる
 const DWELL_CARRYOVER_RATIO = 1.5;
 
-const symptomChoices = [
+// 基本のパネル（id は base-グループ番号-番号。質問の答えから id で引くので並びを変えない）
+const BASE_PANEL_GROUPS = [
     {
-        name: "身体",
-        icon: "media/menu-body.png",
-        flow: SYMPTOM_FLOW_DIRECT,
         options: [
             { name: "かゆい", icon: "media/menu-itchy.png", sentence: "かゆいです。" },
             { name: "痛い", icon: "media/menu-hurt.png", sentence: "痛いです。" },
@@ -223,9 +206,6 @@ const symptomChoices = [
         ]
     },
     {
-        name: "お願い",
-        icon: "media/menu-request.png",
-        flow: SYMPTOM_FLOW_DIRECT,
         options: [
             { name: "吸引", icon: "media/menu-suction.png", sentence: "吸引してください。" },
             { name: "体位かえて", icon: "media/menu-change-position.png", sentence: "体位をかえてください。" },
@@ -234,9 +214,6 @@ const symptomChoices = [
         ]
     },
     {
-        name: "気分転換",
-        icon: "media/menu-refresh.png",
-        flow: SYMPTOM_FLOW_DIRECT,
         options: [
             { name: "お話して", icon: "media/menu-talk.png", sentence: "お話ししてください。" },
             { name: "本", icon: "media/menu-book.png", sentence: "本を読んでください。" },
@@ -245,9 +222,6 @@ const symptomChoices = [
         ]
     },
     {
-        name: "会話",
-        icon: "media/menu-conversation.png",
-        flow: SYMPTOM_FLOW_DIRECT,
         options: [
             { name: "ありがとう", icon: "media/menu-thank-you.png", sentence: "ありがとう。" },
             { name: "続きを話して", icon: "media/menu-continue-talking.png", sentence: "続きを話してください。" },
@@ -327,14 +301,12 @@ let isCalibrating = true;
 let noseNoise = readStoredNumber(NOSE_NOISE_KEY, 0, 0, 0.01);
 let angleNoise = readStoredNumber(ANGLE_NOISE_KEY, 0, 0, 0.05);
 let sideGainRatios = loadSideGainRatios();
-let isVerticalMoveEnabled = localStorage.getItem(VERTICAL_MOVE_KEY) !== "0";
 let isDistanceCompEnabled = localStorage.getItem(DISTANCE_COMP_KEY) !== "0";
 let isRecenterEnabled = localStorage.getItem(RECENTER_KEY) !== "0";
 let pointerMode = localStorage.getItem(POINTER_MODE_KEY) === POINTER_MODE_RELATIVE ? POINTER_MODE_RELATIVE : POINTER_MODE_ABSOLUTE;
 // 絶対方式で振り切ったときの一時的な端（正面からの変位px。null = 振り切っていない）
 let absEdges = { left: null, right: null, up: null, down: null };
-let absStageForY = null;
-// パネル中央吸着（シンプルモード・絶対方式）: パネルに入るとラベル中央へゆっくり寄せ、
+// パネル中央吸着（絶対方式）: パネルに入るとラベル中央へゆっくり寄せ、
 // 着いたら「その顔の向き＝そのパネル中央」になるよう、正面の位置を固定したまま上下左右の縮尺を変える
 const PANEL_SNAP_KEY = "panel_snap_enabled";
 const PANEL_SNAP_SPEED_PX_PER_S = 260;
@@ -360,7 +332,6 @@ let sessionDistanceRef = 0;
 let filteredHeadDistance = null;
 let lastHeadDistanceMs = null;
 let debugDistanceRatio = 1;
-let lastVerticalStageSwitchAt = 0;
 let jawOpenThreshold = readStoredNumber(JAW_OPEN_THRESHOLD_KEY, JAW_OPEN_THRESHOLD_DEFAULT, 0.0, 0.2);
 let noseGain = readStoredNumber(NOSE_GAIN_KEY, NOSE_GAIN_DEFAULT, 0, NOSE_GAIN_MAX);
 let yawGain = readStoredNumber(YAW_GAIN_KEY, YAW_GAIN_DEFAULT, 0, YAW_GAIN_MAX);
@@ -368,7 +339,7 @@ let iconStyle = localStorage.getItem(ICON_STYLE_KEY) || ICON_STYLE_DEFAULT;
 function loadAppMode() {
     const stored = localStorage.getItem(APP_MODE_KEY);
     const mode = APP_MODE_LEGACY[stored] || stored;
-    return APP_MODES.includes(mode) ? mode : APP_MODE_SYMPTOM;
+    return APP_MODES.includes(mode) ? mode : APP_MODE_QUESTION;
 }
 let appMode = loadAppMode();
 let dwellTimeMs = readStoredNumber(DWELL_TIME_KEY, DWELL_TIME_DEFAULT_MS, 0, DWELL_TIME_MAX_MS); // 0 = 滞留確定OFF
@@ -385,13 +356,8 @@ let dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
 let dwellCarryoverKey = "";
 let isDwellConfirmingCarryover = false;
 
-// 介助者が出した質問への回答中（モードに関係なくパネル選択画面になる）
+// 介助者が出した質問への回答中
 let activeQuestion = null;
-
-// パネルを縦横に選ぶ画面（シンプル・お話・質問への回答）かどうか
-function isSimpleMode() {
-    return appMode !== APP_MODE_SYMPTOM || activeQuestion !== null;
-}
 
 function isTalkScreen() {
     return appMode === APP_MODE_TALK && activeQuestion === null;
@@ -411,13 +377,6 @@ function isCalibrationDone() {
     return localStorage.getItem(CALIB_VERSION_KEY) !== null;
 }
 
-// Symptom state
-let symptomStage = SYMPTOM_STAGE_SYMPTOM;
-let selectedSymptom = null;
-let previewSymptomName = null; // ホバー中に下段プレビュー表示している上位項目名
-let symptomLastActivityAt = 0;
-let lastSymptomNoseX = null;
-let lastSymptomNoseY = null;
 let isConfirmInProgress = false;
 let confirmOverlayHideWaiters = [];
 
@@ -437,38 +396,6 @@ function resolveConfirmOverlayHideWaiters() {
     const waiters = confirmOverlayHideWaiters;
     confirmOverlayHideWaiters = [];
     waiters.forEach((resolve) => resolve());
-}
-
-function buildSymptomSentence(detailItem) {
-    if (!selectedSymptom || !detailItem) return "";
-
-    if (detailItem.sentence && detailItem.sentence.trim()) return detailItem.sentence.trim();
-    return `${detailItem.name}です。`;
-}
-
-function resetSymptomModeState(shouldRender = true) {
-    symptomStage = SYMPTOM_STAGE_SYMPTOM;
-    selectedSymptom = null;
-    previewSymptomName = null;
-    symptomLastActivityAt = 0;
-    lastSymptomNoseX = null;
-    lastSymptomNoseY = null;
-    resetPointerMotionHistory();
-    isConfirmInProgress = false;
-    window.clearTimeout(window.symptomResetTimer);
-    window.symptomResetTimer = null;
-    if (shouldRender) {
-        renderAll();
-        // ホーム復帰時はポインタを上段の高さへ戻し、再降下できる状態にする
-        refreshHoverAndPreview();
-        snapPointerToUpperRow();
-    }
-}
-
-// プレビュー行の有無で上段の高さが変わるため、位置合わせ前に描画を確定させる
-function refreshHoverAndPreview() {
-    if (!isVerticalMoveEnabled) return;
-    checkPointerCollision();
 }
 
 function resetPointerMotionHistory() {
@@ -524,30 +451,7 @@ function getDistanceRatio() {
     return getDistanceRatioFor(filteredHeadDistance, distanceRef > 0 ? distanceRef : sessionDistanceRef);
 }
 
-function getSymptomRowPointerBounds() {
-    if (isSimpleMode()) return getSimplePanelPointerBounds();
-
-    // 選択中の階層（未選択なら row1、選択後は row2）にポインタを追従させる
-    const activeContainer = symptomStage === SYMPTOM_STAGE_BODY_PART ? row2Container : row1Container;
-    const buttons = Array.from(activeContainer.querySelectorAll(".h-btn:not(.h-btn--empty):not(.h-btn--static)"));
-    if (buttons.length === 0) return null;
-
-    const centers = buttons.map(btn => {
-        const rect = btn.getBoundingClientRect();
-        return {
-            x: rect.left + rect.width / 2,
-            y: rect.top + rect.height / 2
-        };
-    });
-
-    const minX = Math.min(...centers.map(c => c.x));
-    const maxX = Math.max(...centers.map(c => c.x));
-    const centerX = centers.reduce((sum, c) => sum + c.x, 0) / centers.length;
-    const centerY = centers.reduce((sum, c) => sum + c.y, 0) / centers.length;
-    return { minX, maxX, centerX, centerY };
-}
-
-// シンプルモード: グリッド全体の各パネル中央の範囲でポインタを動かす
+// グリッド全体の各パネル中央の範囲でポインタを動かす
 function getSimplePanelPointerBounds() {
     if (!simplePanelContainer) return null;
 
@@ -564,95 +468,11 @@ function getSimplePanelPointerBounds() {
     return { minX, maxX, minY, maxY, centerX: (minX + maxX) / 2, centerY: (minY + maxY) / 2 };
 }
 
-// 表示中の行の縦位置。パンくず表示・プレビュー表示（h-btn--static）も対象にする
-function getRowGeometry(container) {
-    if (!container || container.style.display === "none") return null;
-
-    const buttons = Array.from(container.querySelectorAll(".h-btn:not(.h-btn--empty)"));
-    if (buttons.length === 0) return null;
-
-    let top = Number.POSITIVE_INFINITY;
-    let bottom = Number.NEGATIVE_INFINITY;
-    let centerSum = 0;
-    let count = 0;
-
-    buttons.forEach((btn) => {
-        const rect = btn.getBoundingClientRect();
-        if (rect.height <= 0) return;
-        top = Math.min(top, rect.top);
-        bottom = Math.max(bottom, rect.bottom);
-        centerSum += rect.top + (rect.height / 2);
-        count += 1;
-    });
-
-    if (count === 0) return null;
-    return { top, bottom, centerY: centerSum / count };
-}
-
-// 上下移動の限界は上段/下段それぞれのボタン中央
+// 上下移動の限界は上端/下端のパネル中央
 function getVerticalPointerBounds() {
-    if (isSimpleMode()) {
-        // シンプルモードは上下移動ONに関係なく縦横に動かす
-        const bounds = getSimplePanelPointerBounds();
-        if (!bounds || bounds.maxY - bounds.minY < VERTICAL_MIN_TRAVEL_PX) return null;
-        return { minY: bounds.minY, maxY: bounds.maxY };
-    }
-    if (!isVerticalMoveEnabled) return null;
-
-    const upper = getRowGeometry(row1Container);
-    const lower = getRowGeometry(row2Container);
-    if (!upper || !lower) return null;
-
-    const minY = Math.min(upper.centerY, lower.centerY);
-    const maxY = Math.max(upper.centerY, lower.centerY);
-    if (maxY - minY < VERTICAL_MIN_TRAVEL_PX) return null;
-
-    // 切替ラインは必ず上下限の内側に置き、到達不能・即時往復を防ぐ
-    const downTriggerY = clamp(lower.top, minY + VERTICAL_STAGE_TRIGGER_MARGIN_PX, maxY);
-    const upTriggerY = clamp(upper.bottom, minY, maxY - VERTICAL_STAGE_TRIGGER_MARGIN_PX);
-    return { minY, maxY, upper, lower, downTriggerY, upTriggerY };
-}
-
-// 行の切替直後は追従補間を挟まずに中央へ乗せ直す（切替ラインの再通過を防ぐ）
-function snapPointerToRowCenter(container) {
-    if (!isVerticalMoveEnabled) return;
-
-    const geometry = getRowGeometry(container);
-    if (!geometry) return;
-
-    targetY = geometry.centerY;
-    pointerY = geometry.centerY;
-    lastVerticalStageSwitchAt = Date.now();
-}
-
-function snapPointerToUpperRow() {
-    snapPointerToRowCenter(row1Container);
-}
-
-function snapPointerToLowerRow() {
-    snapPointerToRowCenter(row2Container);
-}
-
-// 行間を通過中もプレビュー対象を保つため、ポインタXから上段ボタンを決める
-function findRow1ButtonByPointerX() {
-    if (!row1Container) return null;
-
-    const buttons = Array.from(row1Container.querySelectorAll(".h-btn:not(.h-btn--empty)"));
-    if (buttons.length === 0) return null;
-
-    let nearest = null;
-    let bestDistance = Number.POSITIVE_INFINITY;
-    for (const btn of buttons) {
-        const rect = btn.getBoundingClientRect();
-        if (pointerX >= rect.left && pointerX <= rect.right) return btn;
-
-        const distance = Math.abs(pointerX - (rect.left + (rect.width / 2)));
-        if (distance < bestDistance) {
-            bestDistance = distance;
-            nearest = btn;
-        }
-    }
-    return nearest;
+    const bounds = getSimplePanelPointerBounds();
+    if (!bounds || bounds.maxY - bounds.minY < VERTICAL_MIN_TRAVEL_PX) return null;
+    return { minY: bounds.minY, maxY: bounds.maxY };
 }
 
 function findNearestSimplePanel() {
@@ -911,7 +731,7 @@ function updatePanelSnap(nat, ax, ay, timeMs) {
     return { x: nat.x + s.gx, y: nat.y + s.gy };
 }
 
-// シンプルモードの正面の位置（px）。絶対方式で○を向いて正面を登録していれば、その○の画面上の位置（範囲内に収める）。
+// 正面の位置（px）。絶対方式で○を向いて正面を登録していれば、その○の画面上の位置（範囲内に収める）。
 // 感度は画面上の実際の距離で合わせているので、範囲の中央を正面にすると○の位置と中央の差だけ画面全体で向いた場所からずれる。
 // 上下（左右）の範囲は不均等になってよい。それ以外は範囲の中央
 function getSimpleFrontPoint(bounds) {
@@ -930,8 +750,8 @@ function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
     const rawX = offset.x * distanceRatio;
     const rawY = offset.y * distanceRatio;
 
-    const simpleFront = isSimpleMode() ? getSimpleFrontPoint(bounds) : null;
-    const centerX = simpleFront ? simpleFront.x : (bounds.minX + bounds.maxX) / 2;
+    const front = getSimpleFrontPoint(bounds);
+    const centerX = front.x;
     const leftRange = centerX - bounds.minX;
     const rightRange = bounds.maxX - centerX;
     const mapX = mapAbsoluteAxis(rawX, leftRange, rightRange, "left", "right");
@@ -941,22 +761,14 @@ function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
     let upRange = 0;
     let downRange = 0;
     if (verticalBounds) {
-        const stage = isSimpleMode() ? "simple" : symptomStage;
-        if (stage !== absStageForY) {
-            absEdges.up = null;
-            absEdges.down = null;
-            absStageForY = stage;
-        }
-        // 症状モードは段ごとに正面の位置を変える（上段: 正面=上段、下段: 正面=下段）。下段で下を向き続けなくてよい
-        let centerY = simpleFront ? simpleFront.y : (verticalBounds.minY + verticalBounds.maxY) / 2;
-        if (!isSimpleMode()) centerY = symptomStage === SYMPTOM_STAGE_BODY_PART ? verticalBounds.maxY : verticalBounds.minY;
+        const centerY = front.y;
         upRange = centerY - verticalBounds.minY;
         downRange = verticalBounds.maxY - centerY;
         const mapY = mapAbsoluteAxis(rawY, upRange, downRange, "up", "down");
         nextY = clamp(centerY + applyPanelWarp(mapY, panelSnap.warpY, upRange, downRange), verticalBounds.minY, verticalBounds.maxY);
         snapAxisY = { m: mapY, center: centerY, neg: upRange, pos: downRange };
     }
-    if (isPanelSnapEnabled && isSimpleMode() && !isConfirmInProgress) {
+    if (isPanelSnapEnabled && !isConfirmInProgress) {
         const snapped = updatePanelSnap(
             { x: nextX, y: nextY },
             { m: mapX, center: centerX, neg: leftRange, pos: rightRange },
@@ -990,7 +802,7 @@ function clearPostureHint() {
 
 // 姿勢がずれると、正面のつもりでも片側の端に張り付いたままになる。長く続いたら取り直しを促す
 function updatePostureHint(rawX, rawY, leftRange, rightRange, upRange, downRange, timeMs) {
-    // 範囲 0 の側（症状モードの段ごとの正面）は設計上いつも端なので数えない
+    // 範囲 0 の側（正面がパネルの端）は設計上いつも端なので数えない
     const pinnedOn = (raw, negRange, posRange) => (posRange > 0 && raw >= posRange * POSTURE_HINT_PINNED_RATIO)
         || (negRange > 0 && -raw >= negRange * POSTURE_HINT_PINNED_RATIO);
     // 範囲の無い軸（上下移動なし）は中央扱い
@@ -1046,12 +858,10 @@ function updateTelemetryPanel(hasFace) {
             : `中央補正ずれpx: ${isRecenterEnabled ? f2(debugRecenterDrift) : "OFF"}`
     ];
 
-    if (isVerticalMoveEnabled) {
-        lines.push(`鼻縦Δ: ${f3(debugDeltaNoseY)}`);
-        lines.push(`上下向きΔ: ${f3(debugDeltaPitch)}`);
-        lines.push(`縦移動px: ${f2(debugDeltaYPx)}`);
-        lines.push(`軸ロック: ${axisLockDominant === "x" ? "横優先" : axisLockDominant === "y" ? "縦優先" : "なし"}`);
-    }
+    lines.push(`鼻縦Δ: ${f3(debugDeltaNoseY)}`);
+    lines.push(`上下向きΔ: ${f3(debugDeltaPitch)}`);
+    lines.push(`縦移動px: ${f2(debugDeltaYPx)}`);
+    lines.push(`軸ロック: ${axisLockDominant === "x" ? "横優先" : axisLockDominant === "y" ? "縦優先" : "なし"}`);
 
     telemetryValues.textContent = lines.join("\n");
 }
@@ -1164,7 +974,7 @@ function updateAxisLockDominant(speedX, speedY) {
 }
 
 function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex, timeMs) {
-    const bounds = getSymptomRowPointerBounds();
+    const bounds = getSimplePanelPointerBounds();
     if (!bounds) return;
 
     const verticalBounds = getVerticalPointerBounds();
@@ -1194,14 +1004,7 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex,
         lastYaw = filteredYaw;
         lastPitch = filteredPitch;
         targetX = clamp(targetX, bounds.minX, bounds.maxX);
-        if (isSimpleMode()) {
-            targetY = clamp(targetY, bounds.minY, bounds.maxY);
-        } else if (isVerticalMoveEnabled) {
-            // 校正直後は正面の行から始める（相対方式は上段、絶対方式は今の段の行）
-            snapPointerToFrontRow();
-        } else {
-            targetY = bounds.centerY;
-        }
+        targetY = clamp(targetY, bounds.minY, bounds.maxY);
         isCalibrating = false;
         speedXEma = 0;
         speedYEma = 0;
@@ -1320,9 +1123,8 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex,
         const deltaY = clamp(axisLockDominant === "x" ? 0 : rawDeltaY, -maxDelta, maxDelta);
         debugDeltaYPx = deltaY;
         targetY = clamp(targetY + deltaY, verticalBounds.minY, verticalBounds.maxY);
-        // 症状モードの縦は行の切替でポインタを行中央へ乗せ直すため、中央補正はシンプルモードだけ
         const halfHeight = (verticalBounds.maxY - verticalBounds.minY) / 2;
-        if (expected && isSimpleMode() && halfHeight > 0 && Math.abs(expected.y) <= halfHeight * RECENTER_ZONE_RATIO) {
+        if (expected && halfHeight > 0 && Math.abs(expected.y) <= halfHeight * RECENTER_ZONE_RATIO) {
             const expectedY = ((verticalBounds.minY + verticalBounds.maxY) / 2) + expected.y;
             targetY = clamp(recenterToward(targetY, expectedY, deltaY), verticalBounds.minY, verticalBounds.maxY);
         }
@@ -1335,105 +1137,6 @@ function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex,
     lastNoseControlY = nextNoseY;
     lastYaw = nextYaw;
     lastPitch = nextPitch;
-}
-
-// 上下移動で行を跨いだら階層を進める/戻す
-function updateVerticalStageTransition() {
-    if (isSimpleMode() || !isVerticalMoveEnabled) return;
-    if (isCalibrating || isConfirmInProgress) return;
-    if (pendingClickTimer) return;
-    if (Date.now() - lastVerticalStageSwitchAt < VERTICAL_STAGE_SWITCH_LOCKOUT_MS) return;
-
-    const verticalBounds = getVerticalPointerBounds();
-    if (!verticalBounds) return;
-
-    if (symptomStage === SYMPTOM_STAGE_SYMPTOM) {
-        if (pointerY < verticalBounds.downTriggerY) return;
-
-        const target = symptomChoices.find((choice) => choice.name === previewSymptomName)
-            || symptomChoices.find((choice) => choice.name === findRow1ButtonByPointerX()?.dataset.name);
-        if (!target) return;
-
-        selectedSymptom = target;
-        symptomStage = SYMPTOM_STAGE_BODY_PART;
-        symptomLastActivityAt = Date.now();
-        renderAll();
-        // 下段が主役サイズへ切り替わるので、新しい下段中央へ乗せ直す
-        snapPointerToLowerRow();
-        return;
-    }
-
-    if (pointerY > verticalBounds.upTriggerY) return;
-
-    // 下段から上へ抜けたら一番上の階層へ戻る
-    symptomStage = SYMPTOM_STAGE_SYMPTOM;
-    selectedSymptom = null;
-    previewSymptomName = null;
-    symptomLastActivityAt = 0;
-    lastSymptomNoseX = null;
-    lastSymptomNoseY = null;
-    renderAll();
-    refreshHoverAndPreview();
-    snapPointerToUpperRow();
-}
-
-async function handleSymptomClick(item) {
-    if (isConfirmInProgress) return;
-
-    if (symptomStage === SYMPTOM_STAGE_SYMPTOM) {
-        selectedSymptom = item;
-        symptomStage = SYMPTOM_STAGE_BODY_PART;
-        symptomLastActivityAt = Date.now();
-        renderAll();
-        // 口開けで進んだ場合もポインタを下段中央へ乗せ、直後の階層往復を防ぐ
-        snapPointerToLowerRow();
-        return;
-    }
-
-    const sentence = buildSymptomSentence(item);
-    if (!sentence) return;
-
-    showConfirm(sentence);
-    isConfirmInProgress = true;
-
-    // 発話は継続させ、ホーム復帰は確認ダイアログの非表示完了に同期
-    void speak(sentence);
-
-    try {
-        await waitForConfirmOverlayToHide();
-    } finally {
-        resetSymptomModeState();
-    }
-}
-
-function checkSymptomIdleReset() {
-    if (symptomStage !== SYMPTOM_STAGE_BODY_PART || !symptomLastActivityAt) {
-        return;
-    }
-
-    if (Date.now() - symptomLastActivityAt >= SYMPTOM_IDLE_RESET_MS) {
-        resetSymptomModeState();
-    }
-}
-
-function trackSymptomActivityByMovement(noseX, noseY) {
-    if (symptomStage !== SYMPTOM_STAGE_BODY_PART) return;
-
-    if (lastSymptomNoseX === null || lastSymptomNoseY === null) {
-        lastSymptomNoseX = noseX;
-        lastSymptomNoseY = noseY;
-        return;
-    }
-
-    const dx = Math.abs(noseX - lastSymptomNoseX);
-    const dy = Math.abs(noseY - lastSymptomNoseY);
-    const activityThreshold = getNoseDeadzone();
-    if (dx >= activityThreshold || dy >= activityThreshold) {
-        symptomLastActivityAt = Date.now();
-    }
-
-    lastSymptomNoseX = noseX;
-    lastSymptomNoseY = noseY;
 }
 
 // =========================================================
@@ -1502,54 +1205,11 @@ function refitAllButtonText() {
 let refitResizeTimer = null;
 window.addEventListener("resize", () => {
     clearTimeout(refitResizeTimer);
-    refitResizeTimer = setTimeout(refitAllButtonText, 120);
+    refitResizeTimer = setTimeout(() => {
+        refitAllButtonText();
+        updateSideNextClearance();
+    }, 120);
 });
-
-function renderRow(container, items, rowNumber, onClick, options = {}) {
-    const { isStatic = false, selectedName = null } = options;
-    container.innerHTML = "";
-    if (!items || items.length === 0) return;
-
-    container.style.gridTemplateColumns = `repeat(${items.length}, 1fr)`;
-
-    items.forEach((item, idx) => {
-        const btn = document.createElement("div");
-        btn.className = "h-btn";
-        if (isStatic) btn.classList.add("h-btn--static");
-        if (selectedName) {
-            btn.classList.add(item.name === selectedName ? "selected" : "dimmed");
-        }
-        btn.dataset.row = String(rowNumber);
-        btn.dataset.idx = String(idx);
-        btn.dataset.name = item.name;
-
-        if (item.icon) {
-            const img = document.createElement("img");
-            const styledIconPath = resolveIconPath(item.icon);
-            img.src = styledIconPath;
-            if (styledIconPath !== item.icon) {
-                img.onerror = () => {
-                    img.onerror = null;
-                    img.src = item.icon;
-                };
-            }
-            img.className = "h-btn-icon";
-            btn.appendChild(img);
-        }
-
-        const label = document.createElement("div");
-        label.className = "h-btn-text";
-        label.innerText = item.name;
-        btn.appendChild(label);
-
-        container.appendChild(btn);
-        fitButtonText(btn, label);
-
-        if (onClick) {
-            btn.addEventListener("click", () => onClick(item));
-        }
-    });
-}
 
 function showConfirm(sentence, displayMs = 3500) {
     if (confirmOverlay.classList.contains("active") && confirmText.textContent === sentence) {
@@ -1575,7 +1235,6 @@ function checkPointerCollision() {
     let currentHoveredBtn = null;
 
     allBtns.forEach(btn => {
-        if (btn.classList.contains("h-btn--static")) return;
         const rect = btn.getBoundingClientRect();
         const inside = pointerX >= rect.left && pointerX <= rect.right && pointerY >= rect.top && pointerY <= rect.bottom;
         if (inside) {
@@ -1604,14 +1263,8 @@ function checkPointerCollision() {
         }
     }
 
-    // 上下移動で行間を通過中も、上段の選択対象とプレビューを保持する
-    // （上端の正面取り直しボタンに乗っている間も同じ。滞留と口のクリックは updateDwellSelection / triggerClick で止める）
-    if (!hoveredBtn && !isSimpleMode() && isVerticalMoveEnabled && symptomStage === SYMPTOM_STAGE_SYMPTOM) {
-        hoveredBtn = findRow1ButtonByPointerX();
-    }
-
-    // シンプルモードはパネル間の隙間も最寄りパネル扱いにし、選択が途切れないようにする
-    if (!hoveredBtn && isSimpleMode()) {
+    // パネル間の隙間も最寄りパネル扱いにし、選択が途切れないようにする
+    if (!hoveredBtn) {
         hoveredBtn = findNearestSimplePanel();
     }
 
@@ -1625,8 +1278,6 @@ function checkPointerCollision() {
     } else {
         lastHoveredButtonKey = "";
     }
-
-    updateSymptomPreview(hoveredBtn);
 
     // ペンディングクリック中にターゲットから外れた場合はキャンセル
     if (pendingClickTimer && pendingClickTargetKey) {
@@ -1645,96 +1296,19 @@ function checkPointerCollision() {
     }
 }
 
-function updateSymptomPreview(hoveredBtn) {
-    // 上位階層選択前（symptom段階）のみ、ホバー中の項目の次階層を下段にプレビュー表示する
-    if (isSimpleMode() || symptomStage !== SYMPTOM_STAGE_SYMPTOM || !row2Container) return;
-
-    const isRow1Hover = hoveredBtn && hoveredBtn.dataset.row === "1";
-    const name = isRow1Hover ? hoveredBtn.dataset.name : null;
-
-    if (name === previewSymptomName) return;
-    previewSymptomName = name;
-
-    const item = name ? symptomChoices.find((c) => c.name === name) : null;
-    const options = item?.options || [];
-
-    if (options.length === 0) {
-        row2Container.innerHTML = "";
-        row2Container.style.display = "none";
-        row2Container.classList.remove("preview");
-        return;
-    }
-
-    row2Container.classList.add("preview");
-    row2Container.style.display = "";
-    renderRow(row2Container, options, 2, null, { isStatic: true });
-}
-
 function renderAll() {
-    if (isSimpleMode()) {
-        renderSimpleMode();
-        return;
-    }
-    if (simpleGridContainer) simpleGridContainer.innerHTML = "";
-    if (simpleBarContainer) simpleBarContainer.innerHTML = "";
-
-    if (appRoot) {
-        appRoot.dataset.mode = "symptom";
-        appRoot.dataset.symptomStage = symptomStage;
-        appRoot.dataset.questionMode = "0";
-    }
-
-    const promptText = symptomStage === SYMPTOM_STAGE_SYMPTOM
-        ? "項目を選んでください"
-        : `${selectedSymptom?.name || "項目"}を選んでください`;
-
-    if (modePrompt) {
-        modePrompt.textContent = promptText;
-    }
-
-    if (confirmZone) {
-        confirmZone.style.display = "none";
-    }
-    if (confirmZonePreview) {
-        confirmZonePreview.textContent = "";
-    }
-
-    previewSymptomName = null;
-
-    // シンプル・お話・質問の画面では3段とも隠しているので、症状モードに戻ったら大分類の段を出し直す
-    if (row1Container) row1Container.style.display = "";
-
-    if (symptomStage === SYMPTOM_STAGE_SYMPTOM) {
-        renderRow(row1Container, symptomChoices, 1, handleSymptomClick);
-        if (row2Container) {
-            row2Container.innerHTML = "";
-            row2Container.style.display = "none";
-            row2Container.classList.remove("preview");
-        }
-    } else {
-        // 上位階層は縮小したパンくずとして上部に表示し続ける
-        renderRow(row1Container, symptomChoices, 1, null, { isStatic: true, selectedName: selectedSymptom?.name });
-        if (row2Container) {
-            row2Container.classList.remove("preview");
-            row2Container.style.display = "";
-            renderRow(row2Container, selectedSymptom?.options || [], 2, handleSymptomClick);
-        }
-    }
-
-    if (row3Container) {
-        row3Container.innerHTML = "";
-        row3Container.style.display = "none";
-    }
+    renderSimpleMode();
 }
 
 // =========================================================
-// Simple mode (パネルを選ぶと即発話。滞留またはジェスチャーで確定)
+// パネルの画面（質問への回答・お話）。パネルを選ぶと即発話。滞留またはジェスチャーで確定
 // =========================================================
 const SIMPLE_CONFIG_KEY = "simple_panel_config_v1";
 const SIMPLE_CUSTOM_PANELS_KEY = "simple_custom_panels_v1";
 const SIMPLE_GRID_SIZES = {
-    // 3×1: 寝た姿勢などで縦に動かしにくい人向け（横1列）
+    // 3×1・4×1: 寝た姿勢などで縦に動かしにくい人向け（横1列）
     "3x1": { cols: 3, rows: 1 },
+    "4x1": { cols: 4, rows: 1 },
     "2x2": { cols: 2, rows: 2 },
     "3x2": { cols: 3, rows: 2 },
     "3x3": { cols: 3, rows: 3 },
@@ -1749,14 +1323,12 @@ const SIMPLE_CTRL_CANCEL = "ctrl-cancel";
 const SIMPLE_CTRL_BACKSPACE = "ctrl-backspace";
 const SIMPLE_CTRL_CLEAR = "ctrl-clear";
 // 文をつなげる: ためられるパネルの上限（長すぎると聞き取りにくい）
-// パネルごとの滞留時間の選択肢(ms)
-const PANEL_DWELL_CHOICES = [800, 1000, 1500, 2000, 3000, 5000];
 // 休憩中に再開するときは誤操作を避けるため長めに滞留させる
 const SIMPLE_RESUME_DWELL_RATIO = 2;
 const SIMPLE_RESUME_DWELL_MIN_MS = 2000;
 const CUSTOM_IMAGE_MAX_PX = 256;
 
-// 既存の症状モード16フレーズに加えて選べるプリセット
+// 基本のパネル（BASE_PANEL_GROUPS）に加えて、質問の答えに使えるプリセット
 // 想定利用者: 40代女性・未婚、両親と姉・兄が1人ずつ。気管切開・胃ろう・カテーテル装着で入院/療養中
 // group は設定画面の一覧で分類表示に使う
 const SIMPLE_EXTRA_PRESETS = [
@@ -1828,7 +1400,7 @@ function loadSimpleCustomPanels() {
 }
 
 function getSimpleBasePanels() {
-    return symptomChoices.flatMap((category, ci) => (category.options || []).map((option, oi) => ({
+    return BASE_PANEL_GROUPS.flatMap((category, ci) => (category.options || []).map((option, oi) => ({
         id: `base-${ci}-${oi}`,
         name: option.name,
         icon: option.icon,
@@ -1843,21 +1415,9 @@ function getSimpleCatalog(customPanels = simpleCustomPanels) {
 function defaultSimpleConfig() {
     return {
         gridSize: SIMPLE_GRID_SIZE_DEFAULT,
-        panelIds: getSimpleBasePanels().map(p => p.id),
         showRest: true,
-        confirmSound: true,
-        dwellOverrides: {}
+        confirmSound: true
     };
-}
-
-function sanitizeDwellOverrides(raw) {
-    const result = {};
-    if (!raw || typeof raw !== "object") return result;
-    Object.entries(raw).forEach(([id, ms]) => {
-        const value = Number(ms);
-        if (Number.isFinite(value) && value > 0) result[id] = clamp(value, 300, DWELL_TIME_MAX_MS);
-    });
-    return result;
 }
 
 function loadSimpleConfig() {
@@ -1867,10 +1427,8 @@ function loadSimpleConfig() {
         if (!parsed || typeof parsed !== "object") return fallback;
         return {
             gridSize: SIMPLE_GRID_SIZES[parsed.gridSize] ? parsed.gridSize : fallback.gridSize,
-            panelIds: Array.isArray(parsed.panelIds) ? parsed.panelIds.filter(id => typeof id === "string") : fallback.panelIds,
             showRest: parsed.showRest !== false,
-            confirmSound: parsed.confirmSound !== false,
-            dwellOverrides: sanitizeDwellOverrides(parsed.dwellOverrides)
+            confirmSound: parsed.confirmSound !== false
         };
     } catch {
         return fallback;
@@ -1886,11 +1444,6 @@ let pageBeforeQuestion = 0;
 
 function getSimpleRowKey(id) {
     return `${SIMPLE_ROW_ID}|${id}`;
-}
-
-function getEnabledSimplePanels() {
-    const byId = new Map(getSimpleCatalog().map(p => [p.id, p]));
-    return simpleConfig.panelIds.map(id => byId.get(id)).filter(Boolean);
 }
 
 function buildSimpleSentence(item) {
@@ -2314,19 +1867,17 @@ function getSimpleLayout() {
         return { cols, rows, panels: activeQuestion.answers };
     } else if (isQuestionMode()) {
         return { ...userSize, panels: [] };
-    } else if (appMode === APP_MODE_TALK) {
-        panels = getTalkPanels();
     } else {
-        return { ...userSize, panels: getEnabledSimplePanels() };
+        panels = getTalkPanels();
     }
 
     const { cols, rows } = getAutoGridSize(panels.length, userSize);
     return { cols, rows, panels: repeatTalkSayPanel(panels, cols * rows) };
 }
 
-// 質問の回答パネルのグリッド。枚数に合わせて自動（質問タブの「1画面のパネルの数」まで。未設定ならシンプルモードと同じ）
-function getQuestionGridSize(n, { gridSize = questionConfig.gridSize, simpleGridSize = simpleConfig.gridSize } = {}) {
-    const max = SIMPLE_GRID_SIZES[gridSize] || SIMPLE_GRID_SIZES[simpleGridSize] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
+// 質問の回答パネルのグリッド。枚数に合わせて自動（質問タブの「1画面のパネルの数」まで）
+function getQuestionGridSize(n, gridSize = questionConfig.gridSize) {
+    const max = SIMPLE_GRID_SIZES[gridSize] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
     return getAutoGridSize(n, max);
 }
 
@@ -2443,22 +1994,13 @@ function appendSimpleControl(control, label, extraClass = "", disabled = false, 
 
 function renderSimpleMode() {
     if (appRoot) {
-        appRoot.dataset.mode = APP_MODE_SIMPLE;
         appRoot.dataset.simplePaused = isSimplePaused ? "1" : "0";
         appRoot.dataset.question = activeQuestion ? "1" : "0";
         appRoot.dataset.talk = isTalkScreen() ? "1" : "0";
         // 質問モード: 上の質問ボタンを右上の ⛶ ⚙ ◎ と同じ高さにそろえる
         appRoot.dataset.questionMode = isQuestionMode() ? "1" : "0";
-        delete appRoot.dataset.symptomStage;
     }
-    if (modePrompt) modePrompt.textContent = "";
     if (confirmZone) confirmZone.style.display = "none";
-    [row1Container, row2Container, row3Container].forEach((container) => {
-        if (!container) return;
-        container.innerHTML = "";
-        container.style.display = "none";
-    });
-    previewSymptomName = null;
 
     if (!simpleGridContainer || !simpleBarContainer) return;
 
@@ -2533,13 +2075,24 @@ function renderSimpleMode() {
             ? "出す質問がありません（設定 → 質問モードで選択）"
             : activeQuestion
             ? "答えがありません（設定 → 質問モード →「答えのパネル」で追加）"
-            : isTalkScreen()
-            ? (talkTab === TALK_TAB_FAVORITE ? "まだ話した文がありません（話すとここに出ます）" : "表示する言葉がありません（設定 → お話モードで選択）")
-            : "表示するパネルがありません（設定 → シンプルモードで選択）";
+            : talkTab === TALK_TAB_FAVORITE ? "まだ話した文がありません（話すとここに出ます）" : "表示する言葉がありません（設定 → お話モードで選択）";
         simpleGridContainer.appendChild(notice);
     }
 
     refitAllButtonText();
+    updateSideNextClearance();
+}
+
+// 次へは右上の ⛶ ⚙ ◎ の列の下まで寄せているので、列と重なる高さだけ上を空ける
+function updateSideNextClearance() {
+    const actions = document.getElementById("quick-actions");
+    if (!simpleSideNext || !actions || simpleSideNext.style.display === "none") return;
+    const actionsRect = actions.getBoundingClientRect();
+    // 設定・キャリブレーション中は列を隠しているので測れない（前の値のまま。閉じたときに測り直す）
+    if (actionsRect.height <= 0) return;
+    simpleSideNext.style.removeProperty("--side-next-clear");
+    const overlap = actionsRect.bottom + QUICK_ACTIONS_CLEAR_GAP_PX - simpleSideNext.getBoundingClientRect().top;
+    if (overlap > 0) simpleSideNext.style.setProperty("--side-next-clear", `${Math.ceil(overlap)}px`);
 }
 
 // パネル・ボタンを描画し直したあと、ホバー表示を付け直す
@@ -2677,7 +2230,7 @@ function resetDwellProgress() {
 }
 
 function updateDwellSelection(hasFace) {
-    if (!isSimpleMode() || dwellTimeMs <= 0 || !hasFace || isCalibrating
+    if (dwellTimeMs <= 0 || !hasFace || isCalibrating
         || calibrationWizard.isActive() || isConfirmInProgress || pendingClickTimer) {
         resetDwellProgress();
         return;
@@ -2725,7 +2278,7 @@ function updateDwellSelection(hasFace) {
 
     const baseMs = isSimplePaused
         ? Math.max(dwellTimeMs * SIMPLE_RESUME_DWELL_RATIO, SIMPLE_RESUME_DWELL_MIN_MS)
-        : getPanelDwellMs(hoveredKey);
+        : dwellTimeMs;
     const requiredMs = hoveredKey === dwellCarryoverKey ? baseMs * DWELL_CARRYOVER_RATIO : baseMs;
     const progress = clamp((now - dwellStartAt) / requiredMs, 0, 1);
     if (dwellIndicator) {
@@ -2749,17 +2302,9 @@ function updateDwellSelection(hasFace) {
     }
 }
 
-// パネルごとに設定した滞留時間（未設定なら全体の滞留時間）
-function getPanelDwellMs(hoveredKey) {
-    if (activeQuestion) return dwellTimeMs;
-    const panelId = hoveredKey.slice(SIMPLE_ROW_ID.length + 1);
-    const override = simpleConfig.dwellOverrides?.[panelId];
-    return Number.isFinite(override) && override > 0 ? override : dwellTimeMs;
-}
-
 // 休憩中は口ジェスチャーでも再開パネル以外を確定しない
 function isSimpleClickBlocked(targetKey) {
-    return isSimpleMode() && isSimplePaused && targetKey !== getSimpleRowKey(SIMPLE_CTRL_REST);
+    return isSimplePaused && targetKey !== getSimpleRowKey(SIMPLE_CTRL_REST);
 }
 
 // 正面の位置（絶対方式で○を向いて登録していれば○の位置）へ置く。絶対方式は次のフレームで正面の位置へ動くので、
@@ -2773,7 +2318,7 @@ function centerPointerOnSimpleGrid() {
 }
 
 function setAppMode(mode) {
-    const nextMode = APP_MODES.includes(mode) ? mode : APP_MODE_SYMPTOM;
+    const nextMode = APP_MODES.includes(mode) ? mode : APP_MODE_QUESTION;
     if (nextMode === appMode) return;
 
     appMode = nextMode;
@@ -2789,12 +2334,13 @@ function setAppMode(mode) {
     activeQuestion = null;
     lastQuestionAnswer = null;
     pageBeforeQuestion = 0;
-    resetSymptomModeState();
+    resetPointerMotionHistory();
+    renderAll();
     if (isQuestionMode()) ensureQuestionModeQuestion({ speak: true });
     renderQuestionButtons();
 
     // グリッド中央へ乗せ直す
-    if (isSimpleMode()) centerPointerOnSimpleGrid();
+    centerPointerOnSimpleGrid();
 }
 
 // =========================================================
@@ -2811,8 +2357,6 @@ const QUESTION_MODE_LAST_KEY = "question_mode_last_id";
 const QUESTION_DEFAULT_HIDDEN_IDS = ["q-yes-no", "q-other"];
 // knownIds を持たない古い設定が、すでに知っている質問（このあとに足した質問だけ既定の非表示を当てる）
 const QUESTION_LEGACY_PRESET_IDS = ["q-yes-no", "q-pain-where", "q-pain-level", "q-itch-where", "q-feeling", "q-temperature", "q-position", "q-want", "q-who"];
-// 答えを既存のパネルから出す質問の panelSource。それ以外はパネルのグループ名（基本・体調・ケア… 任意）
-const QUESTION_PANEL_SOURCE_LAYOUT = "layout"; // シンプルモードの画面に並べたパネル
 // お話モードの相づちも答えの候補にする（このグループ名で並ぶ）
 const QUESTION_PANEL_GROUP_AIZUCHI = "相づち";
 // 回答がないまま放置されたら元の画面へ戻す
@@ -2823,7 +2367,7 @@ const QUESTION_TIMEOUT_MS = 90000;
 // 2段目は暮らしと会話: 暮らし（お世話 → 部屋 → したいこと → 知りたいこと）→ 会話と心（わかった？ → 相づち → 気持ち → 家族）
 // 設定 → 質問で並べ替えられる
 // emoji: 質問モードの上のボタン・設定の「今すぐ質問する」に出すアイコン
-// panelSource: 答えを既存のパネルから出す（パネルのグループ名、または QUESTION_PANEL_SOURCE_LAYOUT）
+// panelSource: 答えを既存のパネルのグループから出す（グループ名: 基本・体調・ケア… 任意）
 // panelIds: 答えにする既存パネル（グループの一部だけ・グループをまたいで選ぶとき）
 // answersFirst: 質問に書いた答えを既存パネルより前に並べる
 // answers[].index: 答えを外したあとも元の並びの番号を保つ（生成アイコン・保存した答えの並びはこの番号で引く）
@@ -2979,7 +2523,7 @@ const QUESTION_PRESETS = [
             { name: "わからない", emoji: "❓", sentence: "わからないです。" }
         ]
     },
-    // シンプルモードで作った任意パネル（"任意" は SIMPLE_GROUP_CUSTOM）。ほかの表現はすべて上の質問にある
+    // 設定 → 質問モードで作った任意パネル（"任意" は SIMPLE_GROUP_CUSTOM）。ほかの表現はすべて上の質問にある
     { id: "q-other", emoji: "💬", label: "ほかには？", question: "ほかに何かありますか？", panelSource: "任意" }
 ];
 
@@ -3025,12 +2569,13 @@ function loadQuestionConfig() {
             speakQuestion: parsed?.speakQuestion !== false,
             order: Array.isArray(parsed?.order) ? parsed.order.filter(id => typeof id === "string") : [],
             answerLayouts: sanitizeQuestionAnswerLayouts(parsed?.answerLayouts),
-            // 回答パネルの数: 自動のときの最大（"" ならシンプルモードと同じ）。以前の質問ごとの固定（gridSizes）は使わない
-            gridSize: SIMPLE_GRID_SIZES[parsed?.gridSize] ? parsed.gridSize : "",
+            // 回答パネルの数: 自動のときの最大。以前の質問ごとの固定（gridSizes）は使わない。
+            // 未設定（廃止したシンプルモードと同じ数）は、その数（今のお話モードの数）を引き継ぐ
+            gridSize: SIMPLE_GRID_SIZES[parsed?.gridSize] ? parsed.gridSize : simpleConfig.gridSize,
             knownIds: presetIds
         };
     } catch {
-        return { hiddenIds: [...QUESTION_DEFAULT_HIDDEN_IDS], speakQuestion: true, order: [], answerLayouts: {}, gridSize: "", knownIds: presetIds };
+        return { hiddenIds: [...QUESTION_DEFAULT_HIDDEN_IDS], speakQuestion: true, order: [], answerLayouts: {}, gridSize: simpleConfig.gridSize, knownIds: presetIds };
     }
 }
 
@@ -3058,7 +2603,7 @@ function getQuestionLabel(q) {
     return q.label || q.question;
 }
 
-// 質問の答えに使えるパネル: シンプルモードのパネル ＋ お話モードの相づち
+// 質問の答えに使えるパネル: 用意したパネル・任意パネル ＋ お話モードの相づち
 function getAnswerPanelCatalog(customPanels = simpleCustomPanels) {
     return [...getSimpleCatalog(customPanels), ...TALK_AIZUCHI.map(a => ({ ...a, group: QUESTION_PANEL_GROUP_AIZUCHI }))];
 }
@@ -3084,11 +2629,9 @@ function getQuestionAnswerCandidates(q, customPanels = simpleCustomPanels) {
 
 // 答えを編集していない質問の並び: 選んだパネル（panelIds）→ グループのパネル（panelSource）→ 質問に書いた答え（answersFirst なら答えが先）
 // （選んだパネルを先にして、数が変わる任意パネルのグループは後ろに並べる）
-function getDefaultQuestionAnswerKeys(q, { customPanels = simpleCustomPanels, layoutIds = simpleConfig.panelIds } = {}) {
+function getDefaultQuestionAnswerKeys(q, customPanels = simpleCustomPanels) {
     let keys = Array.isArray(q.panelIds) ? [...q.panelIds] : [];
-    if (q.panelSource === QUESTION_PANEL_SOURCE_LAYOUT) {
-        keys = keys.concat(layoutIds);
-    } else if (q.panelSource) {
+    if (q.panelSource) {
         keys = keys.concat(getAnswerPanelCatalog(customPanels).filter(p => getSimplePanelGroup(p) === q.panelSource).map(p => p.id));
     }
     const answerKeys = (Array.isArray(q.answers) ? q.answers : []).map((answer, i) => `${q.id}#${getQuestionAnswerNumber(answer, i)}`);
@@ -3096,9 +2639,9 @@ function getDefaultQuestionAnswerKeys(q, { customPanels = simpleCustomPanels, la
 }
 
 // 質問の答え（設定 → 質問 の「答えのパネル」で並べ替えた質問は、その並び）
-function getQuestionAnswers(q, { customPanels = simpleCustomPanels, layoutIds = simpleConfig.panelIds, answerLayouts = questionConfig.answerLayouts } = {}) {
+function getQuestionAnswers(q, { customPanels = simpleCustomPanels, answerLayouts = questionConfig.answerLayouts } = {}) {
     const candidates = getQuestionAnswerCandidates(q, customPanels);
-    const keys = answerLayouts?.[q.id] || getDefaultQuestionAnswerKeys(q, { customPanels, layoutIds });
+    const keys = answerLayouts?.[q.id] || getDefaultQuestionAnswerKeys(q, customPanels);
     return [...new Set(keys)].map(key => candidates.get(key)).filter(Boolean);
 }
 
@@ -3218,8 +2761,6 @@ function startQuestion(questionId, { speak: shouldSpeak = true } = {}) {
     resetDwellProgress();
     // 質問が出た瞬間にポインタの下の回答を選ばないよう、一度動くまで滞留しない
     dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
-    // 症状モードの途中状態（下段表示・30秒復帰タイマー）は持ち越さない
-    resetSymptomModeState(false);
     renderAll();
     centerPointerOnSimpleGrid();
     renderQuestionButtons();
@@ -3237,12 +2778,8 @@ function endQuestion() {
     simplePage = pageBeforeQuestion;
     resetDwellProgress();
     dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
-    if (appMode !== APP_MODE_SYMPTOM) {
-        renderAll();
-        centerPointerOnSimpleGrid();
-    } else {
-        resetSymptomModeState();
-    }
+    renderAll();
+    centerPointerOnSimpleGrid();
     renderQuestionButtons();
 }
 
@@ -3309,15 +2846,9 @@ function parseQuestionAnswers(text) {
 }
 
 // ---------------------------------------------------------
-// 設定画面: シンプルモードの画面配置（ドラッグで並べ替え）・任意パネル追加
+// 設定画面: 任意パネル（質問の答えに使う）・休憩・確定音・お話モードのパネルの数
 // ---------------------------------------------------------
-let simpleLayoutDraft = [];   // 画面に並べるパネルID（並び順＝画面の並び）
-let simpleDwellDraft = {};    // パネルごとの滞留時間 { id: ms }
 let simpleCustomDraft = [];   // 保存前の任意パネル
-let simplePaletteFilter = "all";
-let simpleSelectedTileId = null;
-// 「🔀 移動」中のパネル。次にクリックしたマスの前へ入れる（ドラッグできない環境でも並べ替えられる）
-let simpleMovingTileId = null;
 let layoutDragId = null;
 const SIMPLE_FILTER_ALL = "all";
 const SIMPLE_GROUP_BASE = "基本";
@@ -3329,52 +2860,12 @@ function getSimplePanelGroup(item) {
     return item.group || SIMPLE_GROUP_BASE;
 }
 
-function getDraftGridSize() {
-    return SIMPLE_GRID_SIZES[simpleGridSizeSelect?.value] || SIMPLE_GRID_SIZES[simpleConfig.gridSize] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
-}
-
-function getDraftCatalogMap() {
-    return new Map(getSimpleCatalog(simpleCustomDraft).map(p => [p.id, p]));
-}
-
 function openSimplePanelEditor() {
     simpleCustomDraft = simpleCustomPanels.map(p => ({ ...p }));
-    const byId = getDraftCatalogMap();
-    simpleLayoutDraft = simpleConfig.panelIds.filter(id => byId.has(id));
-
     if (simpleGridSizeSelect) simpleGridSizeSelect.value = simpleConfig.gridSize;
     if (simpleShowRestInput) simpleShowRestInput.checked = simpleConfig.showRest;
     if (simpleConfirmSoundInput) simpleConfirmSoundInput.checked = simpleConfig.confirmSound;
-    simpleDwellDraft = { ...simpleConfig.dwellOverrides };
-    simplePaletteFilter = SIMPLE_FILTER_ALL;
-    simpleSelectedTileId = null;
-    simpleMovingTileId = null;
     resetSimpleCustomForm();
-    renderSimplePanelEditor();
-}
-
-// id を index の位置（そこにあったタイルの場所）へ移す。未配置なら追加する
-// insertIndex は動かす前の並びでの位置（そのパネルの前に入る。末尾なら並びの長さ）
-function moveLayoutPanel(id, insertIndex) {
-    if (!id || !getDraftCatalogMap().has(id)) return;
-    let target = clamp(insertIndex, 0, simpleLayoutDraft.length);
-    const from = simpleLayoutDraft.indexOf(id);
-    if (from !== -1) {
-        simpleLayoutDraft.splice(from, 1);
-        // 自分より後ろへ動かすときは、抜いた分だけ位置が前にずれる
-        if (from < target) target -= 1;
-    }
-    simpleLayoutDraft.splice(target, 0, id);
-    simpleSelectedTileId = id;
-    simpleMovingTileId = null;
-    renderSimplePanelEditor();
-}
-
-function removeLayoutPanel(id) {
-    simpleLayoutDraft = simpleLayoutDraft.filter(x => x !== id);
-    if (simpleSelectedTileId === id) simpleSelectedTileId = null;
-    if (simpleMovingTileId === id) simpleMovingTileId = null;
-    renderSimplePanelEditor();
 }
 
 function createLayoutThumb(item, className = "layout-thumb") {
@@ -3437,288 +2928,6 @@ function bindLayoutDrop(el, onDrop, { sided = false } = {}) {
     });
 }
 
-function renderSimplePanelEditor() {
-    if (!layoutPagesContainer) return;
-    const byId = getDraftCatalogMap();
-    simpleLayoutDraft = simpleLayoutDraft.filter(id => byId.has(id));
-
-    const { cols, rows } = getDraftGridSize();
-    const pageSize = cols * rows;
-    const count = simpleLayoutDraft.length;
-    const pageCount = Math.max(1, Math.ceil(count / pageSize));
-    // 最終ページが埋まっていたら、ドロップで次のページを作れるよう空ページを1つ足す
-    const hasSparePage = count > 0 && count % pageSize === 0;
-    const showRest = simpleShowRestInput ? simpleShowRestInput.checked : simpleConfig.showRest;
-
-    if (simplePanelSummary) simplePanelSummary.textContent = `表示中 ${count} 枚 ・ ${pageCount} ページ`;
-
-    layoutPagesContainer.innerHTML = "";
-    // 画面に並んでいるパネルだけ動かせる（外したら移動もやめる）
-    const moving = simpleMovingTileId && simpleLayoutDraft.includes(simpleMovingTileId) ? byId.get(simpleMovingTileId) : null;
-    if (!moving) simpleMovingTileId = null;
-    layoutPagesContainer.classList.toggle("is-moving", Boolean(moving));
-    if (moving) {
-        const note = document.createElement("div");
-        note.className = "layout-move-note";
-        note.textContent = `「${moving.name}」の移動先をクリック（そのパネルの前に入ります。空きマスなら最後へ）`;
-        const cancel = document.createElement("button");
-        cancel.type = "button";
-        cancel.className = "ctrl-btn secondary";
-        cancel.textContent = "やめる";
-        cancel.addEventListener("click", () => {
-            simpleMovingTileId = null;
-            renderSimplePanelEditor();
-        });
-        note.appendChild(cancel);
-        layoutPagesContainer.appendChild(note);
-    }
-    // 実画面と同じ縦横比で見せる（下の操作バーぶんを除く）
-    const aspect = `${window.innerWidth} / ${Math.round(window.innerHeight * 0.8)}`;
-
-    for (let page = 0; page < pageCount + (hasSparePage ? 1 : 0); page++) {
-        const isSpare = page >= pageCount;
-        const pageEl = document.createElement("div");
-        pageEl.className = "layout-page" + (isSpare ? " is-spare" : "");
-
-        const label = document.createElement("div");
-        label.className = "layout-page-label";
-        label.textContent = isSpare ? `${page + 1}ページ目（ここへドロップで追加）` : `${page + 1}ページ目`;
-        pageEl.appendChild(label);
-
-        const grid = document.createElement("div");
-        grid.className = "layout-grid";
-        grid.style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`;
-        grid.style.gridTemplateRows = `repeat(${rows}, minmax(0, 1fr))`;
-        grid.style.aspectRatio = aspect;
-
-        for (let slot = 0; slot < pageSize; slot++) {
-            const index = page * pageSize + slot;
-            const id = simpleLayoutDraft[index];
-            const item = id ? byId.get(id) : null;
-            if (!item) {
-                const empty = document.createElement("div");
-                empty.className = "layout-tile is-empty";
-                bindLayoutDrop(empty, dragId => moveLayoutPanel(dragId, simpleLayoutDraft.length));
-                empty.addEventListener("click", () => {
-                    if (simpleMovingTileId) moveLayoutPanel(simpleMovingTileId, simpleLayoutDraft.length);
-                });
-                grid.appendChild(empty);
-                continue;
-            }
-
-            const tile = document.createElement("div");
-            tile.className = "layout-tile" + (id === simpleSelectedTileId ? " selected" : "") + (id === simpleMovingTileId ? " moving" : "");
-            tile.title = moving
-                ? (id === simpleMovingTileId ? "移動をやめる" : `「${moving.name}」をここ（${item.name}の前）へ移動`)
-                : `${item.name}（ドラッグで移動・左半分なら前／右半分なら後ろ。クリックで詳細）`;
-            tile.appendChild(createLayoutThumb(item));
-            const name = document.createElement("div");
-            name.className = "layout-tile-name";
-            name.textContent = item.name;
-            tile.appendChild(name);
-            if (simpleDwellDraft[id]) {
-                const badge = document.createElement("span");
-                badge.className = "layout-tile-dwell";
-                badge.textContent = `⏱${(simpleDwellDraft[id] / 1000).toFixed(1)}`;
-                tile.appendChild(badge);
-            }
-            const remove = document.createElement("button");
-            remove.type = "button";
-            remove.className = "layout-tile-remove";
-            remove.title = "画面から外す";
-            remove.textContent = "✕";
-            remove.addEventListener("click", (e) => {
-                e.stopPropagation();
-                removeLayoutPanel(id);
-            });
-            tile.appendChild(remove);
-            tile.addEventListener("click", () => {
-                if (simpleMovingTileId) {
-                    if (simpleMovingTileId === id) {
-                        simpleMovingTileId = null;
-                        renderSimplePanelEditor();
-                    } else {
-                        moveLayoutPanel(simpleMovingTileId, index);
-                    }
-                    return;
-                }
-                simpleSelectedTileId = simpleSelectedTileId === id ? null : id;
-                renderSimplePanelEditor();
-            });
-            bindLayoutDrag(tile, id);
-            bindLayoutDrop(tile, (dragId, after) => moveLayoutPanel(dragId, index + (after ? 1 : 0)), { sided: true });
-            grid.appendChild(tile);
-        }
-        pageEl.appendChild(grid);
-
-        // 実画面下部の操作バー（見た目の参考）
-        const bar = document.createElement("div");
-        bar.className = "layout-bar";
-        const barItems = [];
-        if (pageCount > 1) barItems.push("◀ 前へ", `${Math.min(page, pageCount - 1) + 1} / ${pageCount}`, "次へ ▶");
-        if (showRest) barItems.push("⏸️ 休憩");
-        barItems.forEach(text => {
-            const span = document.createElement("span");
-            span.textContent = text;
-            bar.appendChild(span);
-        });
-        if (barItems.length > 0 && !isSpare) pageEl.appendChild(bar);
-
-        layoutPagesContainer.appendChild(pageEl);
-    }
-
-    renderLayoutDetail(byId);
-    renderSimplePalette(byId);
-}
-
-function renderLayoutDetail(byId) {
-    if (!layoutDetailContainer) return;
-    layoutDetailContainer.innerHTML = "";
-    const id = simpleSelectedTileId;
-    const item = id ? byId.get(id) : null;
-    const index = id ? simpleLayoutDraft.indexOf(id) : -1;
-    if (!item || index === -1) {
-        layoutDetailContainer.classList.add("is-empty");
-        layoutDetailContainer.textContent = "タイルをクリックすると、ここで滞留時間などを設定できます。";
-        return;
-    }
-    layoutDetailContainer.classList.remove("is-empty");
-
-    const { cols, rows } = getDraftGridSize();
-    const pageSize = cols * rows;
-    layoutDetailContainer.appendChild(createLayoutThumb(item, "simple-editor-thumb"));
-
-    const text = document.createElement("div");
-    text.className = "simple-editor-text";
-    const name = document.createElement("strong");
-    name.textContent = item.name;
-    const badge = document.createElement("span");
-    badge.className = "simple-editor-group";
-    badge.textContent = getSimplePanelGroup(item);
-    name.appendChild(badge);
-    const info = document.createElement("small");
-    info.textContent = `${Math.floor(index / pageSize) + 1}ページ目・${(index % pageSize) + 1}番目 ／ 「${buildSimpleSentence(item)}」`;
-    text.append(name, info);
-    layoutDetailContainer.appendChild(text);
-
-    const actions = document.createElement("div");
-    actions.className = "simple-editor-actions";
-    const dwellSelect = document.createElement("select");
-    dwellSelect.className = "simple-editor-dwell";
-    dwellSelect.title = "このパネルの滞留時間";
-    dwellSelect.add(new Option("滞留 既定", ""));
-    PANEL_DWELL_CHOICES.forEach(ms => dwellSelect.add(new Option(`滞留 ${(ms / 1000).toFixed(1)}秒`, String(ms))));
-    dwellSelect.value = simpleDwellDraft[id] ? String(simpleDwellDraft[id]) : "";
-    dwellSelect.classList.toggle("is-custom", dwellSelect.value !== "");
-    dwellSelect.addEventListener("change", () => {
-        const ms = Number(dwellSelect.value);
-        if (ms > 0) simpleDwellDraft[id] = ms;
-        else delete simpleDwellDraft[id];
-        renderSimplePanelEditor();
-    });
-    actions.appendChild(dwellSelect);
-
-    const addAction = (label, title, disabled, handler, extraClass = "secondary") => {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.className = `ctrl-btn ${extraClass}`;
-        btn.textContent = label;
-        btn.title = title;
-        btn.disabled = disabled;
-        btn.addEventListener("click", handler);
-        actions.appendChild(btn);
-    };
-    const isMoving = simpleMovingTileId === id;
-    addAction(isMoving ? "移動をやめる" : "🔀 移動", "次にクリックしたマスへ移動（そのパネルの前に入る）", false, () => {
-        simpleMovingTileId = isMoving ? null : id;
-        renderSimplePanelEditor();
-    }, isMoving ? "secondary" : "primary");
-    const last = simpleLayoutDraft.length - 1;
-    addAction("⏮", "先頭へ", index === 0, () => moveLayoutPanel(id, 0));
-    addAction("◀", "1つ前へ", index === 0, () => moveLayoutPanel(id, index - 1));
-    addAction("▶", "1つ後ろへ", index === last, () => moveLayoutPanel(id, index + 2));
-    addAction("⏭", "最後へ", index === last, () => moveLayoutPanel(id, simpleLayoutDraft.length));
-    addAction("外す", "画面から外す", false, () => removeLayoutPanel(id));
-    if (item.custom) {
-        addAction("削除", "この任意パネルを削除", false, () => {
-            simpleCustomDraft = simpleCustomDraft.filter(p => p.id !== id);
-            delete simpleDwellDraft[id];
-            removeLayoutPanel(id);
-        });
-    }
-    layoutDetailContainer.appendChild(actions);
-}
-
-// 画面に出していないパネルの一覧。ドラッグかクリックで画面へ追加
-function renderSimplePalette(byId) {
-    if (!simplePanelList) return;
-    const used = new Set(simpleLayoutDraft);
-    const unused = Array.from(byId.values()).filter(item => !used.has(item.id));
-
-    if (simplePanelFilter) {
-        const groups = [];
-        unused.forEach(item => {
-            const group = getSimplePanelGroup(item);
-            if (!groups.includes(group)) groups.push(group);
-        });
-        if (simplePaletteFilter !== SIMPLE_FILTER_ALL && !groups.includes(simplePaletteFilter)) simplePaletteFilter = SIMPLE_FILTER_ALL;
-        simplePanelFilter.innerHTML = "";
-        [{ key: SIMPLE_FILTER_ALL, label: "すべて" }, ...groups.map(g => ({ key: g, label: g }))].forEach(({ key, label }) => {
-            const chip = document.createElement("button");
-            chip.type = "button";
-            chip.className = "filter-chip" + (key === simplePaletteFilter ? " active" : "");
-            const count = key === SIMPLE_FILTER_ALL ? unused.length : unused.filter(i => getSimplePanelGroup(i) === key).length;
-            chip.append(label, Object.assign(document.createElement("span"), { className: "filter-chip-count", textContent: String(count) }));
-            chip.addEventListener("click", () => {
-                simplePaletteFilter = key;
-                renderSimplePanelEditor();
-            });
-            simplePanelFilter.appendChild(chip);
-        });
-    }
-
-    simplePanelList.innerHTML = "";
-    const visible = unused.filter(item => simplePaletteFilter === SIMPLE_FILTER_ALL || getSimplePanelGroup(item) === simplePaletteFilter);
-    visible.forEach((item) => {
-        const el = document.createElement("div");
-        el.className = "palette-item";
-        el.title = `「${buildSimpleSentence(item)}」（ドラッグで配置・クリックで追加）`;
-        el.appendChild(createLayoutThumb(item));
-        const name = document.createElement("div");
-        name.className = "layout-tile-name";
-        name.textContent = item.name;
-        el.appendChild(name);
-        // 画面のタイルを選んでいれば、その後ろへ割り込ませる（続けて押すと順に並ぶ）。選んでいなければ最後へ
-        el.addEventListener("click", () => {
-            const at = simpleSelectedTileId ? simpleLayoutDraft.indexOf(simpleSelectedTileId) : -1;
-            moveLayoutPanel(item.id, at >= 0 ? at + 1 : simpleLayoutDraft.length);
-        });
-        if (item.custom) {
-            const del = document.createElement("button");
-            del.type = "button";
-            del.className = "layout-tile-remove";
-            del.title = "この任意パネルを削除";
-            del.textContent = "🗑";
-            del.addEventListener("click", (e) => {
-                e.stopPropagation();
-                if (!confirm(`「${item.name}」を削除しますか？`)) return;
-                simpleCustomDraft = simpleCustomDraft.filter(p => p.id !== item.id);
-                delete simpleDwellDraft[item.id];
-                renderSimplePanelEditor();
-            });
-            el.appendChild(del);
-        }
-        bindLayoutDrag(el, item.id);
-        simplePanelList.appendChild(el);
-    });
-    if (visible.length === 0) {
-        const note = document.createElement("p");
-        note.className = "settings-help";
-        note.textContent = "すべて画面に配置済みです。";
-        simplePanelList.appendChild(note);
-    }
-}
-
 let simpleCustomImageData = "";
 
 function resetSimpleCustomForm() {
@@ -3773,22 +2982,18 @@ function addSimpleCustomPanel() {
 
     simpleCustomDraft.push(panel);
     resetSimpleCustomForm();
-    // 追加したパネルは画面の末尾に置く
-    moveLayoutPanel(panel.id, simpleLayoutDraft.length);
+    renderQuestionPanelPicker();
+    // 作ったパネルは、編集中の質問の答えの最後に入れる
+    const q = getAnswerEditQuestion();
+    if (q) moveQuestionAnswer(panel.id, getDraftAnswerKeys(q).length);
+    else renderQuestionEditor();
 }
 
-function clearSimpleLayout() {
-    simpleLayoutDraft = [];
-    simpleSelectedTileId = null;
-    simpleMovingTileId = null;
-    renderSimplePanelEditor();
-}
-
-function resetSimplePanelSelection() {
-    simpleLayoutDraft = getSimpleBasePanels().map(p => p.id);
-    simpleSelectedTileId = null;
-    simpleMovingTileId = null;
-    renderSimplePanelEditor();
+function deleteSimpleCustomPanel(id) {
+    simpleCustomDraft = simpleCustomDraft.filter(p => p.id !== id);
+    questionPanelPickDraft = questionPanelPickDraft.filter(x => x !== id);
+    renderQuestionPanelPicker();
+    renderQuestionEditor();
 }
 
 // ---------------------------------------------------------
@@ -4252,18 +3457,17 @@ function openQuestionEditor() {
     renderQuestionPanelPicker();
 }
 
-// 一覧に出す答えの説明（パネルはシンプルモードの編集中の任意パネルも含める）
+// 一覧に出す答えの説明（パネルは編集中の任意パネルも含める）
 function describeQuestionAnswers(q) {
     const edited = Boolean(questionAnswerLayoutsDraft[q.id]);
-    if (!edited && q.panelSource === QUESTION_PANEL_SOURCE_LAYOUT) return "🧩 シンプルモードの画面に並べたパネル";
     const names = getDraftQuestionAnswers(q).map(a => `${a.emoji ? a.emoji + " " : ""}${a.name}`).join(" ／ ");
     if (edited) return `✏️ ${names || "（答えなし）"}`;
     return q.panelSource ? `🧩 パネル「${q.panelSource}」${q.panelIds?.length ? "ほか" : ""}: ${names}` : names;
 }
 
-// 編集中の内容（シンプルモードの任意パネル・画面配置も編集中のもの）での答え
+// 編集中の内容（任意パネルも編集中のもの）での答え
 function getDraftQuestionAnswerOptions() {
-    return { customPanels: simpleCustomDraft, layoutIds: simpleLayoutDraft, answerLayouts: questionAnswerLayoutsDraft };
+    return { customPanels: simpleCustomDraft, answerLayouts: questionAnswerLayoutsDraft };
 }
 
 function getDraftQuestionAnswers(q) {
@@ -4362,7 +3566,7 @@ function renderQuestionEditor() {
 }
 
 // ---------------------------------------------------------
-// 設定画面: 質問の答えのパネル（シンプルモードの画面配置と同じく、ドラッグで並べ替え・追加・外す）
+// 設定画面: 質問の答えのパネル（ドラッグで並べ替え・追加・外す）
 // ---------------------------------------------------------
 function getAnswerEditQuestion() {
     const catalog = getQuestionCatalog(questionCustomDraft, questionOrderDraft);
@@ -4372,7 +3576,7 @@ function getAnswerEditQuestion() {
 function getDraftAnswerKeys(q) {
     const candidates = getQuestionAnswerCandidates(q, simpleCustomDraft);
     const keys = questionAnswerLayoutsDraft[q.id]
-        || getDefaultQuestionAnswerKeys(q, { customPanels: simpleCustomDraft, layoutIds: simpleLayoutDraft });
+        || getDefaultQuestionAnswerKeys(q, simpleCustomDraft);
     return [...new Set(keys)].filter(key => candidates.has(key));
 }
 
@@ -4447,10 +3651,7 @@ function renderQuestionAnswerEditor() {
     const candidates = getQuestionAnswerCandidates(q, simpleCustomDraft);
     const keys = getDraftAnswerKeys(q);
     if (!keys.includes(questionAnswerSelectedKey)) questionAnswerSelectedKey = null;
-    const { cols, rows } = getQuestionGridSize(keys.length, {
-        gridSize: questionGridSizeSelect?.value ?? questionConfig.gridSize,
-        simpleGridSize: simpleGridSizeSelect?.value || simpleConfig.gridSize
-    });
+    const { cols, rows } = getQuestionGridSize(keys.length, questionGridSizeSelect?.value || questionConfig.gridSize);
     const pageSize = cols * rows;
     const pageCount = Math.max(1, Math.ceil(keys.length / pageSize));
     if (questionAnswerSummary) {
@@ -4571,7 +3772,7 @@ function renderQuestionAnswerDetail(candidates, keys) {
     questionAnswerDetail.appendChild(actions);
 }
 
-// 答えにしていない候補（この質問の答え・シンプルモードのパネル）。ドラッグかクリックで追加
+// 答えにしていない候補（この質問の答え・用意したパネル・任意パネル・相づち）。ドラッグかクリックで追加
 function renderQuestionAnswerPalette(candidates, keys) {
     if (!questionAnswerPalette) return;
     const used = new Set(keys);
@@ -4615,6 +3816,19 @@ function renderQuestionAnswerPalette(candidates, keys) {
             const at = questionAnswerSelectedKey ? keys.indexOf(questionAnswerSelectedKey) : -1;
             moveQuestionAnswer(item.key, at >= 0 ? at + 1 : keys.length);
         });
+        if (item.custom) {
+            const del = document.createElement("button");
+            del.type = "button";
+            del.className = "layout-tile-remove";
+            del.title = "この任意パネルを削除（ほかの質問の答えからも外れる）";
+            del.textContent = "🗑";
+            del.addEventListener("click", (e) => {
+                e.stopPropagation();
+                if (!confirm(`「${item.name}」を削除しますか？`)) return;
+                deleteSimpleCustomPanel(item.id);
+            });
+            el.appendChild(del);
+        }
         bindLayoutDrag(el, item.key);
         questionAnswerPalette.appendChild(el);
     });
@@ -4723,14 +3937,14 @@ function addCustomQuestion() {
     renderQuestionPanelPicker();
 }
 
-// 最初の答えと同じ並びに戻した質問は保存しない（パネルの増減や画面配置の変更に、元どおり追従させる）
+// 最初の答えと同じ並びに戻した質問は保存しない（パネルの増減に、元どおり追従させる）
 function getQuestionAnswerLayoutsToSave() {
     const result = {};
     getQuestionCatalog(questionCustomDraft, questionOrderDraft).forEach((q) => {
         const keys = questionAnswerLayoutsDraft[q.id];
         if (!keys) return;
         const candidates = getQuestionAnswerCandidates(q, simpleCustomDraft);
-        const defaults = getDefaultQuestionAnswerKeys(q, { customPanels: simpleCustomDraft, layoutIds: simpleLayoutDraft }).filter(key => candidates.has(key));
+        const defaults = getDefaultQuestionAnswerKeys(q, simpleCustomDraft).filter(key => candidates.has(key));
         if (keys.length === defaults.length && keys.every((key, i) => key === defaults[i])) return;
         result[q.id] = [...keys];
     });
@@ -4767,7 +3981,7 @@ function saveQuestionEditor() {
     questionConfig = nextConfig;
     // 回答中の質問が削除されたら終了する（質問モードは出す質問の先頭へ切り替える）
     if (isQuestionMode()) {
-        // 答えのパネル（シンプルモードの画面配置・任意パネル）が変わったかもしれないので、読み上げずに出し直す
+        // 答えのパネル（任意パネル）が変わったかもしれないので、読み上げずに出し直す
         if (activeQuestion && getVisibleQuestions().some(q => q.id === activeQuestion.id)) startQuestion(activeQuestion.id, { speak: false });
         else ensureQuestionModeQuestion();
     } else if (activeQuestion && !getQuestionCatalog().some(q => q.id === activeQuestion.id)) {
@@ -4781,10 +3995,8 @@ function saveQuestionEditor() {
 function saveSimplePanelEditor() {
     const nextConfig = {
         gridSize: SIMPLE_GRID_SIZES[simpleGridSizeSelect?.value] ? simpleGridSizeSelect.value : simpleConfig.gridSize,
-        panelIds: [...simpleLayoutDraft],
         showRest: simpleShowRestInput ? simpleShowRestInput.checked : simpleConfig.showRest,
-        confirmSound: simpleConfirmSoundInput ? simpleConfirmSoundInput.checked : simpleConfig.confirmSound,
-        dwellOverrides: sanitizeDwellOverrides(simpleDwellDraft)
+        confirmSound: simpleConfirmSoundInput ? simpleConfirmSoundInput.checked : simpleConfig.confirmSound
     };
     try {
         localStorage.setItem(SIMPLE_CUSTOM_PANELS_KEY, JSON.stringify(simpleCustomDraft));
@@ -5349,17 +4561,10 @@ function playBlob(blob) {
     });
 }
 
-// 前もって音声にしておく文: パネルを選んですぐ話す文（症状・シンプルモード・質問と答え）だけ。
+// 前もって音声にしておく文: パネルを選んですぐ話す文（用意したパネル・質問と答え）だけ。
 // お話モードの文は数が多く使わないものも多いので作らない（話したときに作った音声を保存して、次からすぐ話す）
 function collectPrefetchPhrases() {
     const phrases = [];
-
-    symptomChoices.forEach(category => {
-        (category.options || []).forEach(option => {
-            const sentence = (option.sentence || `${option.name}です。`).trim();
-            if (sentence) phrases.push(sentence);
-        });
-    });
 
     getSimpleCatalog().forEach(panel => {
         phrases.push(buildSimpleSentence(panel));
@@ -5655,7 +4860,6 @@ async function predictWebcam() {
                 // 設定画面を開いている間はポインタを動かさない
                 updateRelativePointerTarget(nose.x, landmarks, results, faceIndex, startTimeMs);
             }
-            trackSymptomActivityByMovement(nose.x, nose.y);
         }
     }
 
@@ -5688,17 +4892,11 @@ async function predictWebcam() {
     if (!hasFace && calibrationWizard.isActive()) calibrationWizard.onNoFace();
 
     checkPointerCollision();
-    // 設定画面を開いている間は確定・段階移動・自動復帰をすべて止める
+    // 設定画面を開いている間は確定・自動復帰をすべて止める
     const isSuspended = isSettingsOpen();
     document.body.classList.toggle("settings-open", isSuspended);
     updateDwellSelection(hasFace && !isSuspended);
-    if (hasFace && !isSuspended) {
-        updateVerticalStageTransition();
-    }
-    if (!isSuspended) {
-        checkSymptomIdleReset();
-        checkQuestionTimeout();
-    }
+    if (!isSuspended) checkQuestionTimeout();
     window.requestAnimationFrame(predictWebcam);
 }
 
@@ -5859,7 +5057,6 @@ function logClickDebug(event, extra = {}) {
         seq: ++clickDebugSeq,
         t: new Date().toISOString(),
         event,
-        stage: symptomStage,
         isMouthOpen,
         jawRaw: Number(jawOpenRawScore.toFixed(4)),
         jawRawInstant: Number(jawOpenRawInstantScore.toFixed(4)),
@@ -7113,22 +6310,7 @@ function recaptureFrontPose(sample = null, screenPoint = null) {
         isCalibrating = true;
     }
     // 取り直した正面の位置へポインタを置き直す
-    const bounds = getSymptomRowPointerBounds();
-    if (bounds && isSimpleMode()) {
-        const front = getSimpleFrontPoint(bounds);
-        targetX = pointerX = front.x;
-        targetY = pointerY = front.y;
-    } else {
-        if (bounds) targetX = pointerX = (bounds.minX + bounds.maxX) / 2;
-        snapPointerToFrontRow();
-    }
-}
-
-// 症状モードの縦: 絶対方式では今の段の行が正面、相対方式では上段から始める
-function snapPointerToFrontRow() {
-    if (isSimpleMode() || !isVerticalMoveEnabled) return;
-    if (pointerMode === POINTER_MODE_ABSOLUTE && symptomStage === SYMPTOM_STAGE_BODY_PART) snapPointerToLowerRow();
-    else snapPointerToUpperRow();
+    centerPointerOnSimpleGrid();
 }
 
 // ファイルを画像入力以外に落としたとき、画面がそのファイルに切り替わってアプリが消えないようにする
@@ -7251,14 +6433,10 @@ const panelSnapInput = document.getElementById("panel-snap-input");
 const axisLockInput = document.getElementById("axis-lock-input");
 const distanceCompInput = document.getElementById("distance-comp-input");
 const recenterInput = document.getElementById("recenter-input");
-const verticalMoveInput = document.getElementById("vertical-move-input");
 const calibFarPassInput = document.getElementById("calib-far-pass-input");
 const pointerTab = document.getElementById("pointer-tab");
 const simpleGridSizeSelect = radioGroup("simple-grid-size");
-const simplePanelFilter = document.getElementById("simple-panel-filter");
 const simpleTabsContainer = document.getElementById("simple-tabs");
-const layoutPagesContainer = document.getElementById("layout-pages");
-const layoutDetailContainer = document.getElementById("layout-detail");
 const talkWordList = document.getElementById("talk-word-list");
 const talkWordFilter = document.getElementById("talk-word-filter");
 const talkLearnInput = document.getElementById("talk-learn-input");
@@ -7298,8 +6476,6 @@ const settingsCloseX = document.getElementById("settings-close-x");
 const apiKeyRevealBtn = document.getElementById("api-key-reveal-btn");
 const simpleShowRestInput = document.getElementById("simple-show-rest-input");
 const simpleConfirmSoundInput = document.getElementById("simple-confirm-sound-input");
-const simplePanelList = document.getElementById("simple-panel-list");
-const simplePanelSummary = document.getElementById("simple-panel-summary");
 const simpleCustomNameInput = document.getElementById("simple-custom-name-input");
 const simpleCustomSentenceInput = document.getElementById("simple-custom-sentence-input");
 const simpleCustomEmojiInput = document.getElementById("simple-custom-emoji-input");
@@ -7737,7 +6913,6 @@ settingsBtn.addEventListener("click", () => {
     if (axisLockInput) axisLockInput.checked = isAxisLockEnabled;
     if (distanceCompInput) distanceCompInput.checked = isDistanceCompEnabled;
     if (recenterInput) recenterInput.checked = isRecenterEnabled;
-    if (verticalMoveInput) verticalMoveInput.checked = isVerticalMoveEnabled;
     if (calibFarPassInput) calibFarPassInput.checked = isCalibFarPassEnabled;
     refreshPointerOptionAvailability();
     openSimplePanelEditor();
@@ -7839,17 +7014,12 @@ function saveSettingsAndClose() {
         resetPointerMotionHistory();
         applyPointerModeState();
     }
-    const isVerticalMoveChanged = verticalMoveInput && verticalMoveInput.checked !== isVerticalMoveEnabled;
-    if (isVerticalMoveChanged) {
-        isVerticalMoveEnabled = verticalMoveInput.checked;
-        localStorage.setItem(VERTICAL_MOVE_KEY, isVerticalMoveEnabled ? "1" : "0");
-    }
 
     renderAll();
     if (modeSelect) setAppMode(modeSelect.value);
-    // ON→OFF / OFF→ON いずれも上段基準へ戻して仕切り直す
-    if (isVerticalMoveChanged) resetSymptomModeState();
     settingsModal.classList.remove("active");
+    // 右上の ⛶ ⚙ ◎ は設定を開いている間は隠れていて、次への上の空きを測れなかったので測り直す
+    updateSideNextClearance();
     // 音声を変えたら、新しい音声で前もって作り始める（Gemini TTS は遅く回数制限があるので手動）。
     // 保存した文言で作るよう最後に呼ぶ
     if (ttsModel !== previousTtsModel && ["cloud", "voicevox"].includes(getTtsProvider())) void prefetchAllAudio({ quiet: true });
@@ -7863,7 +7033,7 @@ function activateSettingsTab(tabId) {
     settingsTabContents.forEach(content => content.classList.toggle("active", content.id === tabId));
     // 前のタブのスクロール位置のまま開かないよう、先頭から見せる
     document.querySelector(".settings-panes")?.scrollTo({ top: 0 });
-    // シンプルモードのタブで足した任意パネル・画面配置を、質問の答えの候補に反映する
+    // 編集中の任意パネルを、質問の答えの候補に反映する
     if (tabId === "question-tab") {
         renderQuestionEditor();
         renderQuestionPanelPicker();
@@ -7879,7 +7049,6 @@ document.querySelectorAll("[data-goto-tab]").forEach(btn => {
     btn.addEventListener("click", () => activateSettingsTab(btn.dataset.gotoTab));
 });
 
-if (simpleGridSizeSelect) simpleGridSizeSelect.addEventListener("change", renderSimplePanelEditor);
 if (simpleCustomAddBtn) simpleCustomAddBtn.addEventListener("click", addSimpleCustomPanel);
 document.getElementById("question-custom-add-btn")?.addEventListener("click", addCustomQuestion);
 questionPanelPickClearBtn?.addEventListener("click", clearQuestionPanelPick);
@@ -7896,11 +7065,6 @@ document.getElementById("question-answer-clear-btn")?.addEventListener("click", 
 if (questionAnswerPalette) bindLayoutDrop(questionAnswerPalette, key => removeQuestionAnswer(key));
 if (questionEndBtn) questionEndBtn.addEventListener("click", endQuestion);
 renderQuestionButtons();
-document.getElementById("simple-clear-layout-btn")?.addEventListener("click", clearSimpleLayout);
-document.getElementById("simple-reset-panels-btn")?.addEventListener("click", resetSimplePanelSelection);
-if (simpleShowRestInput) simpleShowRestInput.addEventListener("change", renderSimplePanelEditor);
-// 画面から外すドロップ先: 「追加できるパネル」の一覧
-if (simplePanelList) bindLayoutDrop(simplePanelList, id => removeLayoutPanel(id));
 document.getElementById("talk-custom-add-btn")?.addEventListener("click", addTalkCustomPhrase);
 talkInterviewStartBtn?.addEventListener("click", () => void startTalkInterview());
 talkGenerateBtn?.addEventListener("click", () => void generateTalkSetFromInterview());
