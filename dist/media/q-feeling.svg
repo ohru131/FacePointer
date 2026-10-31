@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <filter id="halo" x="-15%" y="-15%" width="130%" height="130%">
+      <feMorphology in="SourceAlpha" operator="dilate" radius="2.2" result="dilated"/>
+      <feFlood flood-color="#ffffff" result="white"/>
+      <feComposite in="white" in2="dilated" operator="in" result="outline"/>
+      <feMerge>
+        <feMergeNode in="outline"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <g filter="url(#halo)">
+    <circle cx="32" cy="32" r="24" fill="#FFD166" stroke="#D97706" stroke-width="3.5"/>
+    <circle cx="22.5" cy="26" r="3.6" fill="#78350F"/>
+    <circle cx="41.5" cy="26" r="3.6" fill="#78350F"/>
+    <ellipse cx="16.5" cy="33.5" rx="4.2" ry="2.8" fill="#F43F5E" opacity="0.6"/>
+    <ellipse cx="47.5" cy="33.5" rx="4.2" ry="2.8" fill="#F43F5E" opacity="0.6"/>
+    <path d="M21 36c3 7.5 19 7.5 22 0" fill="none" stroke="#78350F" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>
