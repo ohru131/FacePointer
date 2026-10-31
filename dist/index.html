@@ -49,7 +49,12 @@
                 <div id="simple-message" aria-live="polite" style="display:none;"></div>
                 <!-- お話モードのタブ（お話・相づち・よく話す・相手） -->
                 <div id="simple-tabs" style="display:none;"></div>
-                <div id="simple-grid" class="simple-grid"></div>
+                <!-- 質問モード: 前へ・次へは選択パネルの左端・右端に縦長で置く -->
+                <div id="simple-body">
+                    <div id="simple-side-prev" class="simple-side" style="display:none;"></div>
+                    <div id="simple-grid" class="simple-grid"></div>
+                    <div id="simple-side-next" class="simple-side" style="display:none;"></div>
+                </div>
                 <div id="simple-bar"></div>
             </div>
         </div>
@@ -102,61 +107,11 @@
         <!-- Gesture Indicator -->
         <div id="gesture-indicator"></div>
 
-        <!-- Caregiver drawer (top right) -->
-        <!-- 介助者がマウスですぐ押すボタン（右上の ⚙ の左）。ポインタ・滞留では選ばれない -->
+        <!-- 介助者がマウスですぐ押すボタン（右上に縦に並ぶ）。ポインタ・滞留では選ばれない -->
         <div id="quick-actions">
-            <button id="recapture-front-btn" class="quick-action-btn" type="button" title="正面取り直し（今の姿勢を正面にします。感度・揺れの計測値はそのまま）" aria-label="正面取り直し">◎</button>
             <button id="fullscreen-btn" class="quick-action-btn" type="button" title="全画面表示（Escでも解除）" aria-label="全画面表示">⛶</button>
-        </div>
-        <div id="controls">
-            <div id="controls-top">
-                <div class="drawer-header">
-                    <span class="drawer-title">介助者メニュー</span>
-                    <button id="controls-collapse-btn" class="drawer-toggle" type="button" title="メニューを閉じる" aria-expanded="true">✕</button>
-                </div>
-
-                <section class="drawer-section">
-                    <h4 class="drawer-heading">操作</h4>
-                    <div class="drawer-actions">
-                        <button id="settings-btn" class="drawer-action" type="button"><span class="drawer-action-icon">⚙️</span>設定</button>
-                        <button id="calib-wizard-btn" class="drawer-action" type="button"><span class="drawer-action-icon">🎯</span>キャリブレーション</button>
-                    </div>
-                    <div id="audio-status" class="status-info" style="display:none;">
-                        <div class="status-label"></div>
-                        <div class="status-progress-bar">
-                            <div class="status-progress-fill"></div>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="drawer-section">
-                    <h4 class="drawer-heading">質問する（回答パネルに切替）</h4>
-                    <div id="question-buttons" class="question-buttons"></div>
-                    <button id="question-end-btn" class="ctrl-btn secondary" type="button" style="display:none;">質問を終了して戻る</button>
-                </section>
-            </div>
-
-            <section id="controls-bottom" class="drawer-section control-advanced">
-                <h4 class="drawer-heading">感度（動かしながら調整・すぐ反映）</h4>
-                <div id="quick-tuning" aria-label="調整スライダー">
-                    <div class="compact-slider-item">
-                        <label for="jaw-open-threshold-slider">口の開き <span id="jaw-open-threshold-value">0.10</span></label>
-                        <input type="range" id="jaw-open-threshold-slider" min="0.00" max="0.20" step="0.01" value="0.10">
-                    </div>
-                    <div class="compact-slider-item">
-                        <label for="nose-gain-slider">鼻位置移動 <span id="nose-gain-value">10.0</span></label>
-                        <input type="range" id="nose-gain-slider" min="0" max="20" step="0.5" value="10">
-                    </div>
-                    <div class="compact-slider-item">
-                        <label for="yaw-gain-slider">顔の傾き <span id="yaw-gain-value">10.0</span></label>
-                        <input type="range" id="yaw-gain-slider" min="0" max="20" step="0.5" value="10">
-                    </div>
-                </div>
-                <details id="telemetry-panel">
-                    <summary>計測値</summary>
-                    <pre id="telemetry-values">計測待機中</pre>
-                </details>
-            </section>
+            <button id="settings-btn" class="quick-action-btn" type="button" title="設定（モード・質問・キャリブレーション・パネル・声）" aria-label="設定">⚙</button>
+            <button id="recapture-front-btn" class="quick-action-btn" type="button" title="正面取り直し（今の姿勢を正面にします。感度・揺れの計測値はそのまま）" aria-label="正面取り直し">◎</button>
         </div>
 
         <!-- Settings Modal -->
@@ -169,19 +124,38 @@
 
                 <div class="settings-body">
                     <nav class="settings-tabs" aria-label="設定の分類">
+                        <span class="settings-tab-group">全体の設定</span>
                         <button class="settings-tab-btn active" type="button" data-tab="basic-tab"><span>🧭</span>基本</button>
-                        <button class="settings-tab-btn" type="button" data-tab="pointer-tab"><span>🎯</span>ポインタ</button>
-                        <button class="settings-tab-btn" type="button" data-tab="simple-tab"><span>🔲</span>シンプルモード</button>
-                        <button class="settings-tab-btn" type="button" data-tab="talk-tab"><span>💬</span>お話</button>
-                        <button class="settings-tab-btn" type="button" data-tab="question-tab"><span>❓</span>質問</button>
+                        <button class="settings-tab-btn" type="button" data-tab="pointer-tab"><span>🎯</span>ポインタと確定</button>
                         <button class="settings-tab-btn" type="button" data-tab="voice-tab"><span>🔊</span>音声</button>
+                        <span class="settings-tab-group">画面ごとの中身</span>
+                        <button class="settings-tab-btn" type="button" data-tab="simple-tab"><span>🔲</span>シンプルモード</button>
+                        <button class="settings-tab-btn" type="button" data-tab="talk-tab"><span>💬</span>お話モード</button>
+                        <button class="settings-tab-btn" type="button" data-tab="question-tab"><span>❓</span>質問モード</button>
                     </nav>
 
                     <div class="settings-panes">
                         <!-- Basic Tab -->
                         <div id="basic-tab" class="settings-tab-content active">
+                            <p class="settings-pane-lead">はじめて使うときの準備と、使う画面（モード）・パネルの絵柄。</p>
+
+                            <section class="settings-section settings-guide">
+                                <h4>はじめて使うとき</h4>
+                                <ol class="settings-steps">
+                                    <li class="settings-step--primary">
+                                        <b>ポインタを顔の動きに合わせる（キャリブレーション）<span id="calib-status-badge" class="calib-status-badge"></span></b>
+                                        <span>本人がいつもの姿勢で画面の正面に座り、画面に出る ○ を顔の向きで順に指します（1分ほど）。押すと設定を保存して閉じ、始まります。</span>
+                                        <button class="ctrl-btn primary calib-start-btn settings-step-action" type="button">🎯 キャリブレーションを始める</button>
+                                    </li>
+                                    <li><b>使う画面（モード）を選ぶ</b><span>このタブの下で選びます。</span></li>
+                                    <li><b>声を選ぶ</b><span>そのままでも OS の声で話します。変えるときは <button class="link-btn" type="button" data-goto-tab="voice-tab">🔊 音声</button></span></li>
+                                    <li><b>パネルの中身を本人に合わせる</b><span><button class="link-btn" type="button" data-goto-tab="simple-tab">🔲 シンプルモード</button> <button class="link-btn" type="button" data-goto-tab="talk-tab">💬 お話モード</button> <button class="link-btn" type="button" data-goto-tab="question-tab">❓ 質問モード</button></span></li>
+                                </ol>
+                            </section>
+
                             <section class="settings-section">
-                                <h4>操作モード</h4>
+                                <h4>使う画面（モード）</h4>
+                                <p class="settings-help">「保存して閉じる」で切り替わります。</p>
                                 <div class="choice-cards">
                                     <label class="choice-card">
                                         <input type="radio" name="app-mode" value="symptom">
@@ -219,20 +193,12 @@
                                     <option value="comic2">ヒーロー2（イラスト）</option>
                                 </select>
                             </section>
-
-                            <section class="settings-section">
-                                <h4>介助者メニュー（右上の ⚙）</h4>
-                                <label class="toggle-row">
-                                    <input type="checkbox" id="params-visible-input">
-                                    <span class="toggle-switch" aria-hidden="true"></span>
-                                    <span>感度スライダーと計測値を出す<small>ポインタを動かしながら感度を合わせるとき用。使わないときは OFF にするとメニューがすっきりする</small></span>
-                                </label>
-                                <p class="settings-help">介助者メニューには、全画面・正面取り直し・キャリブレーション・質問など、使いながら押す操作だけを置いています。</p>
-                            </section>
                         </div>
 
                         <!-- Pointer Tab -->
                         <div id="pointer-tab" class="settings-tab-content">
+                            <p class="settings-pane-lead">顔の動きでポインタを動かす方法と、パネルを決める（確定する）方法。</p>
+
                             <section class="settings-section">
                                 <h4>ポインタの動かし方</h4>
                                 <div class="choice-cards">
@@ -252,7 +218,7 @@
                             </section>
 
                             <section class="settings-section">
-                                <h4>滞留で確定（シンプルモード）</h4>
+                                <h4>止まって確定（滞留）</h4>
                                 <div class="segmented" role="radiogroup" aria-label="滞留時間">
                                     <label><input type="radio" name="dwell-time" value="0"><span>OFF</span></label>
                                     <label><input type="radio" name="dwell-time" value="800"><span>0.8秒</span></label>
@@ -262,7 +228,7 @@
                                     <label><input type="radio" name="dwell-time" value="2500"><span>2.5秒</span></label>
                                     <label><input type="radio" name="dwell-time" value="3000"><span>3.0秒</span></label>
                                 </div>
-                                <p class="settings-help">パネル上でポインタを止めると円が埋まり、満タンで発話。OFF のときは口を開けて確定のみ。</p>
+                                <p class="settings-help">パネル上でポインタを止めると円が埋まり、満タンで発話（シンプル・お話・質問モード）。口を開けても確定できます。OFF なら口を開けたときだけ確定。</p>
                             </section>
 
                             <section class="settings-section">
@@ -298,13 +264,39 @@
                             </section>
 
                             <section class="settings-section">
+                                <h4>感度</h4>
+                                <p class="settings-help">動かすとすぐ反映されます（「キャンセル」でも元に戻りません）。</p>
+                                <div id="quick-tuning" aria-label="調整スライダー">
+                                    <div class="compact-slider-item">
+                                        <label for="jaw-open-threshold-slider">口の開き <span id="jaw-open-threshold-value">0.10</span></label>
+                                        <input type="range" id="jaw-open-threshold-slider" min="0.00" max="0.20" step="0.01" value="0.10">
+                                    </div>
+                                    <div class="compact-slider-item">
+                                        <label for="nose-gain-slider">鼻位置移動 <span id="nose-gain-value">10.0</span></label>
+                                        <input type="range" id="nose-gain-slider" min="0" max="20" step="0.5" value="10">
+                                    </div>
+                                    <div class="compact-slider-item">
+                                        <label for="yaw-gain-slider">顔の傾き <span id="yaw-gain-value">10.0</span></label>
+                                        <input type="range" id="yaw-gain-slider" min="0" max="20" step="0.5" value="10">
+                                    </div>
+                                </div>
+                                <details id="telemetry-panel">
+                                    <summary>計測値</summary>
+                                    <pre id="telemetry-values">計測待機中</pre>
+                                </details>
+                            </section>
+
+                            <section class="settings-section">
                                 <h4>キャリブレーション</h4>
                                 <label class="toggle-row">
                                     <input type="checkbox" id="calib-far-pass-input">
                                     <span class="toggle-switch" aria-hidden="true"></span>
                                     <span>離れた位置でも計測する<small>いつもの位置と離れた位置の2回計測して、距離補正の強さを決める。OFF ならいつもの位置だけで計測し、距離補正は標準の強さ</small></span>
                                 </label>
-                                <p class="settings-help">キャリブレーションは介助者メニュー（右上の ⚙）の「🎯 キャリブレーション」から始めます。</p>
+                                <div class="settings-section-head">
+                                    <span class="settings-help">顔の動きとポインタを合わせます。はじめて使うとき・使う人や座る位置が変わったときに。押すと設定を保存して閉じ、キャリブレーション画面になります。</span>
+                                    <button id="calib-wizard-btn" class="ctrl-btn primary calib-start-btn" type="button">🎯 キャリブレーションを始める</button>
+                                </div>
                                 <div class="settings-section-head">
                                     <span class="settings-help">静止時の揺れ幅と向きごとの倍率を初期値に戻し、今の向きを正面にします（すぐに反映。感度スライダーと距離補正の値は残る）。</span>
                                     <button id="calibrate-btn" class="ctrl-btn secondary" type="button">↺ 校正リセット</button>
@@ -312,30 +304,105 @@
                             </section>
                         </div>
 
+                        <!-- Voice Tab -->
+                        <div id="voice-tab" class="settings-tab-content">
+                            <p class="settings-pane-lead">読み上げる声。そのままでも無料の OS の声で話します。</p>
+
+                            <section class="settings-section">
+                                <h4><label for="tts-model-select">声の種類（TTSモデル）</label></h4>
+                                <div class="tts-model-row">
+                                    <select id="tts-model-select"></select>
+                                    <button id="tts-model-fetch-btn" class="ctrl-btn secondary" type="button">モデル一覧を取得</button>
+                                </div>
+                                <small id="tts-model-status"></small>
+                                <small id="tts-credit-note" class="tts-credit-note"></small>
+                                <p class="settings-help">
+                                    <b>ブラウザ内蔵</b>: 無料・通信なし・遅延なし（Web版を Edge で開くと「Nanami」など自然な声。デスクトップ版は Windows に入っている日本語の声）。
+                                    <b>VOICEVOX</b>: 無料・PC内で合成（下で話者を取得）。
+                                    <b>Cloud TTS</b>: 無料枠内でほぼ無料。前もって作れば遅延なし。
+                                    <b>Gemini</b>: 高品質だが1文数秒かかり回数制限あり。
+                                    Cloud TTS / VOICEVOX に変えて保存すると、まだ音声にしていない文を裏で作り始めます。
+                                </p>
+                                <h4 class="settings-subheading"><label for="tts-preview-input">試聴</label></h4>
+                                <div class="tts-preview-row">
+                                    <input type="text" id="tts-preview-input" value="こんにちは。今日もよろしくお願いします。" maxlength="80">
+                                    <button class="ctrl-btn secondary tts-preview-btn" type="button" data-target="tts-preview-input" title="選択中のTTS設定で試聴">🔊</button>
+                                </div>
+                                <small id="tts-preview-status" aria-live="polite"></small>
+                                <p class="settings-help">保存する前の音声の設定（モデル・話者・口調）で、この文を読み上げます。</p>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4><label for="api-key-input">Gemini API Key</label></h4>
+                                <div class="input-with-button">
+                                    <input type="password" id="api-key-input" placeholder="AIza..." autocomplete="off">
+                                    <button id="api-key-reveal-btn" class="ctrl-btn secondary" type="button">表示</button>
+                                </div>
+                                <p class="settings-help">ブラウザに保存されます。未設定・通信エラー時は OS 標準の日本語音声で読み上げます。Cloud TTS・Gemini の声と、お話モードの「AIで会話パターンを作る」で使います。ブラウザ内蔵・VOICEVOX の声だけなら不要。</p>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4><label for="voicevox-url-input">VOICEVOX（無料の音声合成ソフト）</label></h4>
+                                <div class="tts-model-row">
+                                    <input type="text" id="voicevox-url-input" placeholder="http://127.0.0.1:50021">
+                                    <button id="voicevox-fetch-btn" class="ctrl-btn secondary" type="button">話者を取得</button>
+                                </div>
+                                <small id="voicevox-status" aria-live="polite"></small>
+                                <p class="settings-help">このPCで VOICEVOX を起動してから「話者を取得」を押すと、TTSモデルの一覧に話者が増えます。Web版（github.io）やデスクトップ版から使うには、VOICEVOX の設定（ブラウザで http://127.0.0.1:50021/setting）の「Allow Origin」に <code>https://ohru131.github.io</code> と <code>http://tauri.localhost</code> を追加し、VOICEVOX を再起動してください。ブラウザが「ローカルネットワークへのアクセス」を確認してきたら許可します（Safari からは使えません）。</p>
+                            </section>
+
+                            <section class="settings-section" data-tts-provider="gemini">
+                                <h4><label for="gemini-voice-select">Gemini 話者（Geminiモデル選択時）</label></h4>
+                                <select id="gemini-voice-select"></select>
+                                <h4><label for="gemini-style-input">Gemini 口調指示</label></h4>
+                                <div class="tts-model-row">
+                                    <input type="text" id="gemini-style-input" placeholder="例: 明るく、はきはきと読み上げてください">
+                                    <button id="gemini-style-reset-btn" class="ctrl-btn secondary" type="button">既定に戻す</button>
+                                </div>
+                                <p class="settings-help">空欄なら口調指示なし。作成済みの文は作り直さないので、変えた声にそろえるときは「音声を消去」してから「音声データを作成」を押してください。</p>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4>前もって作った音声</h4>
+                                <p id="audio-cache-summary" class="audio-cache-summary" aria-live="polite"></p>
+                                <div class="settings-section-head">
+                                    <span class="settings-help">まだ音声にしていない文を前もって作っておくと、遅延なく話せます。このタブで入力した API Key・音声設定を保存して作ります。<b id="audio-cache-create-result"></b></span>
+                                    <button id="audio-cache-btn" class="ctrl-btn primary" type="button">🔊 音声データを作成</button>
+                                </div>
+                                <div id="audio-status-voice" class="status-info" style="display:none;" aria-live="polite">
+                                    <div class="status-label"></div>
+                                    <div class="status-progress-bar">
+                                        <div class="status-progress-fill"></div>
+                                    </div>
+                                </div>
+                                <div class="settings-section-head">
+                                    <span class="settings-help">音声は文ごとに1つ保存し、どのモデル・話者で作ったものも使います（モデルを変えても作り直さず、無い文だけ作ります）。声をそろえ直すときや容量が気になるときは消去できます。<b id="audio-cache-clear-result"></b></span>
+                                    <button id="audio-cache-clear-btn" class="ctrl-btn secondary" type="button">音声を消去</button>
+                                </div>
+                                <div class="settings-section-head">
+                                    <span class="settings-help">保存した音声を1つのファイルに書き出し、ほかの端末で読み込めます（読み込むと、書き出したときの TTSモデル・話者・口調に切り替わります。API Key は入りません）。<b id="audio-cache-transfer-result" aria-live="polite"></b></span>
+                                    <button id="audio-cache-export-btn" class="ctrl-btn secondary" type="button">書き出し</button>
+                                    <button id="audio-cache-import-btn" class="ctrl-btn secondary" type="button">読み込み</button>
+                                    <input type="file" id="audio-cache-import-input" accept=".fdaudio" hidden>
+                                </div>
+                            </section>
+                        </div>
+
                         <!-- Simple Mode Tab -->
                         <div id="simple-tab" class="settings-tab-content">
+                            <p class="settings-pane-lead">シンプルモードの画面に並べるパネル。ここで作ったパネルは質問モードの答えにも使えます。</p>
+
                             <section class="settings-section">
-                                <h4>グリッドサイズ</h4>
-                                <div class="segmented" role="radiogroup" aria-label="グリッドサイズ">
+                                <h4>1画面のパネルの数</h4>
+                                <div class="segmented" role="radiogroup" aria-label="1画面のパネルの数">
+                                    <label><input type="radio" name="simple-grid-size" value="3x1"><span>3×1<small>3枚</small></span></label>
                                     <label><input type="radio" name="simple-grid-size" value="2x2"><span>2×2<small>4枚</small></span></label>
                                     <label><input type="radio" name="simple-grid-size" value="3x2"><span>3×2<small>6枚</small></span></label>
                                     <label><input type="radio" name="simple-grid-size" value="3x3"><span>3×3<small>9枚</small></span></label>
                                     <label><input type="radio" name="simple-grid-size" value="4x3"><span>4×3<small>12枚</small></span></label>
                                     <label><input type="radio" name="simple-grid-size" value="4x4"><span>4×4<small>16枚</small></span></label>
                                 </div>
-                                <p class="settings-help">入りきらない分は画面下の「前へ / 次へ」でページ送り。</p>
-                                <div class="toggle-list">
-                                    <label class="toggle-row">
-                                        <input type="checkbox" id="simple-show-rest-input">
-                                        <span class="toggle-switch" aria-hidden="true"></span>
-                                        <span>休憩パネルを表示<small>休憩中は「再開」以外を確定しない</small></span>
-                                    </label>
-                                    <label class="toggle-row">
-                                        <input type="checkbox" id="simple-confirm-sound-input">
-                                        <span class="toggle-switch" aria-hidden="true"></span>
-                                        <span>確定音を鳴らす<small>確定時に短い「ピポッ」</small></span>
-                                    </label>
-                                </div>
+                                <p class="settings-help">入りきらない分は、パネルの左右の「前へ / 次へ」でページ送り。寝た姿勢などで首を縦に動かしにくい人は 3×1（横1列）。下の「画面の配置」に、この数で並びます。</p>
                             </section>
 
                             <div class="layout-editor">
@@ -362,7 +429,8 @@
                             </div>
 
                             <section class="settings-section">
-                                <h4>任意パネルを追加</h4>
+                                <h4>自分でパネルを作る（任意パネル）</h4>
+                                <p class="settings-help">作ったパネルは上の「追加できるパネル」の「任意」に入ります。</p>
                                 <div class="simple-custom-form">
                                     <label class="field">
                                         <span>表示名 <em>必須</em></span>
@@ -390,19 +458,70 @@
                                 </div>
                                 <p class="settings-help">画像は 256px に縮小してブラウザに保存されます。</p>
                             </section>
+
+                            <section class="settings-section">
+                                <h4>休憩・確定音</h4>
+                                <div class="toggle-list">
+                                    <label class="toggle-row">
+                                        <input type="checkbox" id="simple-show-rest-input">
+                                        <span class="toggle-switch" aria-hidden="true"></span>
+                                        <span>休憩パネルを表示<small>休憩中は「再開」以外を確定しない</small></span>
+                                    </label>
+                                    <label class="toggle-row">
+                                        <input type="checkbox" id="simple-confirm-sound-input">
+                                        <span class="toggle-switch" aria-hidden="true"></span>
+                                        <span>確定音を鳴らす<small>確定時に短い「ピポッ」</small></span>
+                                    </label>
+                                </div>
+                            </section>
                         </div>
 
                         <!-- Talk Tab -->
                         <div id="talk-tab" class="settings-tab-content">
-                            <section class="settings-section">
-                                <h4>お話モード</h4>
-                                <p class="settings-help">用意した会話を「話題 → 内容 → …」と2〜4回選んで話します。どの段でも「🔊 これで話す」で確定でき、続きのない言葉を選ぶとそのまま話します。上のタブの「👤 相手」で来ている人を選ぶと、「お母さん、〜」のように呼びかけが入り、その人向けの話題も出ます（選ばなければ呼びかけなし）。</p>
-                            </section>
+                            <p class="settings-pane-lead">お話モードの会話。「話題 → 内容 → …」と2〜4回選び、どの段でも「🔊 これで話す」で話せます。画面上のタブ「👤 相手」で来ている人を選ぶと「お母さん、〜」のように呼びかけが入り、その人向けの話題も出ます。</p>
 
                             <section class="settings-section">
                                 <h4>会話パターン</h4>
                                 <p class="settings-help">使う会話パターンを選びます（選ぶとすぐ切り替わります）。AIで作ったパターンは自動で保存され、削除しない限り残ります。</p>
                                 <div id="talk-set-list" class="talk-set-list"></div>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4>表示する言葉</h4>
+                                <p class="settings-help">チェックを外すと、その言葉とその先の言葉が出なくなります（話したくない話題を外す）。</p>
+                                <div id="talk-word-filter" class="filter-chips"></div>
+                                <div id="talk-word-list" class="talk-editor-list"></div>
+                            </section>
+
+                            <section class="settings-section">
+                                <h4>文を追加（「✏️ 自分の言葉」の話題に並ぶ）</h4>
+                                <div class="talk-custom-form">
+                                    <label class="field">
+                                        <span>パネルの言葉 <em>必須</em></span>
+                                        <input type="text" id="talk-custom-label-input" placeholder="例: 推しの話" maxlength="12">
+                                    </label>
+                                    <label class="field">
+                                        <span>絵文字</span>
+                                        <input type="text" id="talk-custom-emoji-input" placeholder="⚔️" maxlength="8">
+                                    </label>
+                                    <label class="field field--wide2">
+                                        <span>読み上げる文（先頭に {呼}、 と書くと相手の呼び名が入る）</span>
+                                        <input type="text" id="talk-custom-say-input" placeholder="例: {呼}、推しの話を聞いてくれる？" maxlength="80">
+                                    </label>
+                                    <button id="talk-custom-add-btn" class="ctrl-btn primary" type="button">＋ 追加</button>
+                                </div>
+                            </section>
+                            <section class="settings-section">
+                                <h4>よく話す</h4>
+                                <label class="toggle-row">
+                                    <input type="checkbox" id="talk-learn-input">
+                                    <span class="toggle-switch" aria-hidden="true"></span>
+                                    <span>話した文を記録する<small>「⭐ よく話す」タブに回数の多い順で出す（この端末内だけに保存）</small></span>
+                                </label>
+                                <div class="settings-section-head">
+                                    <span id="talk-history-summary" class="settings-help"></span>
+                                    <button id="talk-history-clear-btn" class="ctrl-btn secondary" type="button">記録を消去</button>
+                                </div>
                             </section>
 
                             <section class="settings-section">
@@ -439,75 +558,36 @@
                                 <p id="talk-ai-status" class="settings-help" aria-live="polite"></p>
                                 <div id="talk-interview-list" class="talk-interview-list"></div>
                             </section>
-
-                            <section class="settings-section">
-                                <h4>よく話す</h4>
-                                <label class="toggle-row">
-                                    <input type="checkbox" id="talk-learn-input">
-                                    <span class="toggle-switch" aria-hidden="true"></span>
-                                    <span>話した文を記録する<small>「⭐ よく話す」タブに回数の多い順で出す（この端末内だけに保存）</small></span>
-                                </label>
-                                <div class="settings-section-head">
-                                    <span id="talk-history-summary" class="settings-help"></span>
-                                    <button id="talk-history-clear-btn" class="ctrl-btn secondary" type="button">記録を消去</button>
-                                </div>
-                            </section>
-
-                            <section class="settings-section">
-                                <h4>表示する言葉</h4>
-                                <p class="settings-help">チェックを外すと、その言葉とその先の言葉が出なくなります（話したくない話題を外す）。</p>
-                                <div id="talk-word-filter" class="filter-chips"></div>
-                                <div id="talk-word-list" class="talk-editor-list"></div>
-                            </section>
-
-                            <section class="settings-section">
-                                <h4>文を追加（「✏️ 自分の言葉」の話題に並ぶ）</h4>
-                                <div class="talk-custom-form">
-                                    <label class="field">
-                                        <span>パネルの言葉 <em>必須</em></span>
-                                        <input type="text" id="talk-custom-label-input" placeholder="例: 推しの話" maxlength="12">
-                                    </label>
-                                    <label class="field">
-                                        <span>絵文字</span>
-                                        <input type="text" id="talk-custom-emoji-input" placeholder="⚔️" maxlength="8">
-                                    </label>
-                                    <label class="field field--wide2">
-                                        <span>読み上げる文（先頭に {呼}、 と書くと相手の呼び名が入る）</span>
-                                        <input type="text" id="talk-custom-say-input" placeholder="例: {呼}、推しの話を聞いてくれる？" maxlength="80">
-                                    </label>
-                                    <button id="talk-custom-add-btn" class="ctrl-btn primary" type="button">＋ 追加</button>
-                                </div>
-                            </section>
                         </div>
 
                         <!-- Question Tab -->
                         <div id="question-tab" class="settings-tab-content">
-                            <section class="settings-section">
-                                <h4>質問への返事テンプレート</h4>
-                                <p class="settings-help">質問モード（設定 → 基本）では、画面の上に質問が並び、介助者がマウスで押して利用者に答えてもらいます。ボタンの並びは会話中も変わりません（押した質問だけ色が変わる）。答えは質問文の右に出ます。<br>ほかのモードでも、介助者メニュー（右上の ⚙）の「質問する」で選ぶと回答パネルに切り替わり、回答すると元の画面へ戻ります（90秒操作がなければ自動で戻る）。</p>
-                                <label class="toggle-row">
-                                    <input type="checkbox" id="question-speak-input">
-                                    <span class="toggle-switch" aria-hidden="true"></span>
-                                    <span>質問を読み上げる<small>切り替え時に質問文を音声で流す</small></span>
-                                </label>
-                            </section>
+                            <p class="settings-pane-lead">介助者が質問を選び、本人が回答パネルで答えます。ほかのモードでも、下の「今すぐ質問する」から出せます（答えると元の画面へ戻る）。</p>
 
                             <section class="settings-section">
-                                <h4>回答パネルの数（1画面の最大）</h4>
-                                <div class="segmented" role="radiogroup" aria-label="回答パネルの数">
-                                    <label><input type="radio" name="question-grid-size" value=""><span>シンプルと同じ<small>グリッドサイズ</small></span></label>
+                                <h4>1画面のパネルの数</h4>
+                                <div class="segmented" role="radiogroup" aria-label="1画面のパネルの数">
+                                    <label><input type="radio" name="question-grid-size" value=""><span>シンプル<small>と同じ数</small></span></label>
+                                    <label><input type="radio" name="question-grid-size" value="3x1"><span>3×1<small>3枚</small></span></label>
                                     <label><input type="radio" name="question-grid-size" value="2x2"><span>2×2<small>4枚</small></span></label>
                                     <label><input type="radio" name="question-grid-size" value="3x2"><span>3×2<small>6枚</small></span></label>
                                     <label><input type="radio" name="question-grid-size" value="3x3"><span>3×3<small>9枚</small></span></label>
                                     <label><input type="radio" name="question-grid-size" value="4x3"><span>4×3<small>12枚</small></span></label>
                                     <label><input type="radio" name="question-grid-size" value="4x4"><span>4×4<small>16枚</small></span></label>
                                 </div>
-                                <p class="settings-help">答えが少ない質問は、パネルを減らして大きく並べます（例: 答え4つなら 2×2）。ここで選んだ数より多い答えは「前へ / 次へ」でページ送り。質問ごとの数は下の「答えのパネル」で固定できます。</p>
+                                <p class="settings-help">入りきらない分は、パネルの左右の「前へ / 次へ」でページ送り。答えが少ない質問は自動で数を減らして大きく並べます（例: 答え4つなら 2×2）。</p>
+                            </section>
+
+                            <section id="question-now-section" class="settings-section">
+                                <h4>今すぐ質問する</h4>
+                                <p class="settings-help">押すと設定を保存して閉じ、回答パネルに切り替わります。答えると元の画面へ戻ります（90秒操作がなければ自動で戻る）。</p>
+                                <div id="question-buttons" class="question-buttons"></div>
+                                <button id="question-end-btn" class="ctrl-btn secondary" type="button" style="display:none;">質問を終了して戻る</button>
                             </section>
 
                             <section class="settings-section">
-                                <h4>出す質問（質問モードの上のボタン・介助者メニュー）</h4>
-                                <p class="settings-help">▲▼ で会話の順に並べ替えます。🧩 の質問は、シンプルモードのパネルをそのまま答えにします。「✏️ 答え」で下の「答えのパネル」を開きます。</p>
+                                <h4>出す質問</h4>
+                                <p class="settings-help">チェックした質問が、質問モードの画面の上と「今すぐ質問する」に並びます。▲▼ で会話の順に並べ替えます。🧩 の質問は、シンプルモードのパネルをそのまま答えにします。「✏️ 答え」で下の「答えのパネル」を開きます。</p>
                                 <div id="question-editor-list"></div>
                                 <div class="simple-editor-toolbar">
                                     <button id="question-reset-order-btn" class="ctrl-btn secondary" type="button">おすすめの並びに戻す</button>
@@ -524,15 +604,7 @@
                                     <span>質問</span>
                                     <select id="question-answer-select"></select>
                                 </label>
-                                <div class="segmented segmented--compact" role="radiogroup" aria-label="この質問のパネルの数">
-                                    <label><input type="radio" name="question-answer-grid" value=""><span>自動<small>おまかせ</small></span></label>
-                                    <label><input type="radio" name="question-answer-grid" value="2x2"><span>2×2<small>4枚</small></span></label>
-                                    <label><input type="radio" name="question-answer-grid" value="3x2"><span>3×2<small>6枚</small></span></label>
-                                    <label><input type="radio" name="question-answer-grid" value="3x3"><span>3×3<small>9枚</small></span></label>
-                                    <label><input type="radio" name="question-answer-grid" value="4x3"><span>4×3<small>12枚</small></span></label>
-                                    <label><input type="radio" name="question-answer-grid" value="4x4"><span>4×4<small>16枚</small></span></label>
-                                </div>
-                                <p class="settings-help">上は、この質問の1画面のパネル数（自動なら、答えの数と「回答パネルの数」で決まる）。下は質問モードの画面と同じ並びです。タイルをドラッグすると、落としたタイルの左半分なら前、右半分なら後ろに入ります。クリックで選んで ⏮ ◀ ▶ ⏭ でも動かせます。✕ で外せます。</p>
+                                <p class="settings-help">パネルの数は、答えの数と上の「1画面のパネルの数」で決まります。質問モードの画面と同じ並びです。タイルをドラッグすると、落としたタイルの左半分なら前、右半分なら後ろに入ります。クリックで選んで ⏮ ◀ ▶ ⏭ でも動かせます。✕ で外せます。</p>
                                 <div id="question-answer-pages" class="layout-pages"></div>
                                 <div id="question-answer-detail" class="layout-detail"></div>
                                 <div class="simple-editor-toolbar">
@@ -579,92 +651,42 @@
                                     <button id="question-custom-add-btn" class="ctrl-btn primary" type="button">＋ 質問を追加</button>
                                 </div>
                             </section>
-                        </div>
-
-                        <!-- Voice Tab -->
-                        <div id="voice-tab" class="settings-tab-content">
                             <section class="settings-section">
-                                <h4><label for="api-key-input">Gemini API Key（高品質音声）</label></h4>
-                                <div class="input-with-button">
-                                    <input type="password" id="api-key-input" placeholder="AIza..." autocomplete="off">
-                                    <button id="api-key-reveal-btn" class="ctrl-btn secondary" type="button">表示</button>
-                                </div>
-                                <p class="settings-help">ブラウザに保存されます。未設定・通信エラー時は OS 標準の日本語音声で読み上げます。このタブ下の「音声データを作成」で、まだ音声にしていない文を前もって作っておくと、遅延なく話せます。</p>
-                            </section>
-
-                            <section class="settings-section">
-                                <h4><label for="tts-model-select">TTSモデル</label></h4>
-                                <div class="tts-model-row">
-                                    <select id="tts-model-select"></select>
-                                    <button id="tts-model-fetch-btn" class="ctrl-btn secondary" type="button">モデル一覧を取得</button>
-                                </div>
-                                <small id="tts-model-status"></small>
-                                <small id="tts-credit-note" class="tts-credit-note"></small>
-                                <p class="settings-help">
-                                    <b>ブラウザ内蔵</b>: 無料・通信なし・遅延なし（Web版を Edge で開くと「Nanami」など自然な声。デスクトップ版は Windows に入っている日本語の声）。
-                                    <b>VOICEVOX</b>: 無料・PC内で合成（下で話者を取得）。
-                                    <b>Cloud TTS</b>: 無料枠内でほぼ無料。前もって作れば遅延なし。
-                                    <b>Gemini</b>: 高品質だが1文数秒かかり回数制限あり。
-                                    Cloud TTS / VOICEVOX に変えて保存すると、まだ音声にしていない文を裏で作り始めます。
-                                </p>
-                                <h4><label for="voicevox-url-input">VOICEVOX（無料の音声合成ソフト）</label></h4>
-                                <div class="tts-model-row">
-                                    <input type="text" id="voicevox-url-input" placeholder="http://127.0.0.1:50021">
-                                    <button id="voicevox-fetch-btn" class="ctrl-btn secondary" type="button">話者を取得</button>
-                                </div>
-                                <small id="voicevox-status" aria-live="polite"></small>
-                                <p class="settings-help">このPCで VOICEVOX を起動してから「話者を取得」を押すと、TTSモデルの一覧に話者が増えます。Web版（github.io）やデスクトップ版から使うには、VOICEVOX の設定（ブラウザで http://127.0.0.1:50021/setting）の「Allow Origin」に <code>https://ohru131.github.io</code> と <code>http://tauri.localhost</code> を追加し、VOICEVOX を再起動してください。ブラウザが「ローカルネットワークへのアクセス」を確認してきたら許可します（Safari からは使えません）。</p>
-                                <h4><label for="gemini-voice-select">Gemini 話者（Geminiモデル選択時）</label></h4>
-                                <select id="gemini-voice-select"></select>
-                                <h4><label for="gemini-style-input">Gemini 口調指示</label></h4>
-                                <div class="tts-model-row">
-                                    <input type="text" id="gemini-style-input" placeholder="例: 明るく、はきはきと読み上げてください">
-                                    <button id="gemini-style-reset-btn" class="ctrl-btn secondary" type="button">既定に戻す</button>
-                                </div>
-                                <p class="settings-help">空欄なら口調指示なし。作成済みの文は作り直さないので、変えた声にそろえるときは「音声を消去」してから「音声データを作成」を押してください。</p>
-                            </section>
-
-                            <section class="settings-section">
-                                <h4>前もって作った音声</h4>
-                                <p id="audio-cache-summary" class="audio-cache-summary" aria-live="polite"></p>
-                                <div class="settings-section-head">
-                                    <span class="settings-help">まだ音声にしていない文を前もって作っておくと、遅延なく話せます。このタブで入力した API Key・音声設定を保存して作ります。<b id="audio-cache-create-result"></b></span>
-                                    <button id="audio-cache-btn" class="ctrl-btn primary" type="button">🔊 音声データを作成</button>
-                                </div>
-                                <div id="audio-status-voice" class="status-info" style="display:none;" aria-live="polite">
-                                    <div class="status-label"></div>
-                                    <div class="status-progress-bar">
-                                        <div class="status-progress-fill"></div>
-                                    </div>
-                                </div>
-                                <div class="settings-section-head">
-                                    <span class="settings-help">音声は文ごとに1つ保存し、どのモデル・話者で作ったものも使います（モデルを変えても作り直さず、無い文だけ作ります）。声をそろえ直すときや容量が気になるときは消去できます。<b id="audio-cache-clear-result"></b></span>
-                                    <button id="audio-cache-clear-btn" class="ctrl-btn secondary" type="button">音声を消去</button>
-                                </div>
-                                <div class="settings-section-head">
-                                    <span class="settings-help">保存した音声を1つのファイルに書き出し、ほかの端末で読み込めます（読み込むと、書き出したときの TTSモデル・話者・口調に切り替わります。API Key は入りません）。<b id="audio-cache-transfer-result" aria-live="polite"></b></span>
-                                    <button id="audio-cache-export-btn" class="ctrl-btn secondary" type="button">書き出し</button>
-                                    <button id="audio-cache-import-btn" class="ctrl-btn secondary" type="button">読み込み</button>
-                                    <input type="file" id="audio-cache-import-input" accept=".fdaudio" hidden>
-                                </div>
-                            </section>
-
-                            <section class="settings-section">
-                                <h4><label for="tts-preview-input">試聴</label></h4>
-                                <div class="tts-preview-row">
-                                    <input type="text" id="tts-preview-input" value="こんにちは。今日もよろしくお願いします。" maxlength="80">
-                                    <button class="ctrl-btn secondary tts-preview-btn" type="button" data-target="tts-preview-input" title="選択中のTTS設定で試聴">🔊</button>
-                                </div>
-                                <small id="tts-preview-status" aria-live="polite"></small>
-                                <p class="settings-help">保存する前の音声の設定（モデル・話者・口調）で、この文を読み上げます。</p>
+                                <h4>質問の読み上げ</h4>
+                                <label class="toggle-row">
+                                    <input type="checkbox" id="question-speak-input">
+                                    <span class="toggle-switch" aria-hidden="true"></span>
+                                    <span>質問を読み上げる<small>切り替え時に質問文を音声で流す</small></span>
+                                </label>
                             </section>
                         </div>
                     </div>
                 </div>
 
                 <div class="modal-actions">
+                    <span class="modal-actions-note">変えた内容は「保存して閉じる」で反映されます</span>
                     <button id="close-settings" class="ctrl-btn secondary" type="button">キャンセル</button>
                     <button id="save-settings" class="ctrl-btn primary" type="button">保存して閉じる</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 初回の案内: キャリブレーションがまだなら起動時に出す（介助者がマウスで押す） -->
+        <div id="welcome-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+            <div class="modal-content welcome-content">
+                <div class="welcome-body">
+                    <div class="welcome-icon" aria-hidden="true">🎯</div>
+                    <h3 id="welcome-title">はじめに、ポインタを顔の動きに合わせます</h3>
+                    <p class="welcome-lead">キャリブレーション（1分ほど）。介助者の方がマウスで操作してください。</p>
+                    <ol class="settings-steps">
+                        <li><b>本人がいつもの姿勢で、画面の正面に座る</b><span>カメラに顔全体が映るようにします。</span></li>
+                        <li><b>画面に出る ○ を、顔の向きで順に指す</b><span>画面の上の指示に従います。○ に合わせて止まると次へ進みます。</span></li>
+                        <li><b>結果を見て「保存」</b><span>あとからでも、右上の ⚙ → 基本 または ポインタと確定 でやり直せます。</span></li>
+                    </ol>
+                </div>
+                <div class="modal-actions">
+                    <button id="welcome-later-btn" class="ctrl-btn secondary" type="button">あとで</button>
+                    <button id="welcome-start-btn" class="ctrl-btn primary" type="button">🎯 キャリブレーションを始める</button>
                 </div>
             </div>
         </div>
