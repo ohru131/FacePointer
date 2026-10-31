@@ -33,6 +33,8 @@ const modePrompt = document.getElementById("mode-prompt");
 const simplePanelContainer = document.getElementById("simple-panel");
 const simpleGridContainer = document.getElementById("simple-grid");
 const simpleBarContainer = document.getElementById("simple-bar");
+const simpleSidePrev = document.getElementById("simple-side-prev");
+const simpleSideNext = document.getElementById("simple-side-next");
 const simpleMessageContainer = document.getElementById("simple-message");
 const dwellIndicator = document.getElementById("dwell-indicator");
 
@@ -114,7 +116,6 @@ const SIDE_GAIN_RATIO_LIMITS = { left: [0.5, 2], right: [0.5, 2], up: [0.3, 4], 
 const CALIB_SIDE_KEYS = { left: "dx", right: "dx", up: "dy", down: "dy" };
 // 向きごとの倍率は、同じ軸の両側を合算した倍率のこの倍まで（その逆数倍から）に収める
 const SIDE_GAIN_ASYMMETRY_MAX = 1.6;
-const CONTROLS_COLLAPSED_KEY = "controls_collapsed";
 const NOSE_GAIN_KEY = "nose_gain";
 const YAW_GAIN_KEY = "yaw_gain";
 const NOSE_GAIN_MAX = 20;
@@ -170,7 +171,6 @@ const DISTANCE_FILTER_TIME_CONSTANT_MS = 300;
 
 const JAW_OPEN_THRESHOLD_KEY = "jaw_open_threshold";
 const ICON_STYLE_KEY = "icon_style";
-const PARAM_PANEL_VISIBLE_KEY = "param_panel_visible";
 const ICON_STYLE_DEFAULT = "simple";
 const ICON_STYLE_COMIC = "comic";
 const ICON_STYLE_COMIC2 = "comic2";
@@ -401,9 +401,14 @@ function isQuestionMode() {
     return appMode === APP_MODE_QUESTION;
 }
 
-// 設定画面を開いている間は、確定・発話などの機能を止める
+// 設定画面（と初回の案内）を開いている間は、確定・発話などの機能を止める
 function isSettingsOpen() {
-    return document.getElementById("settings-modal")?.classList.contains("active") ?? false;
+    return document.querySelector(".modal.active") !== null;
+}
+
+// キャリブレーションを一度でも保存したか（保存すると版の印を残す）
+function isCalibrationDone() {
+    return localStorage.getItem(CALIB_VERSION_KEY) !== null;
 }
 
 // Symptom state
@@ -1448,6 +1453,11 @@ async function setupMediaPipe() {
             numFaces: 1
         });
         loadingOverlay.style.display = "none";
+        // キャリブレーションがまだなら、起動時の正面登録の代わりに案内を出す（顔が映る前でも出す）
+        if (!isCalibrationDone()) {
+            needsStartupFrontRegistration = false;
+            openWelcome();
+        }
         startCamera();
     } catch (error) {
         console.error("MediaPipe initialization failed:", error);
@@ -1671,6 +1681,7 @@ function renderAll() {
     if (appRoot) {
         appRoot.dataset.mode = "symptom";
         appRoot.dataset.symptomStage = symptomStage;
+        appRoot.dataset.questionMode = "0";
     }
 
     const promptText = symptomStage === SYMPTOM_STAGE_SYMPTOM
@@ -1689,6 +1700,9 @@ function renderAll() {
     }
 
     previewSymptomName = null;
+
+    // シンプル・お話・質問の画面では3段とも隠しているので、症状モードに戻ったら大分類の段を出し直す
+    if (row1Container) row1Container.style.display = "";
 
     if (symptomStage === SYMPTOM_STAGE_SYMPTOM) {
         renderRow(row1Container, symptomChoices, 1, handleSymptomClick);
@@ -1719,13 +1733,15 @@ function renderAll() {
 const SIMPLE_CONFIG_KEY = "simple_panel_config_v1";
 const SIMPLE_CUSTOM_PANELS_KEY = "simple_custom_panels_v1";
 const SIMPLE_GRID_SIZES = {
+    // 3×1: 寝た姿勢などで縦に動かしにくい人向け（横1列）
+    "3x1": { cols: 3, rows: 1 },
     "2x2": { cols: 2, rows: 2 },
     "3x2": { cols: 3, rows: 2 },
     "3x3": { cols: 3, rows: 3 },
     "4x3": { cols: 4, rows: 3 },
     "4x4": { cols: 4, rows: 4 }
 };
-const SIMPLE_GRID_SIZE_DEFAULT = "4x4";
+const SIMPLE_GRID_SIZE_DEFAULT = "3x2";
 const SIMPLE_CTRL_PREV = "ctrl-prev";
 const SIMPLE_CTRL_NEXT = "ctrl-next";
 const SIMPLE_CTRL_REST = "ctrl-rest";
@@ -2294,7 +2310,7 @@ function getSimpleLayout() {
     const userSize = SIMPLE_GRID_SIZES[simpleConfig.gridSize] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
     let panels;
     if (activeQuestion) {
-        const { cols, rows } = getQuestionGridSize(activeQuestion.id, activeQuestion.answers.length);
+        const { cols, rows } = getQuestionGridSize(activeQuestion.answers.length);
         return { cols, rows, panels: activeQuestion.answers };
     } else if (isQuestionMode()) {
         return { ...userSize, panels: [] };
@@ -2308,10 +2324,8 @@ function getSimpleLayout() {
     return { cols, rows, panels: repeatTalkSayPanel(panels, cols * rows) };
 }
 
-// 質問の回答パネルのグリッド。質問ごとに決めた大きさ（固定）→ 枚数に合わせて自動（質問タブの最大、未設定ならシンプルモードと同じ）
-function getQuestionGridSize(questionId, n, { gridSize = questionConfig.gridSize, gridSizes = questionConfig.gridSizes, simpleGridSize = simpleConfig.gridSize } = {}) {
-    const fixed = SIMPLE_GRID_SIZES[gridSizes?.[questionId]];
-    if (fixed) return fixed;
+// 質問の回答パネルのグリッド。枚数に合わせて自動（質問タブの「1画面のパネルの数」まで。未設定ならシンプルモードと同じ）
+function getQuestionGridSize(n, { gridSize = questionConfig.gridSize, simpleGridSize = simpleConfig.gridSize } = {}) {
     const max = SIMPLE_GRID_SIZES[gridSize] || SIMPLE_GRID_SIZES[simpleGridSize] || SIMPLE_GRID_SIZES[SIMPLE_GRID_SIZE_DEFAULT];
     return getAutoGridSize(n, max);
 }
@@ -2324,7 +2338,9 @@ function getAutoGridSize(n, userSize) {
         : n <= 9 ? { cols: 3, rows: 3 }
         : n <= 12 ? { cols: 4, rows: 3 }
         : { cols: 4, rows: 4 };
-    return { cols: Math.min(auto.cols, userSize.cols), rows: Math.min(auto.rows, userSize.rows) };
+    // 入りきらなければ設定のグリッドのまま（3×1 で答え4つなら 2×1 ではなく 3×1 にしてページ送り）
+    if (auto.cols <= userSize.cols && auto.rows <= userSize.rows) return auto;
+    return { cols: userSize.cols, rows: userSize.rows };
 }
 
 // 「これで話す」は複数ページになっても各ページの先頭に置く（どのページからでも確定できる）
@@ -2417,12 +2433,12 @@ function renderTalkTabs() {
     });
 }
 
-function appendSimpleControl(control, label, extraClass = "", disabled = false) {
+function appendSimpleControl(control, label, extraClass = "", disabled = false, container = simpleBarContainer) {
     const btn = createSimpleButton(control, label, {
         className: `simple-ctrl ${extraClass}${disabled ? " is-disabled" : ""}`.trim(),
         onClick: () => handleSimpleControl(control)
     });
-    simpleBarContainer.appendChild(btn);
+    container.appendChild(btn);
 }
 
 function renderSimpleMode() {
@@ -2431,6 +2447,8 @@ function renderSimpleMode() {
         appRoot.dataset.simplePaused = isSimplePaused ? "1" : "0";
         appRoot.dataset.question = activeQuestion ? "1" : "0";
         appRoot.dataset.talk = isTalkScreen() ? "1" : "0";
+        // 質問モード: 上の質問ボタンを右上の ⛶ ⚙ ◎ と同じ高さにそろえる
+        appRoot.dataset.questionMode = isQuestionMode() ? "1" : "0";
         delete appRoot.dataset.symptomStage;
     }
     if (modePrompt) modePrompt.textContent = "";
@@ -2477,13 +2495,21 @@ function renderSimpleMode() {
     }
 
     simpleBarContainer.innerHTML = "";
-    if (pageCount > 1) {
-        appendSimpleControl(SIMPLE_CTRL_PREV, "◀ 前へ");
+    // 前へ・次へは、パネルの左端・右端に縦長で置く（下のバーは休憩・戻るなど）
+    const sidePaging = pageCount > 1 && simpleSidePrev && simpleSideNext;
+    [simpleSidePrev, simpleSideNext].forEach((el) => {
+        if (!el) return;
+        el.innerHTML = "";
+        el.style.display = sidePaging ? "" : "none";
+    });
+    if (sidePaging) {
+        // 休憩中はページも送らない（押しても滞留しても動かない。見た目も無効にする）
+        appendSimpleControl(SIMPLE_CTRL_PREV, "◀\n前へ", "simple-ctrl--side", isSimplePaused, simpleSidePrev);
+        appendSimpleControl(SIMPLE_CTRL_NEXT, "次へ\n▶", "simple-ctrl--side", isSimplePaused, simpleSideNext);
         const pageLabel = document.createElement("div");
-        pageLabel.className = "simple-page-label";
-        pageLabel.textContent = `${simplePage + 1} / ${pageCount}`;
-        simpleBarContainer.appendChild(pageLabel);
-        appendSimpleControl(SIMPLE_CTRL_NEXT, "次へ ▶");
+        pageLabel.className = "simple-page-label simple-page-label--side";
+        pageLabel.textContent = `${simplePage + 1}/${pageCount}`;
+        simpleSideNext.insertBefore(pageLabel, simpleSideNext.firstChild);
     }
     if (activeQuestion && !isQuestionMode()) {
         appendSimpleControl(SIMPLE_CTRL_CANCEL, "✕ やめる", "simple-ctrl--cancel");
@@ -2504,11 +2530,11 @@ function renderSimpleMode() {
         const notice = document.createElement("div");
         notice.className = "simple-empty-notice";
         notice.textContent = isQuestionMode() && !activeQuestion
-            ? "出す質問がありません（設定 → 質問で選択）"
+            ? "出す質問がありません（設定 → 質問モードで選択）"
             : activeQuestion
-            ? "答えがありません（設定 → 質問 →「答えのパネル」で追加）"
+            ? "答えがありません（設定 → 質問モード →「答えのパネル」で追加）"
             : isTalkScreen()
-            ? (talkTab === TALK_TAB_FAVORITE ? "まだ話した文がありません（話すとここに出ます）" : "表示する言葉がありません（設定 → お話で選択）")
+            ? (talkTab === TALK_TAB_FAVORITE ? "まだ話した文がありません（話すとここに出ます）" : "表示する言葉がありません（設定 → お話モードで選択）")
             : "表示するパネルがありません（設定 → シンプルモードで選択）";
         simpleGridContainer.appendChild(notice);
     }
@@ -2780,7 +2806,9 @@ const QUESTION_CUSTOM_KEY = "question_custom_v1";
 // 質問モードで最後に出していた質問
 const QUESTION_MODE_LAST_KEY = "question_mode_last_id";
 // 既定で出さない質問。保存済みの設定には、まだ知らない質問にだけ当てる（設定 → 質問でチェックすれば出せる）
-const QUESTION_DEFAULT_HIDDEN_IDS = ["q-condition", "q-pastime", "q-who"];
+// はい・いいえ は わかった？ と、ほかには？ は上の質問と重なるので出さない
+// （重なっていた 体調は？・過ごし方は？・誰に会いたい？ は、体がつらい？・何がしたい？・家族のこと？ にまとめた）
+const QUESTION_DEFAULT_HIDDEN_IDS = ["q-yes-no", "q-other"];
 // knownIds を持たない古い設定が、すでに知っている質問（このあとに足した質問だけ既定の非表示を当てる）
 const QUESTION_LEGACY_PRESET_IDS = ["q-yes-no", "q-pain-where", "q-pain-level", "q-itch-where", "q-feeling", "q-temperature", "q-position", "q-want", "q-who"];
 // 答えを既存のパネルから出す質問の panelSource。それ以外はパネルのグループ名（基本・体調・ケア… 任意）
@@ -2790,11 +2818,15 @@ const QUESTION_PANEL_GROUP_AIZUCHI = "相づち";
 // 回答がないまま放置されたら元の画面へ戻す
 const QUESTION_TIMEOUT_MS = 90000;
 
-// 並び: 1段目は体のこと（気分 → 症状 → 痛み・かゆみ → 暑さ寒さ・体の向き・吸引）、
-// 2段目は返事と会話（はい・いいえ、わかった？、相づち）→ お願い・したいこと・気持ち・家族 → ほかに。
-// 8つずつ2段に収まるよう、重なる質問（体調は？・過ごし方は？・誰に会いたい？）は既定で出さない。設定 → 質問で並べ替えられる
-// emoji: 質問モードの上のボタン・介助者メニューに出すアイコン
+// 8つずつ2段。同じ答えは1つの質問にだけ置く（暑い・寒いは「暑い？寒い？」、吸引・体の向きはそれぞれの質問、もう一度は「わかった？」）
+// 1段目は体のこと: 気分 → 体がつらい？（体の不調。痛い・かゆいは次の質問で詳しく）→ 痛み・かゆみ → 暑さ寒さ → 体の向き → 吸引
+// 2段目は暮らしと会話: 暮らし（お世話 → 部屋 → したいこと → 知りたいこと）→ 会話と心（わかった？ → 相づち → 気持ち → 家族）
+// 設定 → 質問で並べ替えられる
+// emoji: 質問モードの上のボタン・設定の「今すぐ質問する」に出すアイコン
 // panelSource: 答えを既存のパネルから出す（パネルのグループ名、または QUESTION_PANEL_SOURCE_LAYOUT）
+// panelIds: 答えにする既存パネル（グループの一部だけ・グループをまたいで選ぶとき）
+// answersFirst: 質問に書いた答えを既存パネルより前に並べる
+// answers[].index: 答えを外したあとも元の並びの番号を保つ（生成アイコン・保存した答えの並びはこの番号で引く）
 // silent: 切り替えても質問文を読み上げない
 const QUESTION_PRESETS = [
     {
@@ -2806,9 +2838,10 @@ const QUESTION_PRESETS = [
             { name: "疲れた", emoji: "😩", sentence: "疲れました。" }
         ]
     },
+    // 体の不調だけ（お世話・気分転換・会話は別の質問へ）。気分が悪いは「気分は？」に置く
     {
-        id: "q-what", emoji: "🤒", label: "どうした？", question: "どうしましたか？",
-        panelSource: "基本"
+        id: "q-what", emoji: "🤒", label: "体がつらい？", question: "体でつらいところはありますか？",
+        panelIds: ["base-0-1", "base-0-0", "p-breath", "base-0-2", "p-dry-mouth", "p-cant-sleep", "p-period"]
     },
     {
         id: "q-pain-where", emoji: "🤕", label: "どこが痛い？", question: "どこが痛いですか？",
@@ -2878,13 +2911,37 @@ const QUESTION_PRESETS = [
             { name: "今はいい", emoji: "👌", sentence: "今は大丈夫です。" }
         ]
     },
+    // 体のお世話・身だしなみ（吸引・体の向きはそれぞれの質問、部屋のことは「部屋は？」に置く）
     {
-        id: "q-yes-no", emoji: "⭕", label: "はい・いいえ", question: "はい・いいえで答えてください",
+        id: "q-care", emoji: "🧴", label: "お世話は？", question: "お世話してほしいことはありますか？",
+        panelIds: ["p-call", "base-1-3", "base-1-2", "p-face", "p-hair", "p-cream", "p-nails", "p-female-staff"]
+    },
+    // 明るさ・カーテン・音（暑さ寒さは「暑い？寒い？」に置く）
+    {
+        id: "q-room", emoji: "💡", label: "部屋は？", question: "部屋のことで何かありますか？",
+        panelIds: ["p-curtain", "p-light", "p-dark"],
         answers: [
-            { name: "はい", emoji: "⭕", sentence: "はい。" },
-            { name: "いいえ", emoji: "❌", sentence: "いいえ。" },
-            { name: "わからない", emoji: "❓", sentence: "わからないです。" },
-            { name: "もう一度", emoji: "🔁", sentence: "もう一度言ってください。" }
+            { name: "静かにして", emoji: "🤫", sentence: "静かにしてください。" }
+        ]
+    },
+    // 楽しみと休むこと（体を起こすは「体の向きは？」の頭を上げて、教えてほしいことは「知りたい？」）
+    {
+        id: "q-want", emoji: "✨", label: "何がしたい？", question: "何がしたいですか？", answersFirst: true,
+        answers: [
+            { name: "寝たい", emoji: "😴", sentence: "寝たいです。" },
+            { index: 2, name: "動画・テレビ", emoji: "📺", sentence: "動画かテレビを見たいです。" },
+            { index: 3, name: "音楽", emoji: "🎵", sentence: "音楽を聴きたいです。" },
+            { index: 4, name: "スマホ", emoji: "📱", sentence: "スマホを見たいです。" },
+            { index: 5, name: "お話したい", emoji: "💬", sentence: "お話ししたいです。" }
+        ],
+        panelIds: ["base-2-1", "p-mirror", "base-3-3"]
+    },
+    // 教えてほしいこと
+    {
+        id: "q-know", emoji: "🗞️", label: "知りたい？", question: "何か知りたいことはありますか？",
+        panelIds: ["p-time", "p-news", "p-weather"],
+        answers: [
+            { name: "今日の予定", emoji: "📅", sentence: "今日の予定を教えてください。" }
         ]
     },
     // 失語症のため、介助者の話が伝わったかを確かめる
@@ -2899,39 +2956,31 @@ const QUESTION_PRESETS = [
             { name: "書いて", emoji: "✍️", sentence: "紙に書いてください。" }
         ]
     },
-    // 介助者が話している間に使うので、切り替えても読み上げない（silent）
-    { id: "q-aizuchi", emoji: "😄", label: "相づち", question: "お話に、ひとことで返します", panelSource: QUESTION_PANEL_GROUP_AIZUCHI, silent: true },
-    { id: "q-care", emoji: "🙏", label: "お願いは？", question: "何かしてほしいことはありますか？", panelSource: "ケア" },
+    // 介助者が話している間に使うので、切り替えても読み上げない（silent）。もう一回・わからないは「わかった？」に置く。
+    // 続きを話して・話題を変えても、話している最中に使う
     {
-        id: "q-want", emoji: "✨", label: "何がしたい？", question: "何がしたいですか？",
-        answers: [
-            { name: "寝たい", emoji: "😴", sentence: "寝たいです。" },
-            { name: "体を起こして", emoji: "🛏️", sentence: "体を起こしてください。" },
-            { name: "動画・テレビ", emoji: "📺", sentence: "動画かテレビを見たいです。" },
-            { name: "音楽", emoji: "🎵", sentence: "音楽を聴きたいです。" },
-            { name: "スマホ", emoji: "📱", sentence: "スマホを見たいです。" },
-            { name: "お話したい", emoji: "💬", sentence: "お話ししたいです。" }
-        ]
+        id: "q-aizuchi", emoji: "😄", label: "相づち", question: "お話に、ひとことで返します", silent: true,
+        panelIds: ["a-uun", "a-hee", "a-sorede", "a-wakaru", "a-ee", "a-laugh", "a-sugoi", "a-honto",
+            "a-naruhodo", "a-iine", "a-yokatta", "a-taihen", "a-motto", "a-matte", "base-3-1", "base-3-2"]
     },
-    { id: "q-heart", emoji: "💗", label: "気持ちは？", question: "今の気持ちはどうですか？", panelSource: "気持ち" },
+    // 気持ちと、相手に伝えるあいさつ（ねむいは「何がしたい？」の寝たいと重なるので入れない）
+    {
+        id: "q-heart", emoji: "💗", label: "気持ちは？", question: "今の気持ちや、伝えたいことはありますか？",
+        panelIds: ["p-happy", "base-3-0", "p-anxious", "p-stay", "p-hold-hand", "p-alone",
+            "p-good-morning", "p-good-night", "p-see-you"]
+    },
     { id: "q-family", emoji: "👨‍👩‍👧", label: "家族のこと？", question: "家族のことで何かありますか？", panelSource: "家族" },
-    { id: "q-other", emoji: "💬", label: "ほかには？", question: "ほかに何かありますか？", panelSource: QUESTION_PANEL_SOURCE_LAYOUT },
+    // ここから既定で出さない質問（QUESTION_DEFAULT_HIDDEN_IDS）
     {
-        id: "q-condition", emoji: "🩺", label: "体調は？", question: "体調はどうですか？",
-        panelSource: "体調"
-    },
-    { id: "q-pastime", emoji: "📺", label: "過ごし方は？", question: "どう過ごしたいですか？", panelSource: "過ごし方" },
-    {
-        id: "q-who", emoji: "👥", label: "誰に会いたい？", question: "誰に会いたいですか？",
+        id: "q-yes-no", emoji: "⭕", label: "はい・いいえ", question: "はい・いいえで答えてください",
         answers: [
-            { name: "お母さん", emoji: "👩", sentence: "お母さんに会いたいです。" },
-            { name: "お父さん", emoji: "👨", sentence: "お父さんに会いたいです。" },
-            { name: "お姉ちゃん", emoji: "👱‍♀️", sentence: "お姉ちゃんに会いたいです。" },
-            { name: "お兄ちゃん", emoji: "🧑", sentence: "お兄ちゃんに会いたいです。" },
-            { name: "友だち", emoji: "👭", sentence: "友だちに会いたいです。" },
-            { name: "先生", emoji: "🩺", sentence: "先生と話したいです。" }
+            { name: "はい", emoji: "⭕", sentence: "はい。" },
+            { name: "いいえ", emoji: "❌", sentence: "いいえ。" },
+            { name: "わからない", emoji: "❓", sentence: "わからないです。" }
         ]
-    }
+    },
+    // シンプルモードで作った任意パネル（"任意" は SIMPLE_GROUP_CUSTOM）。ほかの表現はすべて上の質問にある
+    { id: "q-other", emoji: "💬", label: "ほかには？", question: "ほかに何かありますか？", panelSource: "任意" }
 ];
 
 function loadQuestionCustom() {
@@ -2976,14 +3025,12 @@ function loadQuestionConfig() {
             speakQuestion: parsed?.speakQuestion !== false,
             order: Array.isArray(parsed?.order) ? parsed.order.filter(id => typeof id === "string") : [],
             answerLayouts: sanitizeQuestionAnswerLayouts(parsed?.answerLayouts),
-            // 回答パネルの数: gridSize は自動のときの最大（"" ならシンプルモードと同じ）、gridSizes は質問ごとに固定した大きさ
+            // 回答パネルの数: 自動のときの最大（"" ならシンプルモードと同じ）。以前の質問ごとの固定（gridSizes）は使わない
             gridSize: SIMPLE_GRID_SIZES[parsed?.gridSize] ? parsed.gridSize : "",
-            gridSizes: Object.fromEntries(Object.entries(parsed?.gridSizes && typeof parsed.gridSizes === "object" ? parsed.gridSizes : {})
-                .filter(([, size]) => SIMPLE_GRID_SIZES[size])),
             knownIds: presetIds
         };
     } catch {
-        return { hiddenIds: [...QUESTION_DEFAULT_HIDDEN_IDS], speakQuestion: true, order: [], answerLayouts: {}, gridSize: "", gridSizes: {}, knownIds: presetIds };
+        return { hiddenIds: [...QUESTION_DEFAULT_HIDDEN_IDS], speakQuestion: true, order: [], answerLayouts: {}, gridSize: "", knownIds: presetIds };
     }
 }
 
@@ -3016,30 +3063,36 @@ function getAnswerPanelCatalog(customPanels = simpleCustomPanels) {
     return [...getSimpleCatalog(customPanels), ...TALK_AIZUCHI.map(a => ({ ...a, group: QUESTION_PANEL_GROUP_AIZUCHI }))];
 }
 
+// 質問に書いた答えの番号（index があればそれ。答えを外したプリセットで番号をずらさない）
+function getQuestionAnswerNumber(answer, i) {
+    return Number.isInteger(answer?.index) ? answer.index : i;
+}
+
 // 質問の答えの候補。key は、既存パネルならパネルの id、質問に書いた答えなら「質問id#番号」。
 // panelId は元のパネル（アイコンを引く）
 function getQuestionAnswerCandidates(q, customPanels = simpleCustomPanels) {
     const map = new Map();
     (Array.isArray(q.answers) ? q.answers : []).forEach((answer, i) => {
-        const key = `${q.id}#${i}`;
+        const n = getQuestionAnswerNumber(answer, i);
+        const key = `${q.id}#${n}`;
         // 生成アイコンは元の並びの番号で作ってある（scripts/gen_icon_sheets.mjs）ので、並べ替えても元の番号で引く
-        map.set(key, { ...answer, key, iconId: `${q.id}-a${i}` });
+        map.set(key, { ...answer, key, iconId: `${q.id}-a${n}` });
     });
     getAnswerPanelCatalog(customPanels).forEach(p => map.set(p.id, { ...p, key: p.id, panelId: p.id, iconId: p.id }));
     return map;
 }
 
-// 答えを編集していない質問の並び: 既存パネル（panelSource / panelIds）→ 質問に書いた答え
+// 答えを編集していない質問の並び: 選んだパネル（panelIds）→ グループのパネル（panelSource）→ 質問に書いた答え（answersFirst なら答えが先）
+// （選んだパネルを先にして、数が変わる任意パネルのグループは後ろに並べる）
 function getDefaultQuestionAnswerKeys(q, { customPanels = simpleCustomPanels, layoutIds = simpleConfig.panelIds } = {}) {
-    let keys = [];
+    let keys = Array.isArray(q.panelIds) ? [...q.panelIds] : [];
     if (q.panelSource === QUESTION_PANEL_SOURCE_LAYOUT) {
-        keys = [...layoutIds];
+        keys = keys.concat(layoutIds);
     } else if (q.panelSource) {
-        keys = getAnswerPanelCatalog(customPanels).filter(p => getSimplePanelGroup(p) === q.panelSource).map(p => p.id);
+        keys = keys.concat(getAnswerPanelCatalog(customPanels).filter(p => getSimplePanelGroup(p) === q.panelSource).map(p => p.id));
     }
-    if (Array.isArray(q.panelIds)) keys = keys.concat(q.panelIds);
-    (Array.isArray(q.answers) ? q.answers : []).forEach((_, i) => keys.push(`${q.id}#${i}`));
-    return [...new Set(keys)];
+    const answerKeys = (Array.isArray(q.answers) ? q.answers : []).map((answer, i) => `${q.id}#${getQuestionAnswerNumber(answer, i)}`);
+    return [...new Set(q.answersFirst ? [...answerKeys, ...keys] : [...keys, ...answerKeys])];
 }
 
 // 質問の答え（設定 → 質問 の「答えのパネル」で並べ替えた質問は、その並び）
@@ -3049,7 +3102,7 @@ function getQuestionAnswers(q, { customPanels = simpleCustomPanels, layoutIds = 
     return [...new Set(keys)].map(key => candidates.get(key)).filter(Boolean);
 }
 
-// 出す質問（設定 → 質問でチェックしたもの）。質問モードの上のボタンと介助者メニューで共通
+// 出す質問（設定 → 質問でチェックしたもの）。質問モードの上のボタンと設定の「今すぐ質問する」で共通
 function getVisibleQuestions() {
     const hidden = new Set(questionConfig.hiddenIds);
     return getQuestionCatalog().filter(q => !hidden.has(q.id));
@@ -3198,7 +3251,7 @@ function checkQuestionTimeout() {
     if (Date.now() - activeQuestionStartedAt >= QUESTION_TIMEOUT_MS) endQuestion();
 }
 
-// 介助者メニューの「質問する」ボタン
+// 設定 → 質問モード の「今すぐ質問する」ボタン
 function renderQuestionButtons() {
     if (!questionButtonsContainer) return;
 
@@ -3211,6 +3264,8 @@ function renderQuestionButtons() {
         btn.textContent = `${getQuestionEmoji(q)} ${getQuestionLabel(q)}`;
         btn.title = q.question;
         btn.addEventListener("click", () => {
+            // 設定で変えた内容も保存してから、利用者が回答画面を見られるよう閉じる
+            if (!saveSettingsAndClose()) return;
             if (activeQuestion?.id === q.id && !isQuestionMode()) {
                 endQuestion();
                 return;
@@ -3218,20 +3273,18 @@ function renderQuestionButtons() {
             // 質問モードは上のボタンと同じ（回答中の質問なら読み上げ直す）
             if (isQuestionMode()) selectQuestionFromBar(q.id);
             else startQuestion(q.id);
-            // 利用者が回答画面を見られるようメニューは閉じる
-            collapseControls();
         });
         questionButtonsContainer.appendChild(btn);
     });
     if (visible.length === 0) {
         const note = document.createElement("p");
         note.className = "settings-help";
-        note.textContent = "表示する質問がありません（設定 → 質問）";
+        note.textContent = "表示する質問がありません（設定 → 質問モード）";
         questionButtonsContainer.appendChild(note);
     }
     if (questionEndBtn) questionEndBtn.style.display = activeQuestion && !isQuestionMode() ? "" : "none";
-    // 質問モードは画面の上に同じ質問が並ぶので、メニューには出さない
-    const questionSection = questionButtonsContainer.closest(".drawer-section");
+    // 質問モードは画面の上に同じ質問が並ぶので出さない
+    const questionSection = document.getElementById("question-now-section");
     if (questionSection) questionSection.style.display = isQuestionMode() ? "none" : "";
 }
 
@@ -4171,13 +4224,12 @@ function saveTalkEditor() {
 // ---------------------------------------------------------
 let questionHiddenDraft = new Set();
 let questionCustomDraft = [];
-let questionOrderDraft = [];  // 並び順（質問 id。画面の上のボタン・介助者メニューの順）
+let questionOrderDraft = [];  // 並び順（質問 id。画面の上のボタン・「今すぐ質問する」の順）
 let questionPanelPickDraft = []; // 追加する質問の答えにする既存パネル（選んだ順）
 let questionAnswerLayoutsDraft = {}; // 答えを編集した質問の答えの並び（質問 id → key）
 let questionAnswerEditId = null;     // 「答えのパネル」で編集中の質問
 let questionAnswerSelectedKey = null;
 let questionAnswerPaletteFilter = SIMPLE_FILTER_ALL;
-let questionGridSizesDraft = {}; // 質問ごとに固定した回答パネルの数（質問 id → "3x3" など）
 const QUESTION_ANSWER_GROUP_OWN = "この質問";
 
 function openQuestionEditor() {
@@ -4186,7 +4238,6 @@ function openQuestionEditor() {
     questionOrderDraft = getQuestionCatalog(questionCustomDraft).map(q => q.id);
     questionPanelPickDraft = [];
     questionAnswerLayoutsDraft = Object.fromEntries(Object.entries(questionConfig.answerLayouts).map(([id, keys]) => [id, [...keys]]));
-    questionGridSizesDraft = { ...questionConfig.gridSizes };
     if (questionGridSizeSelect) questionGridSizeSelect.value = questionConfig.gridSize;
     // 質問モードで出している質問の答えから編集を始める
     questionAnswerEditId = activeQuestion?.id ?? null;
@@ -4207,7 +4258,7 @@ function describeQuestionAnswers(q) {
     if (!edited && q.panelSource === QUESTION_PANEL_SOURCE_LAYOUT) return "🧩 シンプルモードの画面に並べたパネル";
     const names = getDraftQuestionAnswers(q).map(a => `${a.emoji ? a.emoji + " " : ""}${a.name}`).join(" ／ ");
     if (edited) return `✏️ ${names || "（答えなし）"}`;
-    return q.panelSource ? `🧩 パネル「${q.panelSource}」: ${names}` : names;
+    return q.panelSource ? `🧩 パネル「${q.panelSource}」${q.panelIds?.length ? "ほか" : ""}: ${names}` : names;
 }
 
 // 編集中の内容（シンプルモードの任意パネル・画面配置も編集中のもの）での答え
@@ -4224,6 +4275,8 @@ function resetQuestionOrder() {
     questionOrderDraft = getQuestionCatalog(questionCustomDraft, []).map(q => q.id);
     const customIds = new Set(questionCustomDraft.map(q => q.id));
     questionHiddenDraft = new Set([...QUESTION_DEFAULT_HIDDEN_IDS, ...[...questionHiddenDraft].filter(id => customIds.has(id))]);
+    // 旧バージョンで編集した答えの並び・パネル数もおすすめに戻す（作った質問の分は残す）
+    questionAnswerLayoutsDraft = Object.fromEntries(Object.entries(questionAnswerLayoutsDraft).filter(([id]) => customIds.has(id)));
     renderQuestionEditor();
 }
 
@@ -4249,7 +4302,7 @@ function renderQuestionEditor() {
         const check = document.createElement("input");
         check.type = "checkbox";
         check.checked = isShown;
-        check.title = "質問モードと介助者メニューに出す";
+        check.title = "質問モードと「今すぐ質問する」に出す";
         check.addEventListener("change", () => {
             if (check.checked) questionHiddenDraft.delete(q.id);
             else questionHiddenDraft.add(q.id);
@@ -4394,12 +4447,10 @@ function renderQuestionAnswerEditor() {
     const candidates = getQuestionAnswerCandidates(q, simpleCustomDraft);
     const keys = getDraftAnswerKeys(q);
     if (!keys.includes(questionAnswerSelectedKey)) questionAnswerSelectedKey = null;
-    const { cols, rows } = getQuestionGridSize(q.id, keys.length, {
+    const { cols, rows } = getQuestionGridSize(keys.length, {
         gridSize: questionGridSizeSelect?.value ?? questionConfig.gridSize,
-        gridSizes: questionGridSizesDraft,
         simpleGridSize: simpleGridSizeSelect?.value || simpleConfig.gridSize
     });
-    if (questionAnswerGridSelect) questionAnswerGridSelect.value = questionGridSizesDraft[q.id] || "";
     const pageSize = cols * rows;
     const pageCount = Math.max(1, Math.ceil(keys.length / pageSize));
     if (questionAnswerSummary) {
@@ -4691,7 +4742,7 @@ function saveQuestionEditor() {
     const empty = getQuestionCatalog(questionCustomDraft, questionOrderDraft).filter(q => questionAnswerLayoutsDraft[q.id]?.length === 0);
     if (empty.length > 0) {
         alert(`答えがない質問があります: ${empty.map(getQuestionLabel).join("、")}
-設定 → 質問 →「答えのパネル」で答えを追加するか、「最初の答えに戻す」を押してください。`);
+設定 → 質問モード →「答えのパネル」で答えを追加するか、「最初の答えに戻す」を押してください。`);
         questionAnswerEditId = empty[0].id;
         activateSettingsTab("question-tab");
         return false;
@@ -4702,8 +4753,6 @@ function saveQuestionEditor() {
         order: [...questionOrderDraft],
         answerLayouts: getQuestionAnswerLayoutsToSave(),
         gridSize: questionGridSizeSelect ? questionGridSizeSelect.value : questionConfig.gridSize,
-        gridSizes: Object.fromEntries(Object.entries(questionGridSizesDraft)
-            .filter(([id, size]) => SIMPLE_GRID_SIZES[size] && getQuestionCatalog(questionCustomDraft).some(q => q.id === id))),
         knownIds: QUESTION_PRESETS.map(q => q.id)
     };
     try {
@@ -5300,7 +5349,6 @@ function playBlob(blob) {
     });
 }
 
-const audioStatus = document.getElementById("audio-status");
 // 前もって音声にしておく文: パネルを選んですぐ話す文（症状・シンプルモード・質問と答え）だけ。
 // お話モードの文は数が多く使わないものも多いので作らない（話したときに作った音声を保存して、次からすぐ話す）
 function collectPrefetchPhrases() {
@@ -5405,7 +5453,7 @@ async function prefetchAllAudio({ quiet = false } = {}) {
     if (!canSynthesizeSpeech()) {
         // 手動で押したときは、作らない理由を表示する（何も出ないと押せていないように見える）
         if (!quiet) {
-            [audioStatus, document.getElementById("audio-status-voice")].filter(Boolean).forEach((box) => {
+            [document.getElementById("audio-status-voice")].filter(Boolean).forEach((box) => {
                 box.style.display = "block";
                 const label = box.querySelector(".status-label");
                 if (label) label.textContent = ttsDailyLimitModel === ttsModel
@@ -5419,7 +5467,7 @@ async function prefetchAllAudio({ quiet = false } = {}) {
         // 手動で押されたら、次の回は進み具合を表示する
         prefetchQueued = { quiet: (prefetchQueued?.quiet ?? true) && quiet };
         if (!quiet) {
-            [audioStatus, document.getElementById("audio-status-voice")].filter(Boolean).forEach((box) => {
+            [document.getElementById("audio-status-voice")].filter(Boolean).forEach((box) => {
                 box.style.display = "block";
                 const label = box.querySelector(".status-label");
                 if (label) label.textContent = "音声を作成中です（終わったら続けて残りを作ります）";
@@ -5429,8 +5477,8 @@ async function prefetchAllAudio({ quiet = false } = {}) {
     }
     isPrefetchRunning = true;
 
-    // 進み具合は介助者メニューと設定の音声タブの両方に出す（設定を開いている間はメニューが閉じているため）
-    const statusBoxes = [audioStatus, document.getElementById("audio-status-voice")].filter(Boolean);
+    // 進み具合は設定の音声タブに出す
+    const statusBoxes = [document.getElementById("audio-status-voice")].filter(Boolean);
     const showStatus = (text, pct) => {
         statusBoxes.forEach((box) => {
             box.style.display = "block";
@@ -5593,17 +5641,18 @@ async function predictWebcam() {
             const nose = landmarks[4];
             if (isNewFrame && faceIndex === 0 && needsStartupFrontRegistration) {
                 // 絶対方式は正面がずれると全体がずれるので、起動時に正面を登録する（10秒止まれなければ今の姿勢で始める）。
-                // 設定画面を開いている間は待つ。介助者メニューの開閉状態は変えない
+                // 設定画面を開いている間は待つ
                 if (pointerMode !== POINTER_MODE_ABSOLUTE || calibrationWizard.isActive()) {
                     needsStartupFrontRegistration = false;
                 } else if (!isSettingsOpen()) {
                     needsStartupFrontRegistration = false;
-                    startFrontRecapture({ collapse: false });
+                    startFrontRecapture();
                 }
             }
             if (isNewFrame && faceIndex === 0 && calibrationWizard.isActive()) {
                 calibrationWizard.onFrame(landmarks, results, startTimeMs);
-            } else if (isNewFrame && !calibrationWizard.isActive()) {
+            } else if (isNewFrame && !calibrationWizard.isActive() && !isSettingsOpen()) {
+                // 設定画面を開いている間はポインタを動かさない
                 updateRelativePointerTarget(nose.x, landmarks, results, faceIndex, startTimeMs);
             }
             trackSymptomActivityByMovement(nose.x, nose.y);
@@ -5614,8 +5663,10 @@ async function predictWebcam() {
     const frameDtMs = lastRenderTimeMs === null ? 16.7 : clamp(startTimeMs - lastRenderTimeMs, 1, 100);
     lastRenderTimeMs = startTimeMs;
     const followAlpha = 1 - Math.exp(-frameDtMs / FOLLOW_TIME_CONSTANT_MS);
-    pointerX += (targetX - pointerX) * followAlpha;
-    pointerY += (targetY - pointerY) * followAlpha;
+    if (!isSettingsOpen()) {
+        pointerX += (targetX - pointerX) * followAlpha;
+        pointerY += (targetY - pointerY) * followAlpha;
+    }
     // left/top はレイアウトを毎フレーム走らせるので transform で動かす
     pointerElement.style.setProperty("--pointer-x", `${pointerX}px`);
     pointerElement.style.setProperty("--pointer-y", `${pointerY}px`);
@@ -7036,9 +7087,8 @@ calibrateBtn.addEventListener("click", () => {
 
 // 姿勢が変わったときに、キャリブレーション結果（感度・揺れ・距離補正）は残したまま正面だけ取り直す。
 // キャリブレーション画面の正面登録と同じく、中央の○を向いて静止したら登録する
-function startFrontRecapture({ collapse = true } = {}) {
+function startFrontRecapture() {
     if (calibrationWizard.isActive()) return;
-    if (collapse) collapseControls();
     calibrationWizard.start({ frontOnly: true });
 }
 
@@ -7203,7 +7253,6 @@ const distanceCompInput = document.getElementById("distance-comp-input");
 const recenterInput = document.getElementById("recenter-input");
 const verticalMoveInput = document.getElementById("vertical-move-input");
 const calibFarPassInput = document.getElementById("calib-far-pass-input");
-const paramsVisibleInput = document.getElementById("params-visible-input");
 const pointerTab = document.getElementById("pointer-tab");
 const simpleGridSizeSelect = radioGroup("simple-grid-size");
 const simplePanelFilter = document.getElementById("simple-panel-filter");
@@ -7236,7 +7285,6 @@ const questionCustomLabelInput = document.getElementById("question-custom-label-
 const questionCustomEmojiInput = document.getElementById("question-custom-emoji-input");
 const questionAnswerSelect = document.getElementById("question-answer-select");
 const questionGridSizeSelect = radioGroup("question-grid-size");
-const questionAnswerGridSelect = radioGroup("question-answer-grid");
 const questionAnswerSummary = document.getElementById("question-answer-summary");
 const questionAnswerPagesContainer = document.getElementById("question-answer-pages");
 const questionAnswerDetail = document.getElementById("question-answer-detail");
@@ -7265,47 +7313,40 @@ const noseGainValue = document.getElementById("nose-gain-value");
 const yawGainValue = document.getElementById("yaw-gain-value");
 const saveSettingsBtn = document.getElementById("save-settings");
 const closeSettingsBtn = document.getElementById("close-settings");
-const controlsRoot = document.getElementById("controls");
 
-const controlsCollapseBtn = document.getElementById("controls-collapse-btn");
-const calibWizardBtn = document.getElementById("calib-wizard-btn");
-
-let isParamPanelVisible = localStorage.getItem(PARAM_PANEL_VISIBLE_KEY) !== "0";
-// 利用者の画面を隠さないよう、介助者メニューは既定で閉じておく
-let isControlsCollapsed = localStorage.getItem(CONTROLS_COLLAPSED_KEY) !== "0";
-
-function applyControlsCollapsed() {
-    if (!controlsRoot || !controlsCollapseBtn) return;
-    controlsRoot.classList.toggle("collapsed", isControlsCollapsed);
-    controlsCollapseBtn.textContent = isControlsCollapsed ? "⚙" : "✕";
-    controlsCollapseBtn.title = isControlsCollapsed ? "介助者メニューを開く" : "介助者メニューを閉じる";
-    controlsCollapseBtn.setAttribute("aria-expanded", isControlsCollapsed ? "false" : "true");
-}
-
-if (controlsCollapseBtn) {
-    controlsCollapseBtn.addEventListener("click", () => {
-        isControlsCollapsed = !isControlsCollapsed;
-        localStorage.setItem(CONTROLS_COLLAPSED_KEY, isControlsCollapsed ? "1" : "0");
-        applyControlsCollapsed();
-    });
-}
-
-applyControlsCollapsed();
-
-// 設定画面・キャリブレーションの裏にメニューが残らないよう閉じる
-function collapseControls() {
-    if (isControlsCollapsed) return;
-    isControlsCollapsed = true;
-    localStorage.setItem(CONTROLS_COLLAPSED_KEY, "1");
-    applyControlsCollapsed();
-}
-
-if (calibWizardBtn) {
-    calibWizardBtn.addEventListener("click", () => {
+// 設定の「キャリブレーションを始める」（基本タブの手順・ポインタと確定タブ）。設定を保存して閉じてから始める
+document.querySelectorAll(".calib-start-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
         if (calibrationWizard.isActive()) return;
-        collapseControls();
+        if (!saveSettingsAndClose()) return;
         calibrationWizard.start();
     });
+});
+
+// 初回の案内: キャリブレーションがまだなら起動時に出す
+const welcomeModal = document.getElementById("welcome-modal");
+
+function openWelcome() {
+    welcomeModal?.classList.add("active");
+}
+
+document.getElementById("welcome-start-btn")?.addEventListener("click", () => {
+    welcomeModal?.classList.remove("active");
+    calibrationWizard.start();
+});
+
+// あとで: いつもの起動と同じく正面だけ登録する（正面固定のとき）
+document.getElementById("welcome-later-btn")?.addEventListener("click", () => {
+    welcomeModal?.classList.remove("active");
+    if (pointerMode === POINTER_MODE_ABSOLUTE) startFrontRecapture();
+});
+
+function updateCalibStatusBadge() {
+    const badge = document.getElementById("calib-status-badge");
+    if (!badge) return;
+    const done = isCalibrationDone();
+    badge.textContent = done ? "✓ 済み" : "まだです";
+    badge.classList.toggle("is-done", done);
 }
 
 function applyPointerModeState() {
@@ -7313,13 +7354,6 @@ function applyPointerModeState() {
 }
 
 applyPointerModeState();
-
-function applyParamPanelVisibility() {
-    if (!controlsRoot) return;
-    controlsRoot.classList.toggle("params-hidden", !isParamPanelVisible);
-}
-
-applyParamPanelVisibility();
 
 // 設定画面: 選んだ動かし方で働かない補助を薄くする
 function refreshPointerOptionAvailability() {
@@ -7423,6 +7457,11 @@ const ttsCreditNote = document.getElementById("tts-credit-note");
 
 // VOICEVOX の話者を選んでいるときは、利用規約に沿ってクレジットを表示する
 function updateTtsCreditNote() {
+    // 選んだ声で使わない設定（Gemini の話者・口調）は薄くする
+    const provider = getTtsProvider(ttsModelSelect ? ttsModelSelect.value : ttsModel);
+    document.querySelectorAll("#voice-tab [data-tts-provider]").forEach((section) => {
+        section.classList.toggle("is-inactive", section.dataset.ttsProvider !== provider);
+    });
     if (!ttsCreditNote) return;
     const model = ttsModelSelect ? ttsModelSelect.value : ttsModel;
     const speaker = readStoredList(VOICEVOX_SPEAKERS_KEY).find(m => m.value === model);
@@ -7673,7 +7712,7 @@ document.querySelectorAll(".tts-preview-btn").forEach(btn => {
 });
 
 settingsBtn.addEventListener("click", () => {
-    collapseControls();
+    updateCalibStatusBadge();
     apiKeyInput.value = GEMINI_API_KEY;
     apiKeyInput.type = "password";
     if (apiKeyRevealBtn) apiKeyRevealBtn.textContent = "表示";
@@ -7700,7 +7739,6 @@ settingsBtn.addEventListener("click", () => {
     if (recenterInput) recenterInput.checked = isRecenterEnabled;
     if (verticalMoveInput) verticalMoveInput.checked = isVerticalMoveEnabled;
     if (calibFarPassInput) calibFarPassInput.checked = isCalibFarPassEnabled;
-    if (paramsVisibleInput) paramsVisibleInput.checked = isParamPanelVisible;
     refreshPointerOptionAvailability();
     openSimplePanelEditor();
     openQuestionEditor();
@@ -7751,11 +7789,12 @@ function saveVoiceSettingsFromForm() {
     }
 }
 
-saveSettingsBtn.addEventListener("click", () => {
+// 設定を保存して閉じる。保存できなかったら（容量超過など）開いたままで false
+function saveSettingsAndClose() {
     // 画像を含み容量超過しやすいパネル設定を先に保存し、失敗したら他も保存しない
-    if (!saveSimplePanelEditor()) return;
-    if (!saveQuestionEditor()) return;
-    if (!saveTalkEditor()) return;
+    if (!saveSimplePanelEditor()) return false;
+    if (!saveQuestionEditor()) return false;
+    if (!saveTalkEditor()) return false;
 
     const previousTtsModel = ttsModel;
     saveVoiceSettingsFromForm();
@@ -7792,11 +7831,6 @@ saveSettingsBtn.addEventListener("click", () => {
         isCalibFarPassEnabled = calibFarPassInput.checked;
         localStorage.setItem(CALIB_FAR_PASS_KEY, isCalibFarPassEnabled ? "1" : "0");
     }
-    if (paramsVisibleInput) {
-        isParamPanelVisible = paramsVisibleInput.checked;
-        localStorage.setItem(PARAM_PANEL_VISIBLE_KEY, isParamPanelVisible ? "1" : "0");
-        applyParamPanelVisibility();
-    }
     const nextPointerMode = pointerModeSelect?.value === POINTER_MODE_RELATIVE ? POINTER_MODE_RELATIVE : POINTER_MODE_ABSOLUTE;
     if (pointerModeSelect && nextPointerMode !== pointerMode) {
         pointerMode = nextPointerMode;
@@ -7819,11 +7853,16 @@ saveSettingsBtn.addEventListener("click", () => {
     // 音声を変えたら、新しい音声で前もって作り始める（Gemini TTS は遅く回数制限があるので手動）。
     // 保存した文言で作るよう最後に呼ぶ
     if (ttsModel !== previousTtsModel && ["cloud", "voicevox"].includes(getTtsProvider())) void prefetchAllAudio({ quiet: true });
-});
+    return true;
+}
+
+saveSettingsBtn.addEventListener("click", saveSettingsAndClose);
 
 function activateSettingsTab(tabId) {
     settingsTabButtons.forEach(btn => btn.classList.toggle("active", btn.dataset.tab === tabId));
     settingsTabContents.forEach(content => content.classList.toggle("active", content.id === tabId));
+    // 前のタブのスクロール位置のまま開かないよう、先頭から見せる
+    document.querySelector(".settings-panes")?.scrollTo({ top: 0 });
     // シンプルモードのタブで足した任意パネル・画面配置を、質問の答えの候補に反映する
     if (tabId === "question-tab") {
         renderQuestionEditor();
@@ -7833,6 +7872,11 @@ function activateSettingsTab(tabId) {
 
 settingsTabButtons.forEach(btn => {
     btn.addEventListener("click", () => activateSettingsTab(btn.dataset.tab));
+});
+
+// 基本タブの「はじめて使うとき」から各タブへ移る
+document.querySelectorAll("[data-goto-tab]").forEach(btn => {
+    btn.addEventListener("click", () => activateSettingsTab(btn.dataset.gotoTab));
 });
 
 if (simpleGridSizeSelect) simpleGridSizeSelect.addEventListener("change", renderSimplePanelEditor);
@@ -7847,13 +7891,6 @@ questionAnswerSelect?.addEventListener("change", () => {
 document.getElementById("question-answer-reset-btn")?.addEventListener("click", resetQuestionAnswers);
 document.getElementById("question-reset-order-btn")?.addEventListener("click", resetQuestionOrder);
 questionGridSizeSelect?.addEventListener("change", renderQuestionAnswerEditor);
-questionAnswerGridSelect?.addEventListener("change", () => {
-    const q = getAnswerEditQuestion();
-    if (!q) return;
-    if (questionAnswerGridSelect.value) questionGridSizesDraft[q.id] = questionAnswerGridSelect.value;
-    else delete questionGridSizesDraft[q.id];
-    renderQuestionAnswerEditor();
-});
 document.getElementById("question-answer-clear-btn")?.addEventListener("click", clearQuestionAnswers);
 // 候補の一覧へドラッグすると答えから外す
 if (questionAnswerPalette) bindLayoutDrop(questionAnswerPalette, key => removeQuestionAnswer(key));

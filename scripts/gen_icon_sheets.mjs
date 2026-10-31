@@ -191,10 +191,11 @@ export async function collectTargets({ extraSets = [] } = {}) {
 
     for (const q of extractArrayLiteral(appSource, "QUESTION_PRESETS")) {
         // 既存パネルを答えにする質問（panelSource）は、パネル側のアイコンを使う
+        // 答えを外したプリセットは index で元の番号を保つ（アプリの getQuestionAnswerNumber と同じ）
         (q.answers || []).forEach((a, i) => {
             if (a.icon && !isPictogram(a.icon)) return;
             targets.push({
-                key: `${q.id}-a${i}`,
+                key: `${q.id}-a${Number.isInteger(a.index) ? a.index : i}`,
                 // 質問の場面（聞いている相手）を描くと答えの違いが見えなくなるため、答えの状態だけを主人公ひとりで描かせる
                 desc: `「${a.name}」 主人公の言葉: ${a.sentence} 主人公ひとりだけを描き、この答えの状態だけがひと目でわかるようにする（質問している相手や、ほかの選択肢は描かない）${a.emoji ? ` 絵文字のイメージ: ${a.emoji}` : ""}`
             });
