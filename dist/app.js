@@ -1913,7 +1913,17 @@ function renderSimpleMessage() {
         simpleMessageContainer.style.display = "";
         const text = document.createElement("div");
         text.className = "simple-message-question";
-        text.textContent = `${getQuestionEmoji(activeQuestion)} ${activeQuestion.question}`;
+        const iconSrc = getQuestionIcon(activeQuestion);
+        if (iconSrc) {
+            const img = document.createElement("img");
+            img.className = "simple-message-question-icon";
+            img.src = iconSrc;
+            img.alt = "";
+            text.appendChild(img);
+            text.append(` ${activeQuestion.question}`);
+        } else {
+            text.textContent = `${getQuestionEmoji(activeQuestion)} ${activeQuestion.question}`;
+        }
         simpleMessageContainer.appendChild(text);
         // 質問モード: 直前の答えを右に出す（この質問への答えは強調、前の質問への答えは控えめに）
         const shown = isQuestionMode() ? getShownQuestionAnswer() : null;
@@ -2669,8 +2679,17 @@ function getShownQuestionAnswer() {
 }
 
 // 質問のアイコン（自作の質問で未設定なら ❓）
+const QUESTION_PRESET_IDS = new Set(QUESTION_PRESETS.map(q => q.id));
+
 function getQuestionEmoji(q) {
     return q.emoji || "❓";
+}
+
+function getQuestionIcon(q) {
+    if (!q) return "";
+    if (q.icon) return q.icon;
+    if (QUESTION_PRESET_IDS.has(q.id)) return `media/${q.id}.svg`;
+    return getGeneratedIcon(q.id, "");
 }
 
 // 質問モードで、出す質問の中から回答中の質問を決める（前回の質問 → 先頭の質問）。出す質問が無ければ空の画面
@@ -2718,13 +2737,23 @@ function renderQuestionModeBar() {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "question-mode-btn" + (activeQuestion?.id === q.id ? " active" : "");
-        const icon = document.createElement("span");
-        icon.className = "question-mode-icon";
-        icon.textContent = getQuestionEmoji(q);
+        const iconSrc = getQuestionIcon(q);
+        if (iconSrc) {
+            const img = document.createElement("img");
+            img.className = "question-mode-icon";
+            img.src = iconSrc;
+            img.alt = "";
+            btn.appendChild(img);
+        } else {
+            const icon = document.createElement("span");
+            icon.className = "question-mode-icon";
+            icon.textContent = getQuestionEmoji(q);
+            btn.appendChild(icon);
+        }
         const label = document.createElement("span");
         label.className = "question-mode-label";
         label.textContent = getQuestionLabel(q);
-        btn.append(icon, label);
+        btn.append(label);
         btn.title = activeQuestion?.id === q.id && !q.silent ? `${q.question}（押すともう一度読み上げ）` : q.question;
         btn.addEventListener("click", () => selectQuestionFromBar(q.id));
         questionModeBar.appendChild(btn);
@@ -2798,7 +2827,17 @@ function renderQuestionButtons() {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "question-btn" + (activeQuestion?.id === q.id ? " active" : "");
-        btn.textContent = `${getQuestionEmoji(q)} ${getQuestionLabel(q)}`;
+        const iconSrc = getQuestionIcon(q);
+        if (iconSrc) {
+            const img = document.createElement("img");
+            img.className = "question-btn-icon";
+            img.src = iconSrc;
+            img.alt = "";
+            btn.appendChild(img);
+            btn.append(` ${getQuestionLabel(q)}`);
+        } else {
+            btn.textContent = `${getQuestionEmoji(q)} ${getQuestionLabel(q)}`;
+        }
         btn.title = q.question;
         btn.addEventListener("click", () => {
             // 設定で変えた内容も保存してから、利用者が回答画面を見られるよう閉じる
@@ -3517,7 +3556,17 @@ function renderQuestionEditor() {
         const text = document.createElement("div");
         text.className = "simple-editor-text";
         const title = document.createElement("strong");
-        title.textContent = `${getQuestionEmoji(q)} ${q.question}`;
+        const iconSrc = getQuestionIcon(q);
+        if (iconSrc) {
+            const img = document.createElement("img");
+            img.className = "question-editor-icon";
+            img.src = iconSrc;
+            img.alt = "";
+            title.appendChild(img);
+            title.append(` ${q.question}`);
+        } else {
+            title.textContent = `${getQuestionEmoji(q)} ${q.question}`;
+        }
         if (q.custom) {
             const badge = document.createElement("span");
             badge.className = "simple-editor-group";
