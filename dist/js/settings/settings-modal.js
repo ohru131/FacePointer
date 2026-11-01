@@ -6,23 +6,22 @@ import {
     settingsTabButtons, settingsTabContents, ttsModelSelect, ttsModelStatus, ttsPreviewStatus,
     voicevoxStatus, voicevoxUrlInput
 } from "../core/dom.js";
-import { readStoredNumberFromValue } from "../core/storage.js";
 import { appState } from "../core/app-state.js";
-import { ICON_STYLE_KEY, iconSettings } from "../ui/icons.js";
+import { iconStyle, saveIconStyle } from "../ui/icons.js";
 import {
     AXIS_LOCK_KEY, DISTANCE_COMP_KEY, NOSE_GAIN_KEY, PANEL_SNAP_KEY, POINTER_MODE_ABSOLUTE,
     POINTER_MODE_KEY, POINTER_MODE_RELATIVE, RECENTER_KEY, YAW_GAIN_KEY, pointerConfig
 } from "../pointer/config.js";
 import { clearPostureHint, resetPanelSnap, resetPointerMotionHistory } from "../pointer/tracking.js";
-import { DWELL_TIME_DEFAULT_MS, DWELL_TIME_KEY, DWELL_TIME_MAX_MS, selection } from "../panels/selection.js";
+import { dwellTimeMs, saveDwellTime } from "../panels/selection.js";
 import { renderAll, setAppMode, updateSideNextClearance } from "../panels/screen.js";
 import {
     GEMINI_STYLE_KEY, GEMINI_VOICE_KEY, TTS_MODEL_KEY, VOICEVOX_URL_KEY, getTtsProvider,
     getVoicevoxBaseUrl, loadTtsModelList, ttsSettings
 } from "../speech/tts.js";
 import { prefetchAllAudio } from "../speech/prefetch.js";
-import { JAW_OPEN_THRESHOLD_KEY, gesture } from "../face/gesture.js";
-import { CALIB_FAR_PASS_KEY, calibSettings, calibrationWizard } from "../calibration/wizard.js";
+import { JAW_OPEN_THRESHOLD_KEY, jawOpenThreshold } from "../face/gesture.js";
+import { calibrationWizard, isCalibFarPassEnabled, saveCalibFarPass } from "../calibration/wizard.js";
 import { openSimplePanelEditor, saveSimplePanelEditor } from "../panels/custom-panel-editor.js";
 import { openTalkEditor, saveTalkEditor } from "../talk/editor.js";
 import {
@@ -70,16 +69,14 @@ export function saveSettingsAndClose() {
     const previousTtsModel = ttsSettings.ttsModel;
     saveVoiceSettingsFromForm();
 
-    localStorage.setItem(JAW_OPEN_THRESHOLD_KEY, String(gesture.jawOpenThreshold));
+    localStorage.setItem(JAW_OPEN_THRESHOLD_KEY, String(jawOpenThreshold));
     localStorage.setItem(NOSE_GAIN_KEY, String(pointerConfig.noseGain));
     localStorage.setItem(YAW_GAIN_KEY, String(pointerConfig.yawGain));
     if (iconStyleSelect) {
-        iconSettings.iconStyle = iconStyleSelect.value;
-        localStorage.setItem(ICON_STYLE_KEY, iconSettings.iconStyle);
+        saveIconStyle(iconStyleSelect.value);
     }
     if (dwellTimeSelect) {
-        selection.dwellTimeMs = readStoredNumberFromValue(dwellTimeSelect.value, DWELL_TIME_DEFAULT_MS, 0, DWELL_TIME_MAX_MS);
-        localStorage.setItem(DWELL_TIME_KEY, String(selection.dwellTimeMs));
+        saveDwellTime(dwellTimeSelect.value);
     }
     if (panelSnapInput) {
         pointerConfig.isPanelSnapEnabled = panelSnapInput.checked;
@@ -99,8 +96,7 @@ export function saveSettingsAndClose() {
         localStorage.setItem(RECENTER_KEY, pointerConfig.isRecenterEnabled ? "1" : "0");
     }
     if (calibFarPassInput) {
-        calibSettings.isCalibFarPassEnabled = calibFarPassInput.checked;
-        localStorage.setItem(CALIB_FAR_PASS_KEY, calibSettings.isCalibFarPassEnabled ? "1" : "0");
+        saveCalibFarPass(calibFarPassInput.checked);
     }
     const nextPointerMode = pointerModeSelect?.value === POINTER_MODE_RELATIVE ? POINTER_MODE_RELATIVE : POINTER_MODE_ABSOLUTE;
     if (pointerModeSelect && nextPointerMode !== pointerConfig.pointerMode) {
@@ -167,15 +163,15 @@ export function initSettingsModal() {
         if (geminiVoiceSelect) geminiVoiceSelect.value = ttsSettings.geminiVoice;
         if (geminiStyleInput) geminiStyleInput.value = ttsSettings.geminiStyle;
         if (ttsPreviewStatus) ttsPreviewStatus.textContent = "";
-        if (iconStyleSelect) iconStyleSelect.value = iconSettings.iconStyle;
+        if (iconStyleSelect) iconStyleSelect.value = iconStyle;
         if (modeSelect) modeSelect.value = appState.appMode;
-        if (dwellTimeSelect) dwellTimeSelect.value = String(selection.dwellTimeMs);
+        if (dwellTimeSelect) dwellTimeSelect.value = String(dwellTimeMs);
         if (pointerModeSelect) pointerModeSelect.value = pointerConfig.pointerMode;
         if (panelSnapInput) panelSnapInput.checked = pointerConfig.isPanelSnapEnabled;
         if (axisLockInput) axisLockInput.checked = pointerConfig.isAxisLockEnabled;
         if (distanceCompInput) distanceCompInput.checked = pointerConfig.isDistanceCompEnabled;
         if (recenterInput) recenterInput.checked = pointerConfig.isRecenterEnabled;
-        if (calibFarPassInput) calibFarPassInput.checked = calibSettings.isCalibFarPassEnabled;
+        if (calibFarPassInput) calibFarPassInput.checked = isCalibFarPassEnabled;
         refreshPointerOptionAvailability();
         openSimplePanelEditor();
         openQuestionEditor();

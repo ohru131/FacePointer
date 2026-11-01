@@ -12,28 +12,23 @@ import { centerPointerOnSimpleGrid, resetPointerMotionHistory } from "../pointer
 import { buildSimpleSentence, panelStore } from "./catalog.js";
 import { getSimpleLayout } from "./layout.js";
 import { createSimpleButton, refitAllButtonText } from "./panel-button.js";
-import { confirmState, showConfirm, waitForConfirmOverlayToHide } from "./confirm.js";
+import { isConfirmInProgress, speakSimpleSentence } from "./confirm.js";
 import { playConfirmSound } from "./sound.js";
 import {
-    DWELL_LOCK_FIRST_HOVER, checkPointerCollision, getSimpleRowKey, lockSimpleKeyAfterConfirm,
-    resetDwellProgress, selection
+    checkPointerCollision, getSimpleRowKey, lockSimpleKeyAfterConfirm, lockUntilPointerLeaves
 } from "./selection.js";
 import {
     TALK_TAB_AIZUCHI, TALK_TAB_FAVORITE, TALK_TAB_PARTNER, TALK_TAB_PREFIX, TALK_TAB_TREE,
-    getTalkCurrentSentence, getTalkPartner, talkState
+    getTalkCurrentSentence, getTalkPartner, resetTalkNavigation, talkState
 } from "../talk/model.js";
 import { goToTalkTab, handleTalkPanel, refreshTalkScreen, renderTalkTabs } from "../talk/screen.js";
+import { getQuestionEmoji, getQuestionIcon, getShownQuestionAnswer, recordQuestionAnswer } from "../question/model.js";
 import {
-    getQuestionEmoji, getQuestionIcon, getShownQuestionAnswer, questionStore, recordQuestionAnswer
-} from "../question/model.js";
-import {
-    endQuestion, ensureQuestionModeQuestion, questionScreen, renderQuestionButtons,
-    renderQuestionModeBar
+    endQuestion, ensureQuestionModeQuestion, renderQuestionButtons, renderQuestionModeBar,
+    resetQuestionScreen
 } from "../question/screen.js";
-import { speak } from "../speech/speak.js";
 
 export const SIMPLE_ROW_ID = "s";
-const SIMPLE_CONFIRM_DISPLAY_MS = 2200;
 // 次へと右上の ⛶ ⚙ ◎ の列とのすき間
 const QUICK_ACTIONS_CLEAR_GAP_PX = 8;
 
@@ -244,7 +239,7 @@ export function rerenderSimpleMode() {
 }
 
 async function handleSimpleClick(item) {
-    if (confirmState.isConfirmInProgress || panelScreen.isSimplePaused) return;
+    if (isConfirmInProgress || panelScreen.isSimplePaused) return;
 
     const sentence = buildSimpleSentence(item);
     if (!sentence) return;
@@ -264,27 +259,13 @@ async function handleSimpleClick(item) {
     if (answeredQuestionId && appState.activeQuestion?.id === answeredQuestionId) endQuestion();
 }
 
-export async function speakSimpleSentence(sentence) {
-    playConfirmSound();
-    // 長い文は読み終える前に表示が消えないよう、文字数に応じて表示を延ばす
-    showConfirm(sentence, Math.max(SIMPLE_CONFIRM_DISPLAY_MS, sentence.length * 160));
-    confirmState.isConfirmInProgress = true;
-    void speak(sentence);
-
-    try {
-        await waitForConfirmOverlayToHide();
-    } finally {
-        confirmState.isConfirmInProgress = false;
-    }
-}
-
 function isSimpleControlDisabled(control) {
     const needsPath = [SIMPLE_CTRL_BACKSPACE, SIMPLE_CTRL_CLEAR].includes(control);
     return needsPath && talkState.talkPath.length === 0;
 }
 
 export function handleSimpleControl(control) {
-    if (confirmState.isConfirmInProgress) return;
+    if (isConfirmInProgress) return;
     if (panelScreen.isSimplePaused && control !== SIMPLE_CTRL_REST) return;
     if (isSimpleControlDisabled(control)) return;
 
@@ -323,17 +304,12 @@ export function setAppMode(mode) {
 
     appState.appMode = nextMode;
     localStorage.setItem(APP_MODE_KEY, appState.appMode);
-    resetDwellProgress();
-    selection.dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+    lockUntilPointerLeaves();
     panelScreen.isSimplePaused = false;
     panelScreen.simplePage = 0;
-    talkState.talkTab = TALK_TAB_TREE;
-    talkState.talkPath = [];
-    talkState.talkFavoriteOrder = null;
-    // 質問中に切り替えたら質問は終える（終了後に古いページへ戻らないようにする）
-    appState.activeQuestion = null;
-    questionStore.lastQuestionAnswer = null;
-    questionScreen.pageBeforeQuestion = 0;
+    resetTalkNavigation();
+    // 質問中に切り替えたら質問は終える
+    resetQuestionScreen();
     resetPointerMotionHistory();
     renderAll();
     if (isQuestionMode()) ensureQuestionModeQuestion({ speak: true });

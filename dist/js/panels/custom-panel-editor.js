@@ -9,8 +9,8 @@ import {
 } from "./catalog.js";
 import { panelScreen } from "./screen.js";
 import {
-    getAnswerEditQuestion, getDraftAnswerKeys, moveQuestionAnswer, questionDraft, renderQuestionEditor,
-    renderQuestionPanelPicker
+    forgetDeletedPanel, getAnswerEditQuestion, getDraftAnswerKeys, moveQuestionAnswer,
+    renderQuestionEditor, renderQuestionPanelPicker
 } from "../question/editor.js";
 
 const CUSTOM_IMAGE_MAX_PX = 256;
@@ -96,9 +96,7 @@ export function addSimpleCustomPanel() {
 
 export function deleteSimpleCustomPanel(id) {
     simpleCustomDraft = simpleCustomDraft.filter(p => p.id !== id);
-    questionDraft.questionPanelPickDraft = questionDraft.questionPanelPickDraft.filter(x => x !== id);
-    renderQuestionPanelPicker();
-    renderQuestionEditor();
+    forgetDeletedPanel(id);
 }
 
 // 保存に失敗したら false（画像が多すぎて容量超過など）

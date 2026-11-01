@@ -10,12 +10,12 @@ import {
     getAngleOffsetAcceleration, getDistanceRatioFor, getNoseDeadzone, getNoseScale, getYawDeadzone,
     getYawScale
 } from "../pointer/tracking.js";
-import { JAW_OPEN_THRESHOLD_GAIN, gesture } from "../face/gesture.js";
+import { JAW_OPEN_THRESHOLD_GAIN, jawOpenThreshold } from "../face/gesture.js";
 import {
     CALIB_DISTANCE_EXPONENT_MAX, CALIB_DISTANCE_EXPONENT_MIN, CALIB_HORIZONTAL_KEYS,
     CALIB_JAW_OPEN_POINT, CALIB_MIN_DISTANCE_SPREAD, CALIB_MIN_JAW_RANGE, CALIB_VERTICAL_KEYS
 } from "./constants.js";
-import { calibSettings } from "./wizard.js";
+import { isCalibFarPassEnabled } from "./wizard.js";
 
 function meanOf(values) {
     if (values.length === 0) return NaN;
@@ -254,7 +254,7 @@ export function computeCalibrationResult(captures, neutralSamples, mouthSamples)
         }
         // 基準は2つの距離の中間（幾何平均）にして、どちらの距離でも補正量を小さく保つ
         ref = Math.sqrt(ref * farCenter.distance);
-    } else if (!farCenter && calibSettings.isCalibFarPassEnabled) {
+    } else if (!farCenter && isCalibFarPassEnabled) {
         warnings.push("離れた位置の計測を省略したため、距離補正は標準の強さにしました");
     }
     const model = { ref, exponent, noise, gain: pointerConfig.noseGain, sideRatios: { ...pointerConfig.sideGainRatios } };
@@ -317,7 +317,7 @@ export function computeCalibrationResult(captures, neutralSamples, mouthSamples)
     // 口: 閉じ〜開きの中間より少し下を判定ラインにする
     const jawClosed = percentileOf(neutralSamples.map(s => s.jaw), 0.5);
     const jawOpen = percentileOf(mouthSamples.map(s => s.jaw), 0.9);
-    let jawThreshold = gesture.jawOpenThreshold;
+    let jawThreshold = jawOpenThreshold;
     const jawRange = jawOpen - jawClosed;
     if (!Number.isFinite(jawRange) || jawRange <= 0.02) {
         warnings.push("口の開きを検出できなかったため、口の閾値は変更しません");

@@ -1,11 +1,9 @@
 // 右上のボタン（全画面・設定・正面の取り直し）と画面全体の操作
 import { calibrateBtn, fullscreenBtn, recaptureFrontBtn } from "../core/dom.js";
-import {
-    ANGLE_NOISE_KEY, NOSE_NOISE_KEY, SIDE_GAIN_RATIO_KEYS, VERTICAL_GAIN_RATIO_KEY, pointerConfig
-} from "../pointer/config.js";
+import { pointerConfig, resetCalibrationTuning } from "../pointer/config.js";
 import { resetPointerMotionHistory } from "../pointer/tracking.js";
 import { speak } from "../speech/speak.js";
-import { JAW_CLOSE_MIN_GAP, gesture } from "../face/gesture.js";
+import { resetJawBaseline } from "../face/gesture.js";
 import { startFrontRecapture } from "../calibration/front.js";
 
 function updateFullscreenButton() {
@@ -23,17 +21,8 @@ export function initQuickActions() {
         if (!confirm("静止時の揺れ幅と向きごとの倍率を初期値に戻し、今の向きを正面にします。よろしいですか？")) return;
         pointerConfig.isCalibrating = true;
         resetPointerMotionHistory();
-        gesture.jawClosedBaseline = null;
-        gesture.debugJawOpenThreshold = gesture.jawOpenThreshold;
-        gesture.debugJawCloseThreshold = Math.max(0, gesture.jawOpenThreshold - JAW_CLOSE_MIN_GAP);
-        // キャリブレーションで決めた揺れ幅・向きごとの倍率はスライダーが無いので、ここで初期値へ戻す
-        pointerConfig.noseNoise = 0;
-        pointerConfig.angleNoise = 0;
-        pointerConfig.sideGainRatios = { left: 1, right: 1, up: 1, down: 1 };
-        localStorage.removeItem(NOSE_NOISE_KEY);
-        localStorage.removeItem(ANGLE_NOISE_KEY);
-        localStorage.removeItem(VERTICAL_GAIN_RATIO_KEY);
-        Object.values(SIDE_GAIN_RATIO_KEYS).forEach(key => localStorage.removeItem(key));
+        resetJawBaseline();
+        resetCalibrationTuning();
         speak("リセット");
     });
     // ファイルを画像入力以外に落としたとき、画面がそのファイルに切り替わってアプリが消えないようにする

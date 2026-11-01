@@ -1,5 +1,7 @@
 // 設定画面: お話モードのタブ（会話パターン・言葉・AI で作る）
-import { TALK_AI_MODEL_DEFAULT, generateInterviewQuestions, generateTalkSet, countTalkTreeNodes } from "../../talk-generator.js";
+import {
+    TALK_AI_MODEL_DEFAULT, countTalkTreeNodes, generateInterviewQuestions, generateTalkSet
+} from "../../talk-generator.js";
 import {
     apiKeyInput, settingsModal, talkAiModelInput, talkAiStatus, talkCustomEmojiInput,
     talkCustomLabelInput, talkCustomSayInput, talkGenerateBtn, talkHistorySummary,

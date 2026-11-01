@@ -2,23 +2,20 @@
 import { questionButtonsContainer, questionEndBtn, questionModeBar } from "../core/dom.js";
 import { appState, isQuestionMode } from "../core/app-state.js";
 import { centerPointerOnSimpleGrid } from "../pointer/tracking.js";
-import { confirmState, dismissConfirmOverlay } from "../panels/confirm.js";
-import { DWELL_LOCK_FIRST_HOVER, resetDwellProgress, selection } from "../panels/selection.js";
+import { dismissConfirmOverlay, isConfirmInProgress } from "../panels/confirm.js";
+import { lockUntilPointerLeaves } from "../panels/selection.js";
 import {
     QUESTION_MODE_LAST_KEY, QUESTION_TIMEOUT_MS, getQuestionAnswers, getQuestionCatalog,
     getQuestionEmoji, getQuestionIcon, getQuestionLabel, getVisibleQuestions, questionStore
 } from "./model.js";
 import { panelScreen, renderAll } from "../panels/screen.js";
 import { speak } from "../speech/speak.js";
-import { gesture } from "../face/gesture.js";
+import { cancelPendingClick } from "../face/gesture.js";
 import { saveSettingsAndClose } from "../settings/settings-modal.js";
 
 let activeQuestionStartedAt = 0;
 
-// 他のモジュールからも読み書きする状態
-export const questionScreen = {
-    pageBeforeQuestion: 0
-};
+let pageBeforeQuestion = 0;
 
 // 質問モードで、出す質問の中から回答中の質問を決める（前回の質問 → 先頭の質問）。出す質問が無ければ空の画面
 export function ensureQuestionModeQuestion({ speak: shouldSpeak = false } = {}) {
@@ -37,7 +34,7 @@ export function ensureQuestionModeQuestion({ speak: shouldSpeak = false } = {}) 
 
 // 質問モードの上のボタン。回答の確定表示中でも待たせず、表示を閉じてから切り替える
 function selectQuestionFromBar(questionId) {
-    if (!confirmState.isConfirmInProgress) {
+    if (!isConfirmInProgress) {
         startQuestion(questionId);
         return;
     }
@@ -84,7 +81,7 @@ export function renderQuestionModeBar() {
 
 export function startQuestion(questionId, { speak: shouldSpeak = true } = {}) {
     const question = getQuestionCatalog().find(q => q.id === questionId);
-    if (!question || confirmState.isConfirmInProgress) return;
+    if (!question || isConfirmInProgress) return;
     if (isQuestionMode()) {
         try {
             localStorage.setItem(QUESTION_MODE_LAST_KEY, question.id);
@@ -93,13 +90,9 @@ export function startQuestion(questionId, { speak: shouldSpeak = true } = {}) {
         }
     }
     // 切り替える前の画面で予約された口のクリックは実行しない（同じ質問を出し直すと回答 id が同じで、古いパネルが確定してしまう）
-    if (gesture.pendingClickTimer) {
-        clearTimeout(gesture.pendingClickTimer);
-        gesture.pendingClickTimer = null;
-        gesture.pendingClickTargetKey = "";
-    }
+    cancelPendingClick();
 
-    if (!appState.activeQuestion) questionScreen.pageBeforeQuestion = panelScreen.simplePage;
+    if (!appState.activeQuestion) pageBeforeQuestion = panelScreen.simplePage;
     // 回答 id は質問ごとに振り直す（パネルの元の id は panelId に残る）
     appState.activeQuestion = {
         ...question,
@@ -109,9 +102,8 @@ export function startQuestion(questionId, { speak: shouldSpeak = true } = {}) {
     activeQuestionStartedAt = Date.now();
     panelScreen.isSimplePaused = false;
     panelScreen.simplePage = 0;
-    resetDwellProgress();
     // 質問が出た瞬間にポインタの下の回答を選ばないよう、一度動くまで滞留しない
-    selection.dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+    lockUntilPointerLeaves();
     renderAll();
     centerPointerOnSimpleGrid();
     renderQuestionButtons();
@@ -121,21 +113,27 @@ export function startQuestion(questionId, { speak: shouldSpeak = true } = {}) {
 
 export function endQuestion() {
     // 回答の確認表示中は閉じない（表示が消えた後に handleSimpleClick が閉じる）
-    if (!appState.activeQuestion || confirmState.isConfirmInProgress) return;
+    if (!appState.activeQuestion || isConfirmInProgress) return;
     // 質問モードは質問を閉じない（切り替えだけ）
     if (isQuestionMode()) return;
 
     appState.activeQuestion = null;
-    panelScreen.simplePage = questionScreen.pageBeforeQuestion;
-    resetDwellProgress();
-    selection.dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+    panelScreen.simplePage = pageBeforeQuestion;
+    lockUntilPointerLeaves();
     renderAll();
     centerPointerOnSimpleGrid();
     renderQuestionButtons();
 }
 
+// 操作モードを切り替えたとき: 質問は終え、前の答えの表示も消す（終了後に古いページへ戻らないようにする）
+export function resetQuestionScreen() {
+    appState.activeQuestion = null;
+    questionStore.lastQuestionAnswer = null;
+    pageBeforeQuestion = 0;
+}
+
 export function checkQuestionTimeout() {
-    if (!appState.activeQuestion || confirmState.isConfirmInProgress || isQuestionMode()) return;
+    if (!appState.activeQuestion || isConfirmInProgress || isQuestionMode()) return;
     if (Date.now() - activeQuestionStartedAt >= QUESTION_TIMEOUT_MS) endQuestion();
 }
 

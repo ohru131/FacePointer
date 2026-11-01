@@ -2,19 +2,16 @@
 import { simpleTabsContainer } from "../core/dom.js";
 import { isTalkScreen } from "../core/app-state.js";
 import { createSimpleButton } from "../panels/panel-button.js";
-import { confirmState } from "../panels/confirm.js";
+import { isConfirmInProgress, speakSimpleSentence } from "../panels/confirm.js";
 import { playConfirmSound } from "../panels/sound.js";
-import {
-    DWELL_LOCK_FIRST_HOVER, getSimpleRowKey, isDwellConfirmingCarryover, lockSimpleKeyAfterConfirm,
-    resetDwellProgress, selection
-} from "../panels/selection.js";
+import { getSimpleRowKey, lockSimpleKeyAfterConfirm, markPanelsReplaced } from "../panels/selection.js";
 import {
     DEFAULT_TALK_SET, TALK_AIZUCHI, TALK_HISTORY_KEY, TALK_HISTORY_SENTENCE_LIMIT, TALK_SAY_ID,
     TALK_TAB_AIZUCHI, TALK_TAB_FAVORITE, TALK_TAB_PARTNER, TALK_TAB_PREFIX, TALK_TAB_TREE,
     getActiveTalkSet, getFavoriteTalkSentences, getFavoriteTalkTemplates, getTalkChildren,
     getTalkCurrentNode, getTalkPartner, getTalkPartners, resolveTalkSentence, talkState
 } from "./model.js";
-import { handleSimpleControl, panelScreen, rerenderSimpleMode, speakSimpleSentence } from "../panels/screen.js";
+import { handleSimpleControl, panelScreen, rerenderSimpleMode } from "../panels/screen.js";
 
 export function getTalkPanels() {
     if (talkState.talkTab === TALK_TAB_AIZUCHI) return TALK_AIZUCHI.map(item => ({ ...item, type: "aizuchi" }));
@@ -57,18 +54,10 @@ function getTalkTabs() {
     ];
 }
 
-// 中身が入れ替わるので、ポインタの下に来た新しいパネルは長めの滞留で確定する。
-// 確定したばかりのボタン（タブ・戻るなど）は dwellLockedKey のまま、外れるまで再選択しない。
-// 話した直後と、動かさずに続けて確定したあとは、じっとしているだけで次々に選ばれないよう一度外れるまで滞留しない
+// 中身が入れ替わるので、最初のページから出し直し、ポインタの下の新しいパネルを続けて選ばないようにする
 export function refreshTalkScreen({ fullLock = false } = {}) {
     panelScreen.simplePage = 0;
-    resetDwellProgress();
-    if (fullLock || isDwellConfirmingCarryover) {
-        selection.dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
-        selection.dwellCarryoverKey = "";
-    } else {
-        selection.dwellCarryoverKey = DWELL_LOCK_FIRST_HOVER;
-    }
+    markPanelsReplaced({ fullLock });
 }
 
 // お話タブ中にもう一度お話を選んだら最初の話題へ。相づちなどから戻ったときは、たどっていた場所を保つ
@@ -121,7 +110,7 @@ function speakTalkSentence(template, { record = true } = {}) {
 }
 
 export function handleTalkPanel(item) {
-    if (confirmState.isConfirmInProgress || panelScreen.isSimplePaused) return;
+    if (isConfirmInProgress || panelScreen.isSimplePaused) return;
     lockSimpleKeyAfterConfirm(getSimpleRowKey(item.id));
 
     if (item.type === "aizuchi") {

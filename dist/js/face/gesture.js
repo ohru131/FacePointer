@@ -3,10 +3,10 @@ import { canvasCtx, canvasElement, gestureIndicator, pointerElement } from "../c
 import { lowPassFilter, medianOfNumbers } from "../core/math.js";
 import { readStoredNumber } from "../core/storage.js";
 import { isSettingsOpen } from "../core/app-state.js";
-import { tracking } from "../pointer/tracking.js";
-import { confirmState } from "../panels/confirm.js";
+import { pointerX, pointerY } from "../pointer/tracking.js";
+import { isConfirmInProgress } from "../panels/confirm.js";
 import { isSimpleClickBlocked } from "../panels/selection.js";
-import { logClickDebug, markClickFeedback } from "./click-debug.js";
+import { logClickDebug } from "./click-debug.js";
 import { calibrationWizard } from "../calibration/wizard.js";
 
 export const JAW_OPEN_THRESHOLD_KEY = "jaw_open_threshold";
@@ -20,7 +20,7 @@ const JAW_OPEN_REQUIRED_FRAMES = 5;
 const JAW_OPEN_SMOOTHING_ALPHA = 0.35;
 const CONFIRM_COOLDOWN_MS = 100;
 const CLICK_DELAY_MS = 180;
-export const CLICK_FEEDBACK_MS = 320;
+const CLICK_FEEDBACK_MS = 320;
 const JAW_OPEN_RAW_MIN = 0.12;
 const JAW_OPEN_MIN_DELTA_FROM_BASELINE = 0.045;
 const FACE_REACQUIRE_GUARD_MS = 650;
@@ -40,28 +40,55 @@ let mouthOpenedAt = 0;
 export let mouthOpenRatio = 0;
 export let mouthOpenRatioBaseline = null;
 
-// 他のモジュールからも読み書きする状態
-export const gesture = {
-    jawOpenThreshold: readStoredNumber(JAW_OPEN_THRESHOLD_KEY, JAW_OPEN_THRESHOLD_DEFAULT, 0.0, 0.2),
-    lastConfirmedAt: 0,
-    pendingClickTimer: null,
-    pendingClickTargetKey: "",
-    clickFeedbackUntil: 0,
-    jawClosedBaseline: null,
-    debugJawOpenThreshold: 0,
-    debugJawCloseThreshold: 0
-};
+export let jawOpenThreshold = readStoredNumber(JAW_OPEN_THRESHOLD_KEY, JAW_OPEN_THRESHOLD_DEFAULT, 0.0, 0.2);
+let lastConfirmedAt = 0;
+export let pendingClickTimer = null;
+export let pendingClickTargetKey = "";
+let clickFeedbackUntil = 0;
+export let jawClosedBaseline = null;
+export let debugJawOpenThreshold = 0;
+export let debugJawCloseThreshold = 0;
 let jawRawRecent = [];
 let wasFaceBlendshapeAvailable = false;
 let faceJustReacquiredUntil = 0;
 let loggedReacquireGuard = false;
 const JAW_BASELINE_ALPHA = 0.08;
 const JAW_CLOSE_RATIO = 0.45;
-export const JAW_CLOSE_MIN_GAP = 0.02;
+const JAW_CLOSE_MIN_GAP = 0.02;
 export const JAW_OPEN_THRESHOLD_GAIN = 0.72;
 const JAW_BASELINE_MAX = 0.11;
 const JAW_OPEN_ABS_MIN = 0.115;
 const JAW_CLOSE_ABS_MIN = 0.075;
+
+// 口を開けた判定のしきい値を変えて保存する
+export function saveJawOpenThreshold(value) {
+    jawOpenThreshold = value;
+    localStorage.setItem(JAW_OPEN_THRESHOLD_KEY, String(value));
+}
+
+// 口を閉じたときの基準を測り直す
+export function resetJawBaseline() {
+    jawClosedBaseline = null;
+}
+
+// 予約した口のクリックを取り消す。取り消したら true
+export function cancelPendingClick() {
+    if (!pendingClickTimer) return false;
+    clearTimeout(pendingClickTimer);
+    pendingClickTimer = null;
+    pendingClickTargetKey = "";
+    return true;
+}
+
+// 確定した時刻を残す（直後の口の確定を止める）
+export function markConfirmed() {
+    lastConfirmedAt = Date.now();
+}
+
+// 確定したことをポインタの見た目で少しの間知らせる
+function markClickFeedback() {
+    clickFeedbackUntil = Date.now() + CLICK_FEEDBACK_MS;
+}
 
 function pushJawRawSample(value) {
     jawRawRecent.push(value);
@@ -99,13 +126,13 @@ function updateMouthRatioBaseline() {
 }
 
 function getEffectiveJawOpenThreshold() {
-    const relativeThreshold = (gesture.jawClosedBaseline ?? 0) + (gesture.jawOpenThreshold * JAW_OPEN_THRESHOLD_GAIN);
+    const relativeThreshold = (jawClosedBaseline ?? 0) + (jawOpenThreshold * JAW_OPEN_THRESHOLD_GAIN);
     return Math.max(JAW_OPEN_ABS_MIN, relativeThreshold);
 }
 
 function getEffectiveJawCloseThreshold() {
     const openThreshold = getEffectiveJawOpenThreshold();
-    const adjustedGap = gesture.jawOpenThreshold * JAW_OPEN_THRESHOLD_GAIN;
+    const adjustedGap = jawOpenThreshold * JAW_OPEN_THRESHOLD_GAIN;
     const closeThreshold = openThreshold - Math.max(JAW_CLOSE_MIN_GAP, adjustedGap * JAW_CLOSE_RATIO);
     return Math.max(JAW_CLOSE_ABS_MIN, closeThreshold);
 }
@@ -114,13 +141,13 @@ function updateJawClosedBaseline() {
     if (!Number.isFinite(jawOpenFilteredScore)) return;
     const filtered = Math.min(jawOpenFilteredScore, JAW_BASELINE_MAX);
 
-    if (gesture.jawClosedBaseline === null) {
-        gesture.jawClosedBaseline = filtered;
+    if (jawClosedBaseline === null) {
+        jawClosedBaseline = filtered;
         return;
     }
 
-    const candidate = Math.min(filtered, gesture.jawClosedBaseline + 0.008);
-    gesture.jawClosedBaseline = lowPassFilter(gesture.jawClosedBaseline, candidate, JAW_BASELINE_ALPHA);
+    const candidate = Math.min(filtered, jawClosedBaseline + 0.008);
+    jawClosedBaseline = lowPassFilter(jawClosedBaseline, candidate, JAW_BASELINE_ALPHA);
 }
 
 export function isJawOpenVisualActive() {
@@ -128,7 +155,7 @@ export function isJawOpenVisualActive() {
 }
 
 export function updateGestureDetection(detectResults, primaryLandmarks = null) {
-    if (confirmState.isConfirmInProgress) return;
+    if (isConfirmInProgress) return;
     if (!detectResults.faceBlendshapes || detectResults.faceBlendshapes.length === 0) {
         const hadState = isMouthOpen || jawOpenConsecutiveFrames > 0 || jawOpenFilteredScore > 0.02;
         wasFaceBlendshapeAvailable = false;
@@ -140,11 +167,11 @@ export function updateGestureDetection(detectResults, primaryLandmarks = null) {
         jawOpenConsecutiveFrames = 0;
         isMouthOpen = false;
         mouthOpenedAt = 0;
-        gesture.jawClosedBaseline = null;
+        jawClosedBaseline = null;
         mouthOpenRatio = 0;
         mouthOpenRatioBaseline = null;
-        gesture.debugJawOpenThreshold = gesture.jawOpenThreshold * JAW_OPEN_THRESHOLD_GAIN;
-        gesture.debugJawCloseThreshold = Math.max(0, (gesture.jawOpenThreshold * JAW_OPEN_THRESHOLD_GAIN) - JAW_CLOSE_MIN_GAP);
+        debugJawOpenThreshold = jawOpenThreshold * JAW_OPEN_THRESHOLD_GAIN;
+        debugJawCloseThreshold = Math.max(0, (jawOpenThreshold * JAW_OPEN_THRESHOLD_GAIN) - JAW_CLOSE_MIN_GAP);
         if (hadState) {
             logClickDebug("no_face_reset");
         }
@@ -158,7 +185,7 @@ export function updateGestureDetection(detectResults, primaryLandmarks = null) {
         jawOpenConsecutiveFrames = 0;
         isMouthOpen = false;
         mouthOpenedAt = 0;
-        gesture.jawClosedBaseline = null;
+        jawClosedBaseline = null;
         mouthOpenRatioBaseline = null;
         loggedReacquireGuard = false;
         logClickDebug("face_reacquired", { guardMs: FACE_REACQUIRE_GUARD_MS });
@@ -184,8 +211,8 @@ export function updateGestureDetection(detectResults, primaryLandmarks = null) {
 
     const openThreshold = getEffectiveJawOpenThreshold();
     const closeThreshold = getEffectiveJawCloseThreshold();
-    gesture.debugJawOpenThreshold = openThreshold;
-    gesture.debugJawCloseThreshold = closeThreshold;
+    debugJawOpenThreshold = openThreshold;
+    debugJawCloseThreshold = closeThreshold;
 
     if (Date.now() < faceJustReacquiredUntil) {
         if (!loggedReacquireGuard) {
@@ -223,7 +250,7 @@ export function updateGestureDetection(detectResults, primaryLandmarks = null) {
         return;
     }
 
-    const baseline = gesture.jawClosedBaseline ?? 0;
+    const baseline = jawClosedBaseline ?? 0;
     const openDelta = jawOpenFilteredScore - baseline;
     const ratioBaseline = mouthOpenRatioBaseline ?? 0;
     const ratioThreshold = Math.max(MOUTH_RATIO_OPEN_MIN, ratioBaseline + MOUTH_RATIO_DELTA_MIN);
@@ -275,7 +302,7 @@ export function updateGestureDetection(detectResults, primaryLandmarks = null) {
 
 export function drawMouthDetectionOverlay(landmarks) {
     const isOpenDetected = isJawOpenVisualActive();
-    const isClickFeedbackActive = Date.now() < gesture.clickFeedbackUntil;
+    const isClickFeedbackActive = Date.now() < clickFeedbackUntil;
     // 色はクリック実行タイミングに合わせる（クリック時=赤、それ以外=緑）。
     // 口の値の文字表示は、鏡像の映像に重ねると左右反転して読めないので出さない（計測値パネルに出る）
     const accent = (isClickFeedbackActive || isOpenDetected) ? "#ff5252" : "#00e676";
@@ -302,8 +329,8 @@ export function drawMouthDetectionOverlay(landmarks) {
 
 function showGestureFeedback() {
     // 確定サインは現在のポインタ位置を中心に表示する
-    gestureIndicator.style.left = `${tracking.pointerX}px`;
-    gestureIndicator.style.top = `${tracking.pointerY}px`;
+    gestureIndicator.style.left = `${pointerX}px`;
+    gestureIndicator.style.top = `${pointerY}px`;
     gestureIndicator.classList.add("active");
     pointerElement.style.setProperty("--pointer-scale", "2");
     pointerElement.style.backgroundColor = "#fff";
@@ -318,14 +345,14 @@ function showGestureFeedback() {
 
 function triggerClick() {
     if (calibrationWizard.isActive() || isSettingsOpen()) return false;
-    if (confirmState.isConfirmInProgress) {
+    if (isConfirmInProgress) {
         logClickDebug("click_blocked_confirm_in_progress");
         return false;
     }
 
     const now = Date.now();
-    if (now - gesture.lastConfirmedAt < CONFIRM_COOLDOWN_MS) {
-        logClickDebug("click_blocked_cooldown", { sinceLastConfirmMs: now - gesture.lastConfirmedAt });
+    if (now - lastConfirmedAt < CONFIRM_COOLDOWN_MS) {
+        logClickDebug("click_blocked_cooldown", { sinceLastConfirmMs: now - lastConfirmedAt });
         return false;
     }
 
@@ -337,24 +364,24 @@ function triggerClick() {
             return false;
         }
 
-        if (gesture.pendingClickTimer) {
-            logClickDebug("click_pending_replaced", { replacedTargetKey: gesture.pendingClickTargetKey, newTargetKey: targetKey });
-            clearTimeout(gesture.pendingClickTimer);
-            gesture.pendingClickTimer = null;
-            gesture.pendingClickTargetKey = "";
+        if (pendingClickTimer) {
+            logClickDebug("click_pending_replaced", { replacedTargetKey: pendingClickTargetKey, newTargetKey: targetKey });
+            clearTimeout(pendingClickTimer);
+            pendingClickTimer = null;
+            pendingClickTargetKey = "";
         }
 
         logClickDebug("click_scheduled", { targetKey, clickDelayMs: CLICK_DELAY_MS });
         activeBtn.classList.add("clicked-anim");
-        gesture.pendingClickTargetKey = targetKey;
+        pendingClickTargetKey = targetKey;
         // ボタン参照を保持して、タイマー実行時にはこちらを使用
         const targetBtn = activeBtn;
-        gesture.pendingClickTimer = setTimeout(() => {
+        pendingClickTimer = setTimeout(() => {
             // 1. アニメーションクラスが削除されている（キャンセルされた）
             if (!targetBtn.classList.contains("clicked-anim")) {
                 logClickDebug("click_canceled_missing_anim", { targetKey });
-                gesture.pendingClickTimer = null;
-                gesture.pendingClickTargetKey = "";
+                pendingClickTimer = null;
+                pendingClickTargetKey = "";
                 return;
             }
 
@@ -362,8 +389,8 @@ function triggerClick() {
             if (calibrationWizard.isActive()) {
                 logClickDebug("click_canceled_calibration", { targetKey });
                 targetBtn.classList.remove("clicked-anim");
-                gesture.pendingClickTimer = null;
-                gesture.pendingClickTargetKey = "";
+                pendingClickTimer = null;
+                pendingClickTargetKey = "";
                 return;
             }
 
@@ -372,11 +399,11 @@ function triggerClick() {
             const currentKey = currentHover
                 ? `${currentHover.dataset.row}|${currentHover.dataset.name}`
                 : "";
-            if (currentKey !== gesture.pendingClickTargetKey) {
+            if (currentKey !== pendingClickTargetKey) {
                 logClickDebug("click_canceled_hover_changed", { targetKey, currentKey });
                 targetBtn.classList.remove("clicked-anim");
-                gesture.pendingClickTimer = null;
-                gesture.pendingClickTargetKey = "";
+                pendingClickTimer = null;
+                pendingClickTargetKey = "";
                 return;
             }
 
@@ -384,9 +411,9 @@ function triggerClick() {
             markClickFeedback();
             logClickDebug("click_executed", { targetKey });
             targetBtn.click();
-            gesture.lastConfirmedAt = Date.now();
-            gesture.pendingClickTimer = null;
-            gesture.pendingClickTargetKey = "";
+            markConfirmed();
+            pendingClickTimer = null;
+            pendingClickTargetKey = "";
         }, CLICK_DELAY_MS);
 
         return true;

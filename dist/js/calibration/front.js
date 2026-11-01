@@ -1,7 +1,7 @@
 // 正面の取り直し
 import { pointerConfig } from "../pointer/config.js";
 import {
-    centerPointerOnSimpleGrid, clearPostureHint, resetPointerMotionHistory, tracking
+    centerPointerOnSimpleGrid, clearPostureHint, resetPointerMotionHistory, setSessionDistanceRef
 } from "../pointer/tracking.js";
 import { speak } from "../speech/speak.js";
 import { calibrationWizard } from "./wizard.js";
@@ -24,7 +24,7 @@ export function recaptureFrontPose(sample = null, screenPoint = null) {
         pointerConfig.calibratedNoseY = sample.noseY;
         pointerConfig.calibratedYaw = sample.yaw;
         pointerConfig.calibratedPitch = sample.pitch;
-        if (Number.isFinite(sample.distance)) tracking.sessionDistanceRef = sample.distance;
+        if (Number.isFinite(sample.distance)) setSessionDistanceRef(sample.distance);
         pointerConfig.frontScreenPoint = screenPoint;
         // 起動時の校正待ち（isCalibrating）が残っていると、次のフレームの姿勢で上書きされるので解除する
         pointerConfig.isCalibrating = false;

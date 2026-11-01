@@ -1,8 +1,9 @@
 // 口の確定の調査用ログ（Ctrl+Shift+L で書き出し）
-import { tracking } from "../pointer/tracking.js";
+import { pointerX, pointerY } from "../pointer/tracking.js";
 import {
-    CLICK_FEEDBACK_MS, gesture, isMouthOpen, jawOpenConsecutiveFrames, jawOpenFilteredScore,
-    jawOpenRawInstantScore, jawOpenRawScore, mouthOpenRatio, mouthOpenRatioBaseline
+    debugJawCloseThreshold, debugJawOpenThreshold, isMouthOpen, jawClosedBaseline,
+    jawOpenConsecutiveFrames, jawOpenFilteredScore, jawOpenRawInstantScore, jawOpenRawScore,
+    mouthOpenRatio, mouthOpenRatioBaseline, pendingClickTargetKey, pendingClickTimer
 } from "./gesture.js";
 
 const CLICK_DEBUG_LOG = true;
@@ -105,17 +106,17 @@ export function logClickDebug(event, extra = {}) {
         jawRaw: Number(jawOpenRawScore.toFixed(4)),
         jawRawInstant: Number(jawOpenRawInstantScore.toFixed(4)),
         jawFilt: Number(jawOpenFilteredScore.toFixed(4)),
-        jawBaseline: Number((gesture.jawClosedBaseline ?? 0).toFixed(4)),
+        jawBaseline: Number((jawClosedBaseline ?? 0).toFixed(4)),
         mouthRatio: Number((mouthOpenRatio ?? 0).toFixed(4)),
         mouthRatioBaseline: Number((mouthOpenRatioBaseline ?? 0).toFixed(4)),
-        jawOpenTh: Number(gesture.debugJawOpenThreshold.toFixed(4)),
-        jawCloseTh: Number(gesture.debugJawCloseThreshold.toFixed(4)),
+        jawOpenTh: Number(debugJawOpenThreshold.toFixed(4)),
+        jawCloseTh: Number(debugJawCloseThreshold.toFixed(4)),
         openFrames: jawOpenConsecutiveFrames,
         hoverKey,
-        pendingClickTargetKey: gesture.pendingClickTargetKey,
-        hasPendingClick: Boolean(gesture.pendingClickTimer),
-        pointerX: Math.round(tracking.pointerX),
-        pointerY: Math.round(tracking.pointerY),
+        pendingClickTargetKey: pendingClickTargetKey,
+        hasPendingClick: Boolean(pendingClickTimer),
+        pointerX: Math.round(pointerX),
+        pointerY: Math.round(pointerY),
         ...extra
     };
     clickDebugEntries.push(payload);
@@ -126,10 +127,6 @@ export function logClickDebug(event, extra = {}) {
     if (CLICK_DEBUG_CONSOLE) {
         console.log("[CLICK_DEBUG]", payload);
     }
-}
-
-export function markClickFeedback() {
-    gesture.clickFeedbackUntil = Date.now() + CLICK_FEEDBACK_MS;
 }
 
 export function initClickDebug() {

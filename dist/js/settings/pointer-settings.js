@@ -4,10 +4,10 @@ import {
     pointerTab, yawGainSlider, yawGainValue
 } from "../core/dom.js";
 import {
-    NOSE_GAIN_KEY, POINTER_MODE_ABSOLUTE, YAW_GAIN_KEY, isCalibrationDone, pointerConfig
+    POINTER_MODE_ABSOLUTE, isCalibrationDone, pointerConfig, saveNoseGain, saveYawGain
 } from "../pointer/config.js";
-import { tracking } from "../pointer/tracking.js";
-import { JAW_OPEN_THRESHOLD_KEY, gesture } from "../face/gesture.js";
+import { resetAngleHistory } from "../pointer/tracking.js";
+import { jawOpenThreshold, saveJawOpenThreshold } from "../face/gesture.js";
 
 export function updateCalibStatusBadge() {
     const badge = document.getElementById("calib-status-badge");
@@ -31,13 +31,13 @@ export function refreshPointerOptionAvailability() {
 }
 
 export function refreshTuningSliderLabels() {
-    if (jawOpenThresholdValue) jawOpenThresholdValue.textContent = gesture.jawOpenThreshold.toFixed(2);
+    if (jawOpenThresholdValue) jawOpenThresholdValue.textContent = jawOpenThreshold.toFixed(2);
     if (noseGainValue) noseGainValue.textContent = pointerConfig.noseGain.toFixed(1);
     if (yawGainValue) yawGainValue.textContent = pointerConfig.yawGain.toFixed(1);
 }
 
 export function syncTuningSliders() {
-    if (jawOpenThresholdSlider) jawOpenThresholdSlider.value = String(gesture.jawOpenThreshold);
+    if (jawOpenThresholdSlider) jawOpenThresholdSlider.value = String(jawOpenThreshold);
     if (noseGainSlider) noseGainSlider.value = String(pointerConfig.noseGain);
     if (yawGainSlider) yawGainSlider.value = String(pointerConfig.yawGain);
     refreshTuningSliderLabels();
@@ -48,27 +48,21 @@ export function initPointerSettings() {
     pointerModeSelect?.addEventListener("change", refreshPointerOptionAvailability);
     if (jawOpenThresholdSlider) {
         jawOpenThresholdSlider.addEventListener("input", (e) => {
-            gesture.jawOpenThreshold = Number.parseFloat(e.target.value);
-            localStorage.setItem(JAW_OPEN_THRESHOLD_KEY, String(gesture.jawOpenThreshold));
+            saveJawOpenThreshold(Number.parseFloat(e.target.value));
             refreshTuningSliderLabels();
         });
     }
     if (noseGainSlider) {
         noseGainSlider.addEventListener("input", (e) => {
-            pointerConfig.noseGain = Number.parseFloat(e.target.value);
-            localStorage.setItem(NOSE_GAIN_KEY, String(pointerConfig.noseGain));
+            saveNoseGain(Number.parseFloat(e.target.value));
             refreshTuningSliderLabels();
         });
     }
     if (yawGainSlider) {
         yawGainSlider.addEventListener("input", (e) => {
-            pointerConfig.yawGain = Number.parseFloat(e.target.value);
-            localStorage.setItem(YAW_GAIN_KEY, String(pointerConfig.yawGain));
+            saveYawGain(Number.parseFloat(e.target.value));
             pointerConfig.isCalibrating = true;
-            tracking.lastYaw = null;
-            tracking.filteredYaw = null;
-            tracking.lastPitch = null;
-            tracking.filteredPitch = null;
+            resetAngleHistory();
             refreshTuningSliderLabels();
         });
     }

@@ -161,6 +161,13 @@ export const talkState = {
     talkFavoriteOrder: null // 「よく話す」タブを開いている間の並び
 };
 
+// たどっていた場所と開いていたタブを最初に戻す
+export function resetTalkNavigation() {
+    talkState.talkTab = TALK_TAB_TREE;
+    talkState.talkPath = [];
+    talkState.talkFavoriteOrder = null;
+}
+
 export function getTalkTree(custom = talkState.talkCustom) {
     const tree = getActiveTalkSet().tree;
     if (custom.length === 0) return tree;

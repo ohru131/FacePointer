@@ -2,7 +2,7 @@
 import { simplePanelContainer } from "../core/dom.js";
 import { clamp } from "../core/math.js";
 import { POINTER_MODE_ABSOLUTE, VERTICAL_MIN_TRAVEL_PX, pointerConfig } from "./config.js";
-import { tracking } from "./tracking.js";
+import { pointerX, pointerY } from "./tracking.js";
 
 // グリッド全体の各パネル中央の範囲でポインタを動かす
 export function getSimplePanelPointerBounds() {
@@ -35,8 +35,8 @@ export function findNearestSimplePanel() {
     let bestDistance = Number.POSITIVE_INFINITY;
     for (const btn of simplePanelContainer.querySelectorAll(".h-btn:not(.h-btn--empty)")) {
         const rect = btn.getBoundingClientRect();
-        const dx = Math.max(rect.left - tracking.pointerX, 0, tracking.pointerX - rect.right);
-        const dy = Math.max(rect.top - tracking.pointerY, 0, tracking.pointerY - rect.bottom);
+        const dx = Math.max(rect.left - pointerX, 0, pointerX - rect.right);
+        const dy = Math.max(rect.top - pointerY, 0, pointerY - rect.bottom);
         const distance = dx * dx + dy * dy;
         if (distance < bestDistance) {
             bestDistance = distance;

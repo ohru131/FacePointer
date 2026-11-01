@@ -50,10 +50,7 @@ let questionHiddenDraft = new Set();
 let questionCustomDraft = [];
 let questionOrderDraft = [];  // 並び順（質問 id。画面の上のボタン・「今すぐ質問する」の順）
 
-// 他のモジュールからも読み書きする状態
-export const questionDraft = {
-    questionPanelPickDraft: [] // 追加する質問の答えにする既存パネル（選んだ順）
-};
+let questionPanelPickDraft = []; // 追加する質問の答えにする既存パネル（選んだ順）
 let questionAnswerLayoutsDraft = {}; // 答えを編集した質問の答えの並び（質問 id → key）
 let questionAnswerEditId = null;     // 「答えのパネル」で編集中の質問
 let questionAnswerSelectedKey = null;
@@ -64,7 +61,7 @@ export function openQuestionEditor() {
     questionHiddenDraft = new Set(questionStore.questionConfig.hiddenIds);
     questionCustomDraft = questionStore.questionCustom.map(q => ({ ...q, answers: q.answers.map(a => ({ ...a })), panelIds: [...q.panelIds] }));
     questionOrderDraft = getQuestionCatalog(questionCustomDraft).map(q => q.id);
-    questionDraft.questionPanelPickDraft = [];
+    questionPanelPickDraft = [];
     questionAnswerLayoutsDraft = Object.fromEntries(Object.entries(questionStore.questionConfig.answerLayouts).map(([id, keys]) => [id, [...keys]]));
     if (questionGridSizeSelect) questionGridSizeSelect.value = questionStore.questionConfig.gridSize;
     // 質問モードで出している質問の答えから編集を始める
@@ -488,15 +485,15 @@ export function renderQuestionPanelPicker() {
     groups.forEach((panels, group) => {
         const section = document.createElement("div");
         section.className = "question-picker-group";
-        const allPicked = panels.every(p => questionDraft.questionPanelPickDraft.includes(p.id));
+        const allPicked = panels.every(p => questionPanelPickDraft.includes(p.id));
         const head = document.createElement("button");
         head.type = "button";
         head.className = "question-picker-head" + (allPicked ? " active" : "");
         head.textContent = `${group}${allPicked ? " ✓" : ""}`;
         head.title = allPicked ? "このグループを外す" : "このグループを丸ごと選ぶ";
         head.addEventListener("click", () => {
-            if (allPicked) questionDraft.questionPanelPickDraft = questionDraft.questionPanelPickDraft.filter(id => !panels.some(p => p.id === id));
-            else panels.forEach((p) => { if (!questionDraft.questionPanelPickDraft.includes(p.id)) questionDraft.questionPanelPickDraft.push(p.id); });
+            if (allPicked) questionPanelPickDraft = questionPanelPickDraft.filter(id => !panels.some(p => p.id === id));
+            else panels.forEach((p) => { if (!questionPanelPickDraft.includes(p.id)) questionPanelPickDraft.push(p.id); });
             renderQuestionPanelPicker();
         });
         section.appendChild(head);
@@ -504,7 +501,7 @@ export function renderQuestionPanelPicker() {
         const chips = document.createElement("div");
         chips.className = "question-picker-chips";
         panels.forEach((p) => {
-            const order = questionDraft.questionPanelPickDraft.indexOf(p.id);
+            const order = questionPanelPickDraft.indexOf(p.id);
             const chip = document.createElement("button");
             chip.type = "button";
             chip.className = "question-picker-chip" + (order !== -1 ? " active" : "");
@@ -514,8 +511,8 @@ export function renderQuestionPanelPicker() {
             chip.appendChild(name);
             chip.title = buildSimpleSentence(p);
             chip.addEventListener("click", () => {
-                if (order !== -1) questionDraft.questionPanelPickDraft.splice(order, 1);
-                else questionDraft.questionPanelPickDraft.push(p.id);
+                if (order !== -1) questionPanelPickDraft.splice(order, 1);
+                else questionPanelPickDraft.push(p.id);
                 renderQuestionPanelPicker();
             });
             chips.appendChild(chip);
@@ -525,22 +522,29 @@ export function renderQuestionPanelPicker() {
     });
 
     if (questionPanelPickSummary) {
-        questionPanelPickSummary.textContent = questionDraft.questionPanelPickDraft.length > 0
-            ? `${questionDraft.questionPanelPickDraft.length} 枚を選択中（番号の順に並ぶ）`
+        questionPanelPickSummary.textContent = questionPanelPickDraft.length > 0
+            ? `${questionPanelPickDraft.length} 枚を選択中（番号の順に並ぶ）`
             : "未選択";
     }
-    if (questionPanelPickClearBtn) questionPanelPickClearBtn.disabled = questionDraft.questionPanelPickDraft.length === 0;
+    if (questionPanelPickClearBtn) questionPanelPickClearBtn.disabled = questionPanelPickDraft.length === 0;
+}
+
+// 消した任意パネルを、選んでいる途中の答えからも外して出し直す
+export function forgetDeletedPanel(id) {
+    questionPanelPickDraft = questionPanelPickDraft.filter(x => x !== id);
+    renderQuestionPanelPicker();
+    renderQuestionEditor();
 }
 
 function clearQuestionPanelPick() {
-    questionDraft.questionPanelPickDraft = [];
+    questionPanelPickDraft = [];
     renderQuestionPanelPicker();
 }
 
 function addCustomQuestion() {
     const question = questionCustomTextInput?.value.trim() || "";
     const answers = parseQuestionAnswers(questionCustomAnswersInput?.value || "");
-    const panelIds = [...questionDraft.questionPanelPickDraft];
+    const panelIds = [...questionPanelPickDraft];
     if (!question) {
         alert("質問文を入力してください。");
         return;
@@ -565,7 +569,7 @@ function addCustomQuestion() {
     if (questionCustomLabelInput) questionCustomLabelInput.value = "";
     if (questionCustomEmojiInput) questionCustomEmojiInput.value = "";
     questionCustomAnswersInput.value = "";
-    questionDraft.questionPanelPickDraft = [];
+    questionPanelPickDraft = [];
     renderQuestionEditor();
     renderQuestionPanelPicker();
 }

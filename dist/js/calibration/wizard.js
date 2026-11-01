@@ -1,15 +1,14 @@
 // キャリブレーション画面の進行
 import { clamp } from "../core/math.js";
 import {
-    ANGLE_NOISE_KEY, CALIB_SIDE_KEYS, CALIB_VERSION_KEY, CALIB_VERSION_NOISE_DEADZONE,
-    DISTANCE_EXPONENT_KEY, DISTANCE_REF_KEY, NOSE_GAIN_DEFAULT, NOSE_GAIN_KEY, NOSE_NOISE_KEY,
-    POINTER_MODE_ABSOLUTE, YAW_GAIN_KEY, formatSideRatios, pointerConfig, saveSideGainRatios
+    CALIB_SIDE_KEYS, NOSE_GAIN_DEFAULT, POINTER_MODE_ABSOLUTE, formatSideRatios, pointerConfig,
+    saveCalibrationResult
 } from "../pointer/config.js";
 import { resetPointerMotionHistory } from "../pointer/tracking.js";
 import { formatMetric } from "../pointer/telemetry.js";
 import { playChime } from "../panels/sound.js";
-import { DWELL_LOCK_FIRST_HOVER, resetDwellProgress, selection } from "../panels/selection.js";
-import { JAW_OPEN_THRESHOLD_KEY, gesture } from "../face/gesture.js";
+import { lockUntilPointerLeaves } from "../panels/selection.js";
+import { jawOpenThreshold, resetJawBaseline, saveJawOpenThreshold } from "../face/gesture.js";
 import {
     CALIB_CAPTURE_GIVEUP_MS, CALIB_CENTER_HOLD_MS, CALIB_FAR_HOLD_MS, CALIB_FAR_MIN_RATIO,
     CALIB_FRONT_TIMEOUT_MS, CALIB_MATCH_SHOW_MS, CALIB_MIN_MOVE_ANGLE, CALIB_MIN_MOVE_NOSE,
@@ -26,16 +25,19 @@ import { recaptureFrontPose } from "./front.js";
 import { syncTuningSliders } from "../settings/pointer-settings.js";
 
 // 「離れた位置」の計測を行うか（OFF ならいつもの位置だけで計測し、距離補正は標準の強さ）
-export const CALIB_FAR_PASS_KEY = "calib_far_pass_enabled";
+const CALIB_FAR_PASS_KEY = "calib_far_pass_enabled";
 
-// 他のモジュールからも読み書きする状態
-export const calibSettings = {
-    isCalibFarPassEnabled: localStorage.getItem(CALIB_FAR_PASS_KEY) !== "0"
-};
+export let isCalibFarPassEnabled = localStorage.getItem(CALIB_FAR_PASS_KEY) !== "0";
+
+// 遠くでも測る段（距離補正の計測）を入れるか
+export function saveCalibFarPass(enabled) {
+    isCalibFarPassEnabled = enabled;
+    localStorage.setItem(CALIB_FAR_PASS_KEY, enabled ? "1" : "0");
+}
 
 function buildCalibrationSteps() {
     const steps = [];
-    const passes = calibSettings.isCalibFarPassEnabled ? CALIB_PASSES : CALIB_PASSES.filter(pass => pass.key !== "far");
+    const passes = isCalibFarPassEnabled ? CALIB_PASSES : CALIB_PASSES.filter(pass => pass.key !== "far");
     passes.forEach((pass, passIndex) => {
         if (passIndex > 0) steps.push({ type: "distance", pass: pass.key });
         CALIB_TARGETS.forEach((target) => steps.push({ type: "target", pass: pass.key, target }));
@@ -285,8 +287,7 @@ export const calibrationWizard = (() => {
         active = false;
         finished = false;
         // 計測中に見ていた位置のパネルが閉じた直後に滞留確定しないよう、一度外れるまで滞留しない
-        selection.dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
-        resetDwellProgress();
+        lockUntilPointerLeaves();
         root.classList.remove("active", "done", "is-target");
         cursorEl.classList.remove("visible");
         document.body.classList.remove("calib-active");
@@ -310,7 +311,7 @@ export const calibrationWizard = (() => {
             `感度（鼻位置・顔の傾き）: ${pointerConfig.noseGain.toFixed(1)} / ${pointerConfig.yawGain.toFixed(1)} → ${result.gain.toFixed(1)} / ${result.yawGain.toFixed(1)}`,
             `向きごとの倍率（左/右/上/下）: ${formatSideRatios(pointerConfig.sideGainRatios)} → ${formatSideRatios(result.sideRatios)}`,
             `距離補正の強さ: ${pointerConfig.distanceExponent.toFixed(2)} → ${result.distanceExponent.toFixed(2)}${m.exponentMeasured ? "（2つの距離で計測）" : "（標準）"}`,
-            `口の開き閾値: ${gesture.jawOpenThreshold.toFixed(2)} → ${result.jawThreshold.toFixed(2)}`,
+            `口の開き閾値: ${jawOpenThreshold.toFixed(2)} → ${result.jawThreshold.toFixed(2)}`,
             `静止時の揺れ（鼻/角度）: ${formatMetric(result.noseNoise, 4)} / ${formatMetric(result.angleNoise, 4)}`,
             `○とのずれ（平均）: 近い位置 ${px(m.nearError)} / 離れた位置 ${px(m.farError)}`,
             `○とのずれ（左/右/上/下）: ${["left", "right", "up", "down"].map(side => px(m.sideErrors[side])).join(" / ")}`,
@@ -325,27 +326,11 @@ export const calibrationWizard = (() => {
 
     function apply() {
         if (!result) return;
-        pointerConfig.noseGain = result.gain;
-        pointerConfig.yawGain = result.yawGain;
-        pointerConfig.sideGainRatios = { ...result.sideRatios };
-        pointerConfig.noseNoise = result.noseNoise;
-        pointerConfig.angleNoise = result.angleNoise;
-        gesture.jawOpenThreshold = result.jawThreshold;
-        pointerConfig.distanceExponent = result.distanceExponent;
-        if (result.distanceRef > 0) pointerConfig.distanceRef = result.distanceRef;
-        localStorage.setItem(NOSE_GAIN_KEY, String(pointerConfig.noseGain));
-        localStorage.setItem(YAW_GAIN_KEY, String(pointerConfig.yawGain));
-        saveSideGainRatios();
-        localStorage.setItem(NOSE_NOISE_KEY, String(pointerConfig.noseNoise));
-        localStorage.setItem(ANGLE_NOISE_KEY, String(pointerConfig.angleNoise));
-        localStorage.setItem(JAW_OPEN_THRESHOLD_KEY, String(gesture.jawOpenThreshold));
-        localStorage.setItem(DISTANCE_EXPONENT_KEY, String(pointerConfig.distanceExponent));
-        if (pointerConfig.distanceRef > 0) localStorage.setItem(DISTANCE_REF_KEY, String(pointerConfig.distanceRef));
-        pointerConfig.isNoiseDeadzone = true;
-        localStorage.setItem(CALIB_VERSION_KEY, CALIB_VERSION_NOISE_DEADZONE);
+        saveCalibrationResult(result);
+        saveJawOpenThreshold(result.jawThreshold);
         syncTuningSliders();
         close();
-        gesture.jawClosedBaseline = null;
+        resetJawBaseline();
         // 正面位置も今の姿勢で取り直す。絶対方式は正面がずれると全体がずれるので、○を向いて登録する
         // 登録できれば recaptureFrontPose が解除し、時間切れなら起動時と同じく次のフレームの姿勢を正面にする
         pointerConfig.isCalibrating = true;

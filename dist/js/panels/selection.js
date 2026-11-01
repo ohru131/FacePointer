@@ -1,22 +1,22 @@
 // ポインタの下のパネルを決め、滞留（止まって確定）を数える
 import { dwellIndicator } from "../core/dom.js";
 import { clamp } from "../core/math.js";
-import { readStoredNumber } from "../core/storage.js";
+import { readStoredNumber, readStoredNumberFromValue } from "../core/storage.js";
 import { pointerConfig } from "../pointer/config.js";
 import { findNearestSimplePanel } from "../pointer/panel-geometry.js";
-import { tracking } from "../pointer/tracking.js";
-import { confirmState } from "./confirm.js";
+import { pointerX, pointerY } from "../pointer/tracking.js";
+import { isConfirmInProgress } from "./confirm.js";
 import { SIMPLE_CTRL_REST, SIMPLE_ROW_ID, panelScreen } from "./screen.js";
 import { logClickDebug } from "../face/click-debug.js";
-import { gesture } from "../face/gesture.js";
+import { cancelPendingClick, markConfirmed, pendingClickTargetKey, pendingClickTimer } from "../face/gesture.js";
 import { calibrationWizard } from "../calibration/wizard.js";
 
 const HOVER_SWITCH_HYSTERESIS_PX = 26;
 let lastHoveredButtonKey = "";
 // 滞留(dwell)選択: 同じパネル上でしばらく動かなければ確定する
-export const DWELL_TIME_KEY = "dwell_time_ms";
-export const DWELL_TIME_DEFAULT_MS = 1500;
-export const DWELL_TIME_MAX_MS = 5000;
+const DWELL_TIME_KEY = "dwell_time_ms";
+const DWELL_TIME_DEFAULT_MS = 1500;
+const DWELL_TIME_MAX_MS = 5000;
 // この距離以上ポインタが動いたら「動いた」とみなして滞留をやり直す
 const DWELL_MOVE_TOLERANCE_PX = 48;
 // ジッタでパネル境界を一瞬外れても進捗を保つ猶予
@@ -24,7 +24,7 @@ const DWELL_LEAVE_GRACE_MS = 200;
 // 一瞬通過しただけでインジケータが出ないよう、少し溜まってから表示する
 const DWELL_INDICATOR_SHOW_RATIO = 0.08;
 // 起動・モード切替直後は、最初にホバーしたパネルから一度外れるまで滞留しない
-export const DWELL_LOCK_FIRST_HOVER = "*";
+const DWELL_LOCK_FIRST_HOVER = "*";
 // お話の画面が入れ替わった直後にポインタの下にあるパネルは、外さなくても選べるが、意図せず選ばないよう長めに滞留させる
 const DWELL_CARRYOVER_RATIO = 1.5;
 
@@ -35,15 +35,12 @@ let dwellAnchorX = 0;
 let dwellAnchorY = 0;
 let dwellLeftAt = 0;
 
-// 他のモジュールからも読み書きする状態
-export const selection = {
-    dwellTimeMs: readStoredNumber(DWELL_TIME_KEY, DWELL_TIME_DEFAULT_MS, 0, DWELL_TIME_MAX_MS), // 0 = 滞留確定OFF
-    // 確定済みパネル。一度外れるまで再選択しない（TD Snap の Look away before reselecting 相当）
-    dwellLockedKey: DWELL_LOCK_FIRST_HOVER,
-    // DWELL_CARRYOVER_RATIO を掛けるパネル。DWELL_LOCK_FIRST_HOVER なら次の判定でポインタの下のパネルを記録する
-    dwellCarryoverKey: ""
-};
-export let isDwellConfirmingCarryover = false;
+export let dwellTimeMs = readStoredNumber(DWELL_TIME_KEY, DWELL_TIME_DEFAULT_MS, 0, DWELL_TIME_MAX_MS); // 0 = 滞留確定OFF
+// 確定済みパネル。一度外れるまで再選択しない（TD Snap の Look away before reselecting 相当）
+let dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+// DWELL_CARRYOVER_RATIO を掛けるパネル。DWELL_LOCK_FIRST_HOVER なら次の判定でポインタの下のパネルを記録する
+let dwellCarryoverKey = "";
+let isDwellConfirmingCarryover = false;
 
 export function checkPointerCollision() {
     const allBtns = document.querySelectorAll(".h-btn:not(.h-btn--empty)");
@@ -54,12 +51,12 @@ export function checkPointerCollision() {
 
     allBtns.forEach(btn => {
         const rect = btn.getBoundingClientRect();
-        const inside = tracking.pointerX >= rect.left && tracking.pointerX <= rect.right && tracking.pointerY >= rect.top && tracking.pointerY <= rect.bottom;
+        const inside = pointerX >= rect.left && pointerX <= rect.right && pointerY >= rect.top && pointerY <= rect.bottom;
         if (inside) {
             const cx = rect.left + rect.width / 2;
             const cy = rect.top + rect.height / 2;
-            const dx = tracking.pointerX - cx;
-            const dy = tracking.pointerY - cy;
+            const dx = pointerX - cx;
+            const dy = pointerY - cy;
             const dist = dx * dx + dy * dy;
             if (dist < bestDistance) {
                 bestDistance = dist;
@@ -98,16 +95,14 @@ export function checkPointerCollision() {
     }
 
     // ペンディングクリック中にターゲットから外れた場合はキャンセル
-    if (gesture.pendingClickTimer && gesture.pendingClickTargetKey) {
+    if (pendingClickTimer && pendingClickTargetKey) {
         const currentKey = lastHoveredButtonKey;
-        if (currentKey !== gesture.pendingClickTargetKey) {
+        if (currentKey !== pendingClickTargetKey) {
             logClickDebug("click_canceled_pointer_leave", {
                 currentKey,
-                targetKey: gesture.pendingClickTargetKey
+                targetKey: pendingClickTargetKey
             });
-            clearTimeout(gesture.pendingClickTimer);
-            gesture.pendingClickTimer = null;
-            gesture.pendingClickTargetKey = "";
+            cancelPendingClick();
             const animBtn = document.querySelector(".h-btn.clicked-anim");
             if (animBtn) animBtn.classList.remove("clicked-anim");
         }
@@ -124,11 +119,36 @@ export function getSimpleRowKey(id) {
 
 export function lockSimpleKeyAfterConfirm(key) {
     // 口ジェスチャー・滞留のどちらで確定しても、外れるまで同じパネルは再選択しない
-    selection.dwellLockedKey = key;
+    dwellLockedKey = key;
     resetDwellProgress();
 }
 
-export function resetDwellProgress() {
+// 画面の切り替え直後などに、ポインタの下のパネルを一度外れるまで滞留で選ばない
+export function lockUntilPointerLeaves() {
+    resetDwellProgress();
+    dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+}
+
+// パネルの中身が入れ替わったとき。ポインタの下に来た新しいパネルは長めの滞留で確定する。
+// 確定したばかりのボタン（タブ・戻るなど）は dwellLockedKey のまま、外れるまで再選択しない。
+// 話した直後と、動かさずに続けて確定したあとは、じっとしているだけで次々に選ばれないよう一度外れるまで滞留しない
+export function markPanelsReplaced({ fullLock = false } = {}) {
+    resetDwellProgress();
+    if (fullLock || isDwellConfirmingCarryover) {
+        dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+        dwellCarryoverKey = "";
+    } else {
+        dwellCarryoverKey = DWELL_LOCK_FIRST_HOVER;
+    }
+}
+
+// 設定画面で選んだ滞留の時間（0 = 滞留で確定しない）を使い、保存する
+export function saveDwellTime(value) {
+    dwellTimeMs = readStoredNumberFromValue(value, DWELL_TIME_DEFAULT_MS, 0, DWELL_TIME_MAX_MS);
+    localStorage.setItem(DWELL_TIME_KEY, String(dwellTimeMs));
+}
+
+function resetDwellProgress() {
     if (dwellTargetKey) {
         const btn = document.querySelector(".h-btn.dwelling");
         if (btn) btn.classList.remove("dwelling");
@@ -143,8 +163,8 @@ export function resetDwellProgress() {
 }
 
 export function updateDwellSelection(hasFace) {
-    if (selection.dwellTimeMs <= 0 || !hasFace || pointerConfig.isCalibrating
-        || calibrationWizard.isActive() || confirmState.isConfirmInProgress || gesture.pendingClickTimer) {
+    if (dwellTimeMs <= 0 || !hasFace || pointerConfig.isCalibrating
+        || calibrationWizard.isActive() || isConfirmInProgress || pendingClickTimer) {
         resetDwellProgress();
         return;
     }
@@ -157,15 +177,15 @@ export function updateDwellSelection(hasFace) {
     // 押しても何も起きないボタン（ためた文が空の「話す」など）では滞留しない
     if (hoveredKey && document.querySelector(".h-btn.hover.is-disabled")) hoveredKey = "";
 
-    if (selection.dwellLockedKey === DWELL_LOCK_FIRST_HOVER && hoveredKey) selection.dwellLockedKey = hoveredKey;
-    if (selection.dwellLockedKey && selection.dwellLockedKey !== DWELL_LOCK_FIRST_HOVER && hoveredKey !== selection.dwellLockedKey) {
-        selection.dwellLockedKey = "";
+    if (dwellLockedKey === DWELL_LOCK_FIRST_HOVER && hoveredKey) dwellLockedKey = hoveredKey;
+    if (dwellLockedKey && dwellLockedKey !== DWELL_LOCK_FIRST_HOVER && hoveredKey !== dwellLockedKey) {
+        dwellLockedKey = "";
     }
     // 入れ替わり後に最初に判定したとき、ポインタの下にあったパネルだけを長めにする（外れたら通常に戻す）
-    if (selection.dwellCarryoverKey === DWELL_LOCK_FIRST_HOVER) selection.dwellCarryoverKey = hoveredKey;
-    if (selection.dwellCarryoverKey && hoveredKey !== selection.dwellCarryoverKey) selection.dwellCarryoverKey = "";
+    if (dwellCarryoverKey === DWELL_LOCK_FIRST_HOVER) dwellCarryoverKey = hoveredKey;
+    if (dwellCarryoverKey && hoveredKey !== dwellCarryoverKey) dwellCarryoverKey = "";
 
-    if (!hoveredKey || hoveredKey === selection.dwellLockedKey) {
+    if (!hoveredKey || hoveredKey === dwellLockedKey) {
         // 境界のジッタで一瞬外れただけなら進捗を保持する
         if (dwellTargetKey && !hoveredKey && !panelScreen.isSimplePaused) {
             if (!dwellLeftAt) dwellLeftAt = now;
@@ -175,13 +195,13 @@ export function updateDwellSelection(hasFace) {
         return;
     }
 
-    const movedFar = Math.hypot(tracking.pointerX - dwellAnchorX, tracking.pointerY - dwellAnchorY) > DWELL_MOVE_TOLERANCE_PX;
+    const movedFar = Math.hypot(pointerX - dwellAnchorX, pointerY - dwellAnchorY) > DWELL_MOVE_TOLERANCE_PX;
     if (hoveredKey !== dwellTargetKey || movedFar) {
         resetDwellProgress();
         dwellTargetKey = hoveredKey;
         dwellStartAt = now;
-        dwellAnchorX = tracking.pointerX;
-        dwellAnchorY = tracking.pointerY;
+        dwellAnchorX = pointerX;
+        dwellAnchorY = pointerY;
     }
     dwellLeftAt = 0;
 
@@ -190,23 +210,23 @@ export function updateDwellSelection(hasFace) {
     targetBtn.classList.add("dwelling");
 
     const baseMs = panelScreen.isSimplePaused
-        ? Math.max(selection.dwellTimeMs * SIMPLE_RESUME_DWELL_RATIO, SIMPLE_RESUME_DWELL_MIN_MS)
-        : selection.dwellTimeMs;
-    const requiredMs = hoveredKey === selection.dwellCarryoverKey ? baseMs * DWELL_CARRYOVER_RATIO : baseMs;
+        ? Math.max(dwellTimeMs * SIMPLE_RESUME_DWELL_RATIO, SIMPLE_RESUME_DWELL_MIN_MS)
+        : dwellTimeMs;
+    const requiredMs = hoveredKey === dwellCarryoverKey ? baseMs * DWELL_CARRYOVER_RATIO : baseMs;
     const progress = clamp((now - dwellStartAt) / requiredMs, 0, 1);
     if (dwellIndicator) {
-        dwellIndicator.style.setProperty("--dwell-x", `${tracking.pointerX}px`);
-        dwellIndicator.style.setProperty("--dwell-y", `${tracking.pointerY}px`);
+        dwellIndicator.style.setProperty("--dwell-x", `${pointerX}px`);
+        dwellIndicator.style.setProperty("--dwell-y", `${pointerY}px`);
         dwellIndicator.style.setProperty("--dwell-progress", progress.toFixed(3));
         dwellIndicator.classList.toggle("active", progress >= DWELL_INDICATOR_SHOW_RATIO);
     }
 
     if (progress >= 1) {
         resetDwellProgress();
-        selection.dwellLockedKey = hoveredKey;
-        gesture.lastConfirmedAt = Date.now();
+        dwellLockedKey = hoveredKey;
+        markConfirmed();
         // 長めの滞留で確定したことを、クリック処理中の refreshTalkScreen に伝える
-        isDwellConfirmingCarryover = hoveredKey === selection.dwellCarryoverKey;
+        isDwellConfirmingCarryover = hoveredKey === dwellCarryoverKey;
         try {
             targetBtn.click();
         } finally {

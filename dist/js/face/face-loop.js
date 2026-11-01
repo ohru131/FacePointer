@@ -4,7 +4,10 @@ import { canvasCtx, canvasElement, loadingOverlay, pointerElement, video } from 
 import { clamp } from "../core/math.js";
 import { isSettingsOpen } from "../core/app-state.js";
 import { FOLLOW_TIME_CONSTANT_MS, POINTER_MODE_ABSOLUTE, isCalibrationDone, pointerConfig } from "../pointer/config.js";
-import { targetX, targetY, tracking, updateRelativePointerTarget } from "../pointer/tracking.js";
+import {
+    cancelStartupFrontRegistration, clearMotionMeasurements, followPointerTarget,
+    needsStartupFrontRegistration, pointerX, pointerY, updateRelativePointerTarget
+} from "../pointer/tracking.js";
 import { updateTelemetryPanel } from "../pointer/telemetry.js";
 import { checkPointerCollision, updateDwellSelection } from "../panels/selection.js";
 import { checkQuestionTimeout } from "../question/screen.js";
@@ -35,7 +38,7 @@ export async function setupMediaPipe() {
         loadingOverlay.style.display = "none";
         // キャリブレーションがまだなら、起動時の正面登録の代わりに案内を出す（顔が映る前でも出す）
         if (!isCalibrationDone()) {
-            tracking.needsStartupFrontRegistration = false;
+            cancelStartupFrontRegistration();
             openWelcome();
         }
         startCamera();
@@ -89,13 +92,13 @@ async function predictWebcam() {
             drawMouthDetectionOverlay(landmarks);
 
             const nose = landmarks[4];
-            if (isNewFrame && faceIndex === 0 && tracking.needsStartupFrontRegistration) {
+            if (isNewFrame && faceIndex === 0 && needsStartupFrontRegistration) {
                 // 絶対方式は正面がずれると全体がずれるので、起動時に正面を登録する（10秒止まれなければ今の姿勢で始める）。
                 // 設定画面を開いている間は待つ
                 if (pointerConfig.pointerMode !== POINTER_MODE_ABSOLUTE || calibrationWizard.isActive()) {
-                    tracking.needsStartupFrontRegistration = false;
+                    cancelStartupFrontRegistration();
                 } else if (!isSettingsOpen()) {
-                    tracking.needsStartupFrontRegistration = false;
+                    cancelStartupFrontRegistration();
                     startFrontRecapture();
                 }
             }
@@ -112,27 +115,12 @@ async function predictWebcam() {
     const frameDtMs = lastRenderTimeMs === null ? 16.7 : clamp(startTimeMs - lastRenderTimeMs, 1, 100);
     lastRenderTimeMs = startTimeMs;
     const followAlpha = 1 - Math.exp(-frameDtMs / FOLLOW_TIME_CONSTANT_MS);
-    if (!isSettingsOpen()) {
-        tracking.pointerX += (targetX - tracking.pointerX) * followAlpha;
-        tracking.pointerY += (targetY - tracking.pointerY) * followAlpha;
-    }
+    if (!isSettingsOpen()) followPointerTarget(followAlpha);
     // left/top はレイアウトを毎フレーム走らせるので transform で動かす
-    pointerElement.style.setProperty("--pointer-x", `${tracking.pointerX}px`);
-    pointerElement.style.setProperty("--pointer-y", `${tracking.pointerY}px`);
+    pointerElement.style.setProperty("--pointer-x", `${pointerX}px`);
+    pointerElement.style.setProperty("--pointer-y", `${pointerY}px`);
 
-    if (!hasFace) {
-        tracking.debugDeltaN = 0;
-        tracking.debugDeltaY = 0;
-        tracking.debugPixN = 0;
-        tracking.debugPixY = 0;
-        tracking.debugDeltaX = 0;
-        tracking.debugDeltaNoseY = 0;
-        tracking.debugDeltaPitch = 0;
-        tracking.debugDeltaYPx = 0;
-        tracking.speedXEma = 0;
-        tracking.speedYEma = 0;
-        tracking.axisLockDominant = null;
-    }
+    if (!hasFace) clearMotionMeasurements();
     updateTelemetryPanel(hasFace);
     if (!hasFace && calibrationWizard.isActive()) calibrationWizard.onNoFace();
 

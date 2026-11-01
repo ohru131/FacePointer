@@ -19,37 +19,34 @@ import {
 import {
     findPanelAt, getSimpleFrontPoint, getSimplePanelPointerBounds, getVerticalPointerBounds
 } from "./panel-geometry.js";
-import { confirmState } from "../panels/confirm.js";
+import { isConfirmInProgress } from "../panels/confirm.js";
 import { speak } from "../speech/speak.js";
 import { horizontalTravel, signedAcceleratedAngle, verticalTravel } from "../calibration/fit.js";
 
-// 他のモジュールからも読み書きする状態
-export const tracking = {
-    // Pointer state
-    pointerX: window.innerWidth / 2,
-    pointerY: window.innerHeight / 2,
-    lastYaw: null,
-    lastPitch: null,
-    filteredYaw: null,
-    filteredPitch: null,
-    debugDeltaN: 0,
-    debugDeltaY: 0,
-    debugPixN: 0,
-    debugPixY: 0,
-    debugDeltaX: 0,
-    debugDeltaNoseY: 0,
-    debugDeltaPitch: 0,
-    debugDeltaYPx: 0,
-    // 軸ロック: 横/縦それぞれの移動速度(EMA)と、現在どちらが優勢かの状態
-    speedXEma: 0,
-    speedYEma: 0,
-    axisLockDominant: null, // "x" | "y" | null
-    // 起動直後は、顔が見つかったら正面の登録から始める（最初のフレームの姿勢で正面が決まるのを防ぐ）
-    needsStartupFrontRegistration: true,
-    sessionDistanceRef: 0
-};
-export let targetX = tracking.pointerX;
-export let targetY = tracking.pointerY;
+// Pointer state
+export let pointerX = window.innerWidth / 2;
+export let pointerY = window.innerHeight / 2;
+let lastYaw = null;
+let lastPitch = null;
+let filteredYaw = null;
+let filteredPitch = null;
+export let debugDeltaN = 0;
+export let debugDeltaY = 0;
+export let debugPixN = 0;
+export let debugPixY = 0;
+export let debugDeltaX = 0;
+export let debugDeltaNoseY = 0;
+export let debugDeltaPitch = 0;
+export let debugDeltaYPx = 0;
+// 軸ロック: 横/縦それぞれの移動速度(EMA)と、現在どちらが優勢かの状態
+let speedXEma = 0;
+let speedYEma = 0;
+export let axisLockDominant = null; // "x" | "y" | null
+// 起動直後は、顔が見つかったら正面の登録から始める（最初のフレームの姿勢で正面が決まるのを防ぐ）
+export let needsStartupFrontRegistration = true;
+let sessionDistanceRef = 0;
+let targetX = pointerX;
+let targetY = pointerY;
 let lastNoseControlX = null;
 let lastNoseControlY = null;
 let filteredNoseControlX = null;
@@ -66,6 +63,45 @@ let filteredHeadDistance = null;
 let lastHeadDistanceMs = null;
 export let debugDistanceRatio = 1;
 
+// 起動時の正面の登録をしない（キャリブレーションの案内を出したとき・登録を始めたとき）
+export function cancelStartupFrontRegistration() {
+    needsStartupFrontRegistration = false;
+}
+
+// 正面を登録したときの顔までの距離（距離補正の基準）
+export function setSessionDistanceRef(distance) {
+    sessionDistanceRef = distance;
+}
+
+// 顔の向きの履歴だけ捨てる（感度を変えたとき、前の感度で平滑化した値を引きずらない）
+export function resetAngleHistory() {
+    lastYaw = null;
+    filteredYaw = null;
+    lastPitch = null;
+    filteredPitch = null;
+}
+
+// ポインタを目標位置へ alpha（0〜1）の割合だけ近づける
+export function followPointerTarget(alpha) {
+    pointerX += (targetX - pointerX) * alpha;
+    pointerY += (targetY - pointerY) * alpha;
+}
+
+// 顔が映っていないフレーム: 計測値と軸ロックの速度を 0 に戻す
+export function clearMotionMeasurements() {
+    debugDeltaN = 0;
+    debugDeltaY = 0;
+    debugPixN = 0;
+    debugPixY = 0;
+    debugDeltaX = 0;
+    debugDeltaNoseY = 0;
+    debugDeltaPitch = 0;
+    debugDeltaYPx = 0;
+    speedXEma = 0;
+    speedYEma = 0;
+    axisLockDominant = null;
+}
+
 export function resetPointerMotionHistory() {
     lastMotionUpdateMs = null;
     noseXFilter.reset();
@@ -74,12 +110,12 @@ export function resetPointerMotionHistory() {
     pitchFilter.reset();
     lastNoseControlX = null;
     lastNoseControlY = null;
-    tracking.lastYaw = null;
-    tracking.lastPitch = null;
+    lastYaw = null;
+    lastPitch = null;
     filteredNoseControlX = null;
     filteredNoseControlY = null;
-    tracking.filteredYaw = null;
-    tracking.filteredPitch = null;
+    filteredYaw = null;
+    filteredPitch = null;
     filteredHeadDistance = null;
     lastHeadDistanceMs = null;
     absEdges = { left: null, right: null, up: null, down: null };
@@ -116,7 +152,7 @@ export function getDistanceRatioFor(distance, ref = pointerConfig.distanceRef, e
 
 function getDistanceRatio() {
     if (!pointerConfig.isDistanceCompEnabled || filteredHeadDistance === null) return 1;
-    return getDistanceRatioFor(filteredHeadDistance, pointerConfig.distanceRef > 0 ? pointerConfig.distanceRef : tracking.sessionDistanceRef);
+    return getDistanceRatioFor(filteredHeadDistance, pointerConfig.distanceRef > 0 ? pointerConfig.distanceRef : sessionDistanceRef);
 }
 
 const noseXFilter = new OneEuroFilter(NOSE_EURO_MIN_CUTOFF, NOSE_EURO_BETA);
@@ -169,7 +205,7 @@ export function getYawDeadzone(gain = pointerConfig.yawGain, noise = pointerConf
 
 // 正面(校正位置)から今の顔の位置・向きまでを、ランタイムと同じ式で積算したときのポインタの変位(px)
 function getExpectedPointerOffset(distanceRatio) {
-    const sample = { noseX: filteredNoseControlX, noseY: filteredNoseControlY, yaw: tracking.filteredYaw, pitch: tracking.filteredPitch };
+    const sample = { noseX: filteredNoseControlX, noseY: filteredNoseControlY, yaw: filteredYaw, pitch: filteredPitch };
     const center = { noseX: pointerConfig.calibratedNoseX, noseY: pointerConfig.calibratedNoseY, yaw: pointerConfig.calibratedYaw, pitch: pointerConfig.calibratedPitch };
     const noise = { nose: pointerConfig.noseNoise, angle: pointerConfig.angleNoise, noiseOnly: pointerConfig.isNoiseDeadzone };
     return applySideGainRatios({
@@ -324,7 +360,7 @@ function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
         nextY = clamp(centerY + applyPanelWarp(mapY, panelSnap.warpY, upRange, downRange), verticalBounds.minY, verticalBounds.maxY);
         snapAxisY = { m: mapY, center: centerY, neg: upRange, pos: downRange };
     }
-    if (pointerConfig.isPanelSnapEnabled && !confirmState.isConfirmInProgress) {
+    if (pointerConfig.isPanelSnapEnabled && !isConfirmInProgress) {
         const snapped = updatePanelSnap(
             { x: nextX, y: nextY },
             { m: mapX, center: centerX, neg: leftRange, pos: rightRange },
@@ -336,8 +372,8 @@ function updateAbsolutePointerTarget(bounds, verticalBounds, anchor, timeMs) {
     } else {
         resetPanelSnap();
     }
-    tracking.debugDeltaX = nextX - targetX;
-    tracking.debugDeltaYPx = nextY - targetY;
+    debugDeltaX = nextX - targetX;
+    debugDeltaYPx = nextY - targetY;
     debugRecenterDrift = 0;
 
     updatePostureHint(rawX, rawY, centerX - bounds.minX, bounds.maxX - centerX, upRange, downRange, timeMs);
@@ -393,25 +429,25 @@ export function getAngleOffsetAcceleration(currentAngle, calibratedAngle) {
 // もう片方をブロックする。ヒステリシス(ENGAGE > RELEASE)で判定のチャタリングを防ぐ
 function updateAxisLockDominant(speedX, speedY) {
     if (!pointerConfig.isAxisLockEnabled) {
-        tracking.axisLockDominant = null;
+        axisLockDominant = null;
         return;
     }
     if (speedX < AXIS_LOCK_MIN_SPEED_PX && speedY < AXIS_LOCK_MIN_SPEED_PX) {
-        tracking.axisLockDominant = null;
+        axisLockDominant = null;
         return;
     }
 
-    if (tracking.axisLockDominant === "x") {
-        if (speedX < speedY * AXIS_LOCK_RELEASE_RATIO) tracking.axisLockDominant = null;
+    if (axisLockDominant === "x") {
+        if (speedX < speedY * AXIS_LOCK_RELEASE_RATIO) axisLockDominant = null;
         return;
     }
-    if (tracking.axisLockDominant === "y") {
-        if (speedY < speedX * AXIS_LOCK_RELEASE_RATIO) tracking.axisLockDominant = null;
+    if (axisLockDominant === "y") {
+        if (speedY < speedX * AXIS_LOCK_RELEASE_RATIO) axisLockDominant = null;
         return;
     }
 
-    if (speedX > speedY * AXIS_LOCK_ENGAGE_RATIO) tracking.axisLockDominant = "x";
-    else if (speedY > speedX * AXIS_LOCK_ENGAGE_RATIO) tracking.axisLockDominant = "y";
+    if (speedX > speedY * AXIS_LOCK_ENGAGE_RATIO) axisLockDominant = "x";
+    else if (speedY > speedX * AXIS_LOCK_ENGAGE_RATIO) axisLockDominant = "y";
 }
 
 export function updateRelativePointerTarget(noseX, landmarks, detectResults, faceIndex, timeMs) {
@@ -428,40 +464,40 @@ export function updateRelativePointerTarget(noseX, landmarks, detectResults, fac
 
     filteredNoseControlX = noseXFilter.filter(mirroredNoseX, timeMs);
     filteredNoseControlY = noseYFilter.filter(noseControlY, timeMs);
-    tracking.filteredYaw = yawFilter.filter(yaw, timeMs);
-    tracking.filteredPitch = pitchFilter.filter(pitch, timeMs);
+    filteredYaw = yawFilter.filter(yaw, timeMs);
+    filteredPitch = pitchFilter.filter(pitch, timeMs);
     updateHeadDistance(detectResults, faceIndex, timeMs);
 
     if (pointerConfig.isCalibrating) {
         // ○を使わない登録は、どこを向いていたか分からないので範囲の中央を正面にする
         pointerConfig.frontScreenPoint = null;
-        tracking.sessionDistanceRef = filteredHeadDistance ?? 0;
+        sessionDistanceRef = filteredHeadDistance ?? 0;
         pointerConfig.calibratedNoseX = filteredNoseControlX;
         pointerConfig.calibratedNoseY = filteredNoseControlY;
-        pointerConfig.calibratedYaw = tracking.filteredYaw;
-        pointerConfig.calibratedPitch = tracking.filteredPitch;
+        pointerConfig.calibratedYaw = filteredYaw;
+        pointerConfig.calibratedPitch = filteredPitch;
         lastNoseControlX = filteredNoseControlX;
         lastNoseControlY = filteredNoseControlY;
-        tracking.lastYaw = tracking.filteredYaw;
-        tracking.lastPitch = tracking.filteredPitch;
+        lastYaw = filteredYaw;
+        lastPitch = filteredPitch;
         targetX = clamp(targetX, bounds.minX, bounds.maxX);
         targetY = clamp(targetY, bounds.minY, bounds.maxY);
         pointerConfig.isCalibrating = false;
-        tracking.speedXEma = 0;
-        tracking.speedYEma = 0;
-        tracking.axisLockDominant = null;
+        speedXEma = 0;
+        speedYEma = 0;
+        axisLockDominant = null;
         speak("完了");
         return;
     }
 
-    if (lastNoseControlX === null || tracking.lastYaw === null || lastNoseControlY === null || tracking.lastPitch === null) {
+    if (lastNoseControlX === null || lastYaw === null || lastNoseControlY === null || lastPitch === null) {
         lastNoseControlX = filteredNoseControlX;
         lastNoseControlY = filteredNoseControlY;
-        tracking.lastYaw = tracking.filteredYaw;
-        tracking.lastPitch = tracking.filteredPitch;
-        tracking.speedXEma = 0;
-        tracking.speedYEma = 0;
-        tracking.axisLockDominant = null;
+        lastYaw = filteredYaw;
+        lastPitch = filteredPitch;
+        speedXEma = 0;
+        speedYEma = 0;
+        axisLockDominant = null;
         if (verticalBounds) {
             targetY = clamp(targetY, verticalBounds.minY, verticalBounds.maxY);
         } else {
@@ -476,21 +512,21 @@ export function updateRelativePointerTarget(noseX, landmarks, detectResults, fac
     const yawDeadzone = isAbsolute ? Math.max(YAW_DEADZONE_MIN, pointerConfig.angleNoise * NOISE_DEADZONE_FACTOR) : getYawDeadzone();
     // last* はバックラッシュ後の値（anchor）。差分は anchor の移動量
     const nextNoseX = applyBacklash(lastNoseControlX, filteredNoseControlX, noseDeadzone);
-    const nextYaw = applyBacklash(tracking.lastYaw, tracking.filteredYaw, yawDeadzone);
+    const nextYaw = applyBacklash(lastYaw, filteredYaw, yawDeadzone);
     const nextNoseY = applyBacklash(lastNoseControlY, filteredNoseControlY, noseDeadzone);
-    const nextPitch = applyBacklash(tracking.lastPitch, tracking.filteredPitch, yawDeadzone);
+    const nextPitch = applyBacklash(lastPitch, filteredPitch, yawDeadzone);
     if (isAbsolute) {
         updateAbsolutePointerTarget(bounds, verticalBounds, { noseX: nextNoseX, noseY: nextNoseY, yaw: nextYaw, pitch: nextPitch }, timeMs);
         lastNoseControlX = nextNoseX;
         lastNoseControlY = nextNoseY;
-        tracking.lastYaw = nextYaw;
-        tracking.lastPitch = nextPitch;
+        lastYaw = nextYaw;
+        lastPitch = nextPitch;
         return;
     }
     const dN = nextNoseX - lastNoseControlX;
-    const dY = nextYaw - tracking.lastYaw;
-    tracking.debugDeltaN = dN;
-    tracking.debugDeltaY = dY;
+    const dY = nextYaw - lastYaw;
+    debugDeltaN = dN;
+    debugDeltaY = dY;
 
     let pixN = 0;
     if (pointerConfig.noseGain > 0) {
@@ -499,16 +535,16 @@ export function updateRelativePointerTarget(noseX, landmarks, detectResults, fac
 
     let pixY = 0;
     if (pointerConfig.yawGain > 0) {
-        const yawAccel = getAngleOffsetAcceleration(tracking.filteredYaw, pointerConfig.calibratedYaw);
+        const yawAccel = getAngleOffsetAcceleration(filteredYaw, pointerConfig.calibratedYaw);
         pixY = dY * YAW_MIRROR_SIGN * getYawScale() * yawAccel;
     }
-    tracking.debugPixN = pixN;
-    tracking.debugPixY = pixY;
+    debugPixN = pixN;
+    debugPixY = pixY;
 
     const distanceRatio = getDistanceRatio();
     debugDistanceRatio = distanceRatio;
     // 向きごとの倍率は、顔が正面からどちら側にあるかで選ぶ（絶対方式と同じ倍率）
-    const fromSide = getRawFaceOffset({ noseX: lastNoseControlX, noseY: lastNoseControlY, yaw: tracking.lastYaw, pitch: tracking.lastPitch });
+    const fromSide = getRawFaceOffset({ noseX: lastNoseControlX, noseY: lastNoseControlY, yaw: lastYaw, pitch: lastPitch });
     const toSide = getRawFaceOffset({ noseX: nextNoseX, noseY: nextNoseY, yaw: nextYaw, pitch: nextPitch });
     const sideRatioX = blendSideRatio(fromSide.x, toSide.x, pointerConfig.sideGainRatios.left, pointerConfig.sideGainRatios.right);
     const sideRatioY = blendSideRatio(fromSide.y, toSide.y, pointerConfig.sideGainRatios.up, pointerConfig.sideGainRatios.down);
@@ -516,9 +552,9 @@ export function updateRelativePointerTarget(noseX, landmarks, detectResults, fac
 
     // 上下移動: 鼻の縦位置 + 顔の上下向きを横移動と同じゲインで合成する
     const dNoseY = nextNoseY - lastNoseControlY;
-    const dPitch = nextPitch - tracking.lastPitch;
-    tracking.debugDeltaNoseY = dNoseY;
-    tracking.debugDeltaPitch = dPitch;
+    const dPitch = nextPitch - lastPitch;
+    debugDeltaNoseY = dNoseY;
+    debugDeltaPitch = dPitch;
 
     let rawDeltaY = 0;
     if (verticalBounds) {
@@ -529,7 +565,7 @@ export function updateRelativePointerTarget(noseX, landmarks, detectResults, fac
 
         let pixPitch = 0;
         if (pointerConfig.yawGain > 0) {
-            const pitchAccel = getAngleOffsetAcceleration(tracking.filteredPitch, pointerConfig.calibratedPitch);
+            const pitchAccel = getAngleOffsetAcceleration(filteredPitch, pointerConfig.calibratedPitch);
             pixPitch = dPitch * PITCH_MIRROR_SIGN * getYawScale() * pitchAccel * VERTICAL_PITCH_SCALE_RATIO;
         }
 
@@ -542,12 +578,12 @@ export function updateRelativePointerTarget(noseX, landmarks, detectResults, fac
     lastMotionUpdateMs = timeMs;
     const maxDelta = MAX_DELTA_PER_FRAME * frameScale;
     const speedAlpha = 1 - Math.pow(1 - AXIS_LOCK_SPEED_ALPHA, frameScale);
-    tracking.speedXEma = lowPassFilter(tracking.speedXEma, Math.abs(rawDeltaX) / frameScale, speedAlpha);
-    tracking.speedYEma = lowPassFilter(tracking.speedYEma, Math.abs(rawDeltaY) / frameScale, speedAlpha);
-    updateAxisLockDominant(tracking.speedXEma, tracking.speedYEma);
+    speedXEma = lowPassFilter(speedXEma, Math.abs(rawDeltaX) / frameScale, speedAlpha);
+    speedYEma = lowPassFilter(speedYEma, Math.abs(rawDeltaY) / frameScale, speedAlpha);
+    updateAxisLockDominant(speedXEma, speedYEma);
 
-    const deltaX = clamp(tracking.axisLockDominant === "y" ? 0 : rawDeltaX, -maxDelta, maxDelta);
-    tracking.debugDeltaX = deltaX;
+    const deltaX = clamp(axisLockDominant === "y" ? 0 : rawDeltaX, -maxDelta, maxDelta);
+    debugDeltaX = deltaX;
     targetX = clamp(targetX + deltaX, bounds.minX, bounds.maxX);
 
     const expected = pointerConfig.isRecenterEnabled ? getExpectedPointerOffset(distanceRatio) : null;
@@ -561,8 +597,8 @@ export function updateRelativePointerTarget(noseX, landmarks, detectResults, fac
     }
 
     if (verticalBounds) {
-        const deltaY = clamp(tracking.axisLockDominant === "x" ? 0 : rawDeltaY, -maxDelta, maxDelta);
-        tracking.debugDeltaYPx = deltaY;
+        const deltaY = clamp(axisLockDominant === "x" ? 0 : rawDeltaY, -maxDelta, maxDelta);
+        debugDeltaYPx = deltaY;
         targetY = clamp(targetY + deltaY, verticalBounds.minY, verticalBounds.maxY);
         const halfHeight = (verticalBounds.maxY - verticalBounds.minY) / 2;
         if (expected && halfHeight > 0 && Math.abs(expected.y) <= halfHeight * RECENTER_ZONE_RATIO) {
@@ -570,14 +606,14 @@ export function updateRelativePointerTarget(noseX, landmarks, detectResults, fac
             targetY = clamp(recenterToward(targetY, expectedY, deltaY), verticalBounds.minY, verticalBounds.maxY);
         }
     } else {
-        tracking.debugDeltaYPx = 0;
+        debugDeltaYPx = 0;
         targetY = bounds.centerY;
     }
 
     lastNoseControlX = nextNoseX;
     lastNoseControlY = nextNoseY;
-    tracking.lastYaw = nextYaw;
-    tracking.lastPitch = nextPitch;
+    lastYaw = nextYaw;
+    lastPitch = nextPitch;
 }
 
 // 正面の位置（絶対方式で○を向いて登録していれば○の位置）へ置く。絶対方式は次のフレームで正面の位置へ動くので、
@@ -586,6 +622,6 @@ export function centerPointerOnSimpleGrid() {
     const bounds = getSimplePanelPointerBounds();
     if (!bounds) return;
     const front = getSimpleFrontPoint(bounds);
-    targetX = tracking.pointerX = front.x;
-    targetY = tracking.pointerY = front.y;
+    targetX = pointerX = front.x;
+    targetY = pointerY = front.y;
 }

@@ -18,7 +18,7 @@ export const NOISE_DEADZONE_FACTOR = 1.5;
 export const RECENTER_KEY = "recenter_enabled";
 // 揺れからデッドゾーンを決める新しいキャリブレーションで保存したかどうか。
 // 旧キャリブレーションの感度は広いデッドゾーン前提で決めたので、やり直すまでは従来の幅を使う
-export const CALIB_VERSION_KEY = "calibration_version";
+const CALIB_VERSION_KEY = "calibration_version";
 // ポインタ方式: 絶対（正面を固定し、顔の向き＝画面位置）/ 相対（動いた分だけ動く）
 export const POINTER_MODE_KEY = "pointer_mode";
 export const POINTER_MODE_ABSOLUTE = "absolute";
@@ -32,15 +32,15 @@ export const POSTURE_HINT_PINNED_RATIO = 0.9;
 // 中央付近（範囲のこの割合以内）にこの時間いたら、お知らせを消す
 export const POSTURE_HINT_CLEAR_RATIO = 0.3;
 export const POSTURE_HINT_CLEAR_MS = 3000;
-export const CALIB_VERSION_NOISE_DEADZONE = "2";
+const CALIB_VERSION_NOISE_DEADZONE = "2";
 // 正面付近とみなす範囲（移動範囲の半幅に対する割合）
 export const RECENTER_ZONE_RATIO = 0.35;
 // 1フレームの補正量の上限（そのフレームの移動量に対する割合）。顔の動きより十分ゆっくり戻す
 export const RECENTER_RATE = 0.3;
-export const NOSE_NOISE_KEY = "nose_noise";
-export const ANGLE_NOISE_KEY = "angle_noise";
+const NOSE_NOISE_KEY = "nose_noise";
+const ANGLE_NOISE_KEY = "angle_noise";
 // 旧形式（上下共通の倍率）。上下別の倍率が未保存のときの初期値にだけ使う
-export const VERTICAL_GAIN_RATIO_KEY = "vertical_gain_ratio";
+const VERTICAL_GAIN_RATIO_KEY = "vertical_gain_ratio";
 // 正面から見た向き（左右上下）ごとの感度倍率。目で見下ろす癖・目の高さ・カメラ位置で向きごとの効きが違うのを打ち消す
 export const SIDE_GAIN_RATIO_KEYS = { left: "side_gain_left", right: "side_gain_right", up: "side_gain_up", down: "side_gain_down" };
 export const SIDE_GAIN_RATIO_LIMITS = { left: [0.5, 2], right: [0.5, 2], up: [0.3, 4], down: [0.3, 4] };
@@ -87,8 +87,8 @@ export const AXIS_LOCK_MIN_SPEED_PX = 3;
 // 距離補正: 画面に近いほど、画像上の鼻の動きは大きく、同じ画面位置を向くのに必要な顔の角度も大きくなる。
 // どちらも「距離に反比例」なので、移動量に (今の距離 / 基準距離)^指数 を掛けて距離の影響を打ち消す
 export const DISTANCE_COMP_KEY = "distance_comp_enabled";
-export const DISTANCE_REF_KEY = "distance_ref";
-export const DISTANCE_EXPONENT_KEY = "distance_exponent";
+const DISTANCE_REF_KEY = "distance_ref";
+const DISTANCE_EXPONENT_KEY = "distance_exponent";
 export const DISTANCE_EXPONENT_DEFAULT = 1;
 export const DISTANCE_RATIO_MIN = 0.4;
 export const DISTANCE_RATIO_MAX = 2.5;
@@ -106,9 +106,50 @@ function loadSideGainRatios() {
     return ratios;
 }
 
-export function saveSideGainRatios() {
+function saveSideGainRatios() {
     Object.entries(SIDE_GAIN_RATIO_KEYS).forEach(([side, key]) => localStorage.setItem(key, String(pointerConfig.sideGainRatios[side])));
     localStorage.removeItem(VERTICAL_GAIN_RATIO_KEY);
+}
+
+// キャリブレーションの結果（感度・揺れ・向きごとの倍率・距離補正）を使い、保存する
+export function saveCalibrationResult(result) {
+    pointerConfig.noseGain = result.gain;
+    pointerConfig.yawGain = result.yawGain;
+    pointerConfig.sideGainRatios = { ...result.sideRatios };
+    pointerConfig.noseNoise = result.noseNoise;
+    pointerConfig.angleNoise = result.angleNoise;
+    pointerConfig.distanceExponent = result.distanceExponent;
+    if (result.distanceRef > 0) pointerConfig.distanceRef = result.distanceRef;
+    localStorage.setItem(NOSE_GAIN_KEY, String(pointerConfig.noseGain));
+    localStorage.setItem(YAW_GAIN_KEY, String(pointerConfig.yawGain));
+    saveSideGainRatios();
+    localStorage.setItem(NOSE_NOISE_KEY, String(pointerConfig.noseNoise));
+    localStorage.setItem(ANGLE_NOISE_KEY, String(pointerConfig.angleNoise));
+    localStorage.setItem(DISTANCE_EXPONENT_KEY, String(pointerConfig.distanceExponent));
+    if (pointerConfig.distanceRef > 0) localStorage.setItem(DISTANCE_REF_KEY, String(pointerConfig.distanceRef));
+    pointerConfig.isNoiseDeadzone = true;
+    localStorage.setItem(CALIB_VERSION_KEY, CALIB_VERSION_NOISE_DEADZONE);
+}
+
+// キャリブレーションで決めた揺れ幅・向きごとの倍率を初期値へ戻す（スライダーが無いので、リセットで戻す）
+export function resetCalibrationTuning() {
+    pointerConfig.noseNoise = 0;
+    pointerConfig.angleNoise = 0;
+    pointerConfig.sideGainRatios = { left: 1, right: 1, up: 1, down: 1 };
+    localStorage.removeItem(NOSE_NOISE_KEY);
+    localStorage.removeItem(ANGLE_NOISE_KEY);
+    localStorage.removeItem(VERTICAL_GAIN_RATIO_KEY);
+    Object.values(SIDE_GAIN_RATIO_KEYS).forEach(key => localStorage.removeItem(key));
+}
+
+export function saveNoseGain(value) {
+    pointerConfig.noseGain = value;
+    localStorage.setItem(NOSE_GAIN_KEY, String(value));
+}
+
+export function saveYawGain(value) {
+    pointerConfig.yawGain = value;
+    localStorage.setItem(YAW_GAIN_KEY, String(value));
 }
 
 export function formatSideRatios(ratios) {
