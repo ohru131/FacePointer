@@ -744,7 +744,7 @@ function renderIcons() {
     const errors = issues.filter(i => i.level === "error").length;
     const notes = [];
     if (errors > 0) notes.push("先に ② のエラーを直してください");
-    if (!appState?.hasKey) notes.push(".env に GEMINI_API_KEY がないため作れません");
+    if (!appState?.hasKey) notes.push("GEMINI_API_KEY がないため作れません");
     $("icon-plan").textContent = (count === 0
         ? "すべての絵がそろっています。作り直したい絵は「作り直す」に印を付けてください。"
         : `作る・作り直す絵: ${count} 件 → ${sheets} 枚のシート（1枚に20個ずつ描いて分割。モデル: ${appState?.imageModel || ""}）`)
@@ -945,7 +945,7 @@ async function start() {
     const params = new URLSearchParams(location.hash.slice(1));
     if (params.get("tab")) tab = params.get("tab");
     const id = params.get("id") || appState.drafts[0]?.id || "";
-    if (!appState.hasKey) setSaveStatus(".env に GEMINI_API_KEY がないため、AI での作成と絵の作成は使えません");
+    if (!appState.hasKey) setSaveStatus("GEMINI_API_KEY がないため、AI での作成と絵の作成は使えません");
     await openDraft(id).catch(() => openDraft(""));
     if (params.get("select")) select(params.get("select"));
 }

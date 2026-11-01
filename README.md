@@ -63,6 +63,30 @@ npm test
 
 E2E テストは、カメラに何も映らない状態での画面操作（質問モード・ページ送り・設定の保存・お話モードなど）と、顔のイラストを動かす偽カメラ映像でのポインタ操作（MediaPipe → ポインタ → パネル）を確かめます。顔の映像は初回に `tests/.cache/` へ作ります。
 
+### 秘密情報（Bitwarden）
+`.env` は使いません。アイコン生成と talk studio が使う Gemini の APIキーなどは
+[Bitwarden Secrets Manager](https://bitwarden.com/products/secrets-manager/) のプロジェクト `apps` に
+`FACEPOINTER__` 接頭辞で置き、実行時に `scripts/bws-env.mjs` が接頭辞を外して環境変数に入れます。
+
+```powershell
+winget install --id Bitwarden.BWS --exact                                    # bws CLI（初回のみ）
+[Environment]::SetEnvironmentVariable("BWS_TOKEN_APPS", "<token>", "User")   # ma-apps のトークン（初回のみ）
+# 設定後はターミナルを開き直す（ユーザー環境変数は既存セッションに反映されない）
+```
+
+`npm run icons:gen` / `icons:models` / `talk:studio` は注入込みです。ほかのコマンドに入れるときは
+`npm run bws -- <コマンド>` と前置します。`start` / `lint` / `test` / `tauri` は注入しません（秘密情報を使わない）。
+アプリ本体の Gemini APIキーは、これとは別に設定画面（音声タブ）で入力してブラウザに保存します。
+
+| 変数名（Bitwarden では `FACEPOINTER__` を付ける） | 用途 |
+| --- | --- |
+| `GEMINI_API_KEY` | アイコン生成・talk studio の Gemini API キー |
+| `GEMINI_IMAGE_MODEL` | アイコン生成のモデル（未設定なら `gemini-3-pro-image`。一覧は `npm run icons:models`） |
+| `GEMINI_IMAGE_SIZE` | アイコン生成の解像度 1K / 2K / 4K（未設定なら 2K。imageSize 非対応のモデルでは空にする） |
+| `GEMINI_TEXT_MODEL` | talk studio の文章生成モデル（任意） |
+
+運用の全体像は非公開リポジトリ `ohru131/handbook` の `secrets/README.md`。
+
 ### コードの構成
 アプリは `dist/` をそのまま配信する（ビルド工程なし）。`dist/index.html` が `dist/js/main.js` を ES モジュールとして読み込み、責務ごとに分けたモジュールを使う。
 
@@ -138,7 +162,7 @@ E2E テストは、カメラに何も映らない状態での画面操作（質�
     - Gemini APIキー（音声タブ）が必要。モデルは既定 `gemini-flash-latest`（最新の Flash。変更可）。
   - 会話データは `dist/talk-data.js` の `TALK_TREE`（id / label / emoji / say / children 最大5 / for / time）。旧「文づくりモード」はお話モードに置き換えた。
   - **talk studio（ローカルで作って登録）:** `npm run talk:studio` で http://127.0.0.1:5180 を開く。① インタビュー → AI で作成、または「標準をコピー」・アプリで「書き出し」したファイルの読み込み → ② 木の上で文・絵文字・相手・時間帯の修正、追加・削除・並べ替え（自動保存・チェック付き）→ ③ 絵をまとめて作成（20個ずつのシートを分割。主人公は性別・年齢から設定、作り直しの指定可）→ ④「アプリに登録」で `dist/talk-sets/` に書き出し、会話パターン一覧に組み込みで出る。
-    - Gemini の APIキーは `.env` から studio のサーバーだけが使う。作りかけ（インタビューの答えを含む）は `scripts/talk-studio/drafts/`（git 対象外）。
+    - Gemini の APIキーは Bitwarden から注入した環境変数を studio のサーバーだけが使う（下の「秘密情報（Bitwarden）」）。作りかけ（インタビューの答えを含む）は `scripts/talk-studio/drafts/`（git 対象外）。
     - 登録した内容と絵は git にコミットすると他の端末・公開版にも出る（公開リポジトリでは誰でも見られる）。
 - **設定中は停止:** 設定画面を開いている間は、滞留・口開けの確定、自動復帰を止め、ポインタも隠す。
 

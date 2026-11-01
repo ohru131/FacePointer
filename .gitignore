@@ -10,10 +10,9 @@ dist/mediapipe/*.mjs
 *.msi
 *.exe
 
-# Gemini APIキーなどのローカル設定（.env.example だけ共有する）
+# 秘密情報は Bitwarden Secrets Manager に置き、.env は使わない（誤って作っても載せない）
 .env
 .env.*
-!.env.example
 # Gemini で作った分割前のシート（分割後のアイコンは dist/media/gen/ に置く）
 scripts/generated-sheets/
 # talk studio の作りかけ（インタビューの答えを含む。登録した分は dist/talk-sets/ に書き出す）
