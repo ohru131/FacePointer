@@ -33,7 +33,7 @@ FacePointerは、顔の動きだけで操作できるコミュニケーション
 ### 開発者 (ビルド方法)
 
 このプロジェクトを自分でビルドするには、以下の環境が必要です：
-- [Node.js](https://nodejs.org/) (v16以上)
+- [Node.js](https://nodejs.org/) (v20.19以上。GitHub Actions は v24)
 - [Rust](https://rust-lang.org/) (Tauriのビルドに必要)
 
 ```bash

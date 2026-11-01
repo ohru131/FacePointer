@@ -1,11 +1,11 @@
-// E2E テスト用の静的サーバー（dist をそのまま配る）
+// dist をそのまま配る静的サーバー（npm start / npm run dev / Tauri の開発モード / E2E テスト）
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist");
-const PORT = Number(process.env.PORT || 5199);
+const PORT = Number(process.env.PORT || 3000);
 const TYPES = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
