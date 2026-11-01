@@ -6,6 +6,8 @@ export default defineConfig({
     testDir: "tests/e2e",
     timeout: 60_000,
     fullyParallel: true,
+    // Chrome と MediaPipe を同時にたくさん起動すると起動が詰まるので絞る
+    workers: 4,
     reporter: "list",
     use: {
         baseURL: `http://127.0.0.1:${PORT}`,
