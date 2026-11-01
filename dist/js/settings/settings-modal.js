@@ -114,7 +114,7 @@ export function saveSettingsAndClose() {
     updateSideNextClearance();
     // 音声を変えたら、新しい音声で前もって作り始める（Gemini TTS は遅く回数制限があるので手動）。
     // 保存した文言で作るよう最後に呼ぶ
-    if (ttsSettings.ttsModel !== previousTtsModel && ["cloud", "voicevox"].includes(getTtsProvider())) void prefetchAllAudio({ quiet: true });
+    if (ttsSettings.ttsModel !== previousTtsModel && ["cloud", "voicevox", "sapi"].includes(getTtsProvider())) void prefetchAllAudio({ quiet: true });
     return true;
 }
 

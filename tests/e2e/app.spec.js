@@ -204,3 +204,47 @@ test("1366×768 でも設定の質問一覧のアイコンが出る", async ({ p
     await expect(icons.first()).toBeVisible();
     await expect.poll(() => icons.evaluateAll(imgs => imgs.filter(img => !img.complete || img.naturalWidth === 0).length)).toBe(0);
 });
+
+test("デスクトップ版の Windows では SAPI の声が TTSモデルに並び、試聴で合成する", async ({ page }) => {
+    // Tauri の invoke と Windows の UA を偽装する
+    await page.addInitScript(() => {
+        Object.defineProperty(navigator, "userAgent", { get: () => "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+        window.__sapiCalls = [];
+        window.__TAURI__ = {
+            core: {
+                invoke: async (cmd, args) => {
+                    window.__sapiCalls.push({ cmd, args });
+                    if (cmd === "sapi_voices") {
+                        return [
+                            { id: "TOKEN\\Ayumi", name: "Microsoft Ayumi - Japanese (Japan)", language: "411" },
+                            { id: "TOKEN\\Nanami", name: "Microsoft Nanami (Natural) - Japanese (Japan)", language: "411" },
+                            { id: "TOKEN\\Zira", name: "Microsoft Zira - English (United States)", language: "409" }
+                        ];
+                    }
+                    if (cmd === "sapi_synthesize") return new ArrayBuffer(0);
+                    throw new Error(`unknown command ${cmd}`);
+                }
+            }
+        };
+    });
+    await openApp(page);
+    await openSettingsTab(page, "voice-tab");
+    await expect(page.locator("#sapi-section")).toBeVisible();
+    const labels = await page.locator("#tts-model-select option").allInnerTexts();
+    const sapi = labels.filter(l => l.startsWith("Windows の声"));
+    // 日本語だけ、Natural を先に並べる
+    expect(sapi).toEqual(["Windows の声: Microsoft Nanami (Natural) - Japanese (Japan)", "Windows の声: Microsoft Ayumi - Japanese (Japan)"]);
+
+    await page.selectOption("#tts-model-select", "sapi:TOKEN\\Nanami");
+    await page.click(".tts-preview-btn");
+    await expect.poll(() => page.evaluate(() => window.__sapiCalls.find(c => c.cmd === "sapi_synthesize")?.args))
+        .toEqual({ voiceId: "TOKEN\\Nanami", text: expect.any(String) });
+});
+
+test("Web版では Windows の声の欄を出さない", async ({ page }) => {
+    await openApp(page);
+    await openSettingsTab(page, "voice-tab");
+    await expect(page.locator("#sapi-section")).toBeHidden();
+    const labels = await page.locator("#tts-model-select option").allInnerTexts();
+    expect(labels.some(l => l.startsWith("Windows の声"))).toBe(false);
+});

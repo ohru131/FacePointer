@@ -1,13 +1,15 @@
-// 音声合成のサービス（Gemini / Cloud TTS / VOICEVOX）への問い合わせ
+// 音声合成のサービス（Gemini / Cloud TTS / VOICEVOX / Windows の SAPI）への問い合わせ
 import { readStoredList } from "../core/storage.js";
 
 // TTSモデル: "cloud:<voice名>" (Google Cloud TTS) / "gemini:<モデル名>" (Gemini API TTS)
 //   / "voicevox:<話者スタイルID>" (PCで起動した VOICEVOX) / "browser:" (ブラウザ内蔵の音声。通信なし)
+//   / "sapi:<トークンID>" (Windows の SAPI5 の声。デスクトップ版だけ)
 export const TTS_MODEL_KEY = "tts_model";
 const TTS_BROWSER_MODEL = "browser:";
 export const VOICEVOX_URL_KEY = "voicevox_url";
 export const VOICEVOX_SPEAKERS_KEY = "voicevox_speakers";
 const DEFAULT_VOICEVOX_URL = "http://127.0.0.1:50021";
+export const SAPI_VOICES_KEY = "sapi_voices";
 export const TTS_MODEL_LIST_KEY = "tts_model_list";
 const DEFAULT_TTS_MODEL = "cloud:ja-JP-Neural2-B";
 export const GEMINI_VOICE_KEY = "gemini_tts_voice";
@@ -35,11 +37,13 @@ export const GEMINI_VOICES = [
 ];
 const GEMINI_TTS_SAMPLE_RATE = 24000;
 
-// 選べる音声: ブラウザ内蔵（常に）+ VOICEVOX の話者（取得済みなら）+ Google の一覧（取得済みなら既定のみ）
+// 選べる音声: ブラウザ内蔵（常に）+ Windows の声（デスクトップ版で取得済みなら）+ VOICEVOX の話者（取得済みなら）
+//   + Google の一覧（取得済みなら既定のみ）
 export function loadTtsModelList() {
     const google = readStoredList(TTS_MODEL_LIST_KEY);
     return [
         { value: TTS_BROWSER_MODEL, label: "ブラウザ内蔵の音声（無料・通信なし・遅延なし）" },
+        ...(isSapiAvailable() ? readStoredList(SAPI_VOICES_KEY) : []),
         ...readStoredList(VOICEVOX_SPEAKERS_KEY),
         ...(google.length ? google : [{ value: DEFAULT_TTS_MODEL, label: "Cloud TTS: ja-JP-Neural2-B" }])
     ];
@@ -102,12 +106,53 @@ export async function fetchVoicevoxSpeakers(url) {
     })));
 }
 
+// デスクトップ版（Tauri）の Windows でだけ、Rust 側の SAPI を呼べる
+function getTauriInvoke() {
+    return window.__TAURI__?.core?.invoke || null;
+}
+
+export function isSapiAvailable() {
+    return Boolean(getTauriInvoke()) && /Windows/i.test(navigator.userAgent);
+}
+
+// SAPI5 に登録された声。WebView2 の speechSynthesis には出てこない声
+// （NaturalVoiceSAPIAdapter で入れた「Microsoft Nanami (Natural)」など）も使える
+export async function fetchSapiVoices() {
+    const invoke = getTauriInvoke();
+    if (!invoke) throw new Error("Windows の声はデスクトップ版でだけ使えます");
+    const voices = await invoke("sapi_voices");
+    const list = Array.isArray(voices) ? voices : [];
+    // 日本語（LCID 411）の声だけにする。日本語の声が無ければ全部出す
+    const isJapanese = v => String(v.language || "").split(";").some(l => l.trim().toLowerCase() === "411");
+    const japanese = list.filter(isJapanese);
+    // 自然な声（Natural）を先に並べる
+    const rank = v => (/Natural/i.test(v.name) ? 0 : 1);
+    return (japanese.length ? japanese : list)
+        .sort((a, b) => rank(a) - rank(b))
+        .map(v => ({ value: `sapi:${v.id}`, label: `Windows の声: ${v.name}` }));
+}
+
+async function requestSapiTts(text, voiceId, signal) {
+    const invoke = getTauriInvoke();
+    if (!invoke) throw new Error("Windows の声はデスクトップ版でだけ使えます");
+    let bytes;
+    try {
+        bytes = await invoke("sapi_synthesize", { voiceId, text });
+    } catch (error) {
+        throw new Error(String(error?.message || error));
+    }
+    // 合成は途中で止められないので、作り終えてから中止を反映する
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    return new Blob([bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes)], { type: "audio/wav" });
+}
+
 // 選んでいる音声で1文を合成する（キャッシュは見ない）。ブラウザ内蔵は合成しない
 export async function synthesizeSpeech(phrase, signal, opts = {}) {
     const model = opts.model ?? ttsSettings.ttsModel;
     const provider = getTtsProvider(model);
     const name = model.slice(provider.length + 1);
     if (provider === "voicevox") return requestVoicevoxTts(phrase, name, signal, opts);
+    if (provider === "sapi") return requestSapiTts(phrase, name, signal);
     if (provider === "gemini") return requestGeminiTts(phrase, name, signal, opts);
     return requestCloudTts(phrase, name || "ja-JP-Neural2-B", signal, opts);
 }
@@ -117,6 +162,7 @@ export function canSynthesizeSpeech() {
     const provider = getTtsProvider();
     if (provider === "browser") return false;
     if (provider === "voicevox") return true;
+    if (provider === "sapi") return isSapiAvailable();
     if (ttsSettings.ttsDailyLimitModel === ttsSettings.ttsModel) return false;
     return Boolean(ttsSettings.GEMINI_API_KEY) && !ttsSettings.geminiAuthBlocked;
 }
@@ -229,7 +275,7 @@ export function parseTtsRateLimit(error) {
 // 画面に出す短い説明（API の生の応答は長く、読んでも分かりにくい）
 export function describeTtsError(error) {
     const limit = parseTtsRateLimit(error);
-    if (limit?.daily) return "音声サービスの1日の上限（無料枠）に達しました。続きは明日、または音声を Cloud TTS か VOICEVOX に変えてください";
+    if (limit?.daily) return "音声サービスの1日の上限（無料枠）に達しました。続きは明日、または音声を Cloud TTS・VOICEVOX・Windows の声に変えてください";
     if (limit) return "音声サービスの回数制限（429）に達しました。しばらく待つと続けられます";
     if (error?.status === 401 || error?.status === 403) return "API Key が使えません（設定 → 音声 で確認してください）";
     return String(error?.message || error).slice(0, 80);
