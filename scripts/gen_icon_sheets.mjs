@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // 図のない項目（お話モードの会話の木・相手・あいづち、かんたんモードの追加パネル、質問の答え）の
 // アイコンを Gemini で 5列×4行のシートにまとめて作り、1枚ずつに分割して dist/media/gen/ に置く。
-// APIキーはリポジトリ直下の .env（gitignore 済み）の GEMINI_API_KEY から読む。
+// APIキーは環境変数 GEMINI_API_KEY から読む。npm run icons:gen / icons:models で実行すると、
+// scripts/bws-env.mjs が Bitwarden Secrets Manager（apps の FACEPOINTER__*）から注入する。
 //
 //   node scripts/gen_icon_sheets.mjs --dry-run        対象とシート割りだけ表示（APIを呼ばない）
 //   node scripts/gen_icon_sheets.mjs --limit 1        1シートだけ作って仕上がりを確認
@@ -46,13 +47,8 @@ const ICON_EXT = ".webp";
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta";
 const REQUEST_TIMEOUT_MS = 300000;
 
+// 値は Bitwarden から注入された環境変数（.env は使わない）
 export function loadEnv() {
-    if (typeof process.loadEnvFile !== "function") throw new Error("Node.js 20.12 以降で実行してください");
-    try {
-        process.loadEnvFile(path.join(ROOT, ".env"));
-    } catch (error) {
-        if (error.code !== "ENOENT") throw error;
-    }
     return {
         apiKey: process.env.GEMINI_API_KEY || "",
         model: process.env.GEMINI_IMAGE_MODEL || "gemini-3-pro-image",
@@ -454,7 +450,7 @@ export function removeIcons(matchKey) {
 // シートを作って分割し、記録と一覧を更新する。getAll は一覧に載せる対象（作りかけの会話パターンは含めない）。
 // 作っている間に登録や削除があっても古い内容で上書きしないよう、記録と対象はシートごとに読み直す
 export async function generateIcons({ env, sheets, getAll, onLog = console.log }) {
-    if (!env.apiKey) throw new Error(".env に GEMINI_API_KEY を設定してください（.env.example 参照）");
+    if (!env.apiKey) throw new Error("GEMINI_API_KEY がありません。Bitwarden（apps の FACEPOINTER__GEMINI_API_KEY）に登録し、npm run icons:gen などで実行してください");
     fs.mkdirSync(SHEET_DIR, { recursive: true });
     const reference = await loadStyleReference();
     const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\..+/, "");
@@ -525,7 +521,7 @@ async function main() {
     fs.mkdirSync(GEN_DIR, { recursive: true });
 
     if (args.listModels) {
-        if (!env.apiKey) throw new Error(".env に GEMINI_API_KEY を設定してください（.env.example 参照）");
+        if (!env.apiKey) throw new Error("GEMINI_API_KEY がありません。Bitwarden（apps の FACEPOINTER__GEMINI_API_KEY）に登録し、npm run icons:gen などで実行してください");
         await listModels(env);
         return;
     }
@@ -572,7 +568,7 @@ async function main() {
         console.log(`Manifest: ${writeManifest(all, sources)} icons`);
         return;
     }
-    if (!env.apiKey) throw new Error(".env に GEMINI_API_KEY を設定してください（.env.example 参照）");
+    if (!env.apiKey) throw new Error("GEMINI_API_KEY がありません。Bitwarden（apps の FACEPOINTER__GEMINI_API_KEY）に登録し、npm run icons:gen などで実行してください");
 
     const { failed } = await generateIcons({ env, sheets, getAll: () => collectTargets() });
     console.log(`Manifest: ${writeManifest(await collectTargets(), readSources())} icons → ${path.relative(ROOT, ICON_MANIFEST)}`);

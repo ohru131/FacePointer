@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // talk studio: 会話パターンをローカルで作る・直す・絵を作る・アプリに登録する
 //   npm run talk:studio   → http://127.0.0.1:5180 を開く
-// Gemini の APIキーは .env からこのサーバーだけが使い、ブラウザには渡さない。
+// Gemini の APIキーは Bitwarden から注入した環境変数をこのサーバーだけが使い、ブラウザには渡さない。
 // 作りかけ（インタビューの回答を含む）は scripts/talk-studio/drafts/ に置き、git には載せない。
 // 「アプリに登録」で dist/talk-sets/ に書き出し、アプリの会話パターン一覧に組み込みとして出る。
 
@@ -370,7 +370,7 @@ function readBody(req) {
 }
 
 function requireKey() {
-    if (!env.apiKey) throw httpError(400, ".env に GEMINI_API_KEY を設定してください");
+    if (!env.apiKey) throw httpError(400, "GEMINI_API_KEY がありません（npm run talk:studio で起動すると Bitwarden から入ります）");
 }
 
 async function handleApi(req, res, url) {
@@ -480,7 +480,7 @@ const server = http.createServer(async (req, res) => {
 server.listen(PORT, HOST, () => {
     const url = `http://${HOST}:${PORT}/`;
     console.log(`talk studio: ${url}（終了は Ctrl+C）`);
-    if (!env.apiKey) console.log("注意: .env に GEMINI_API_KEY がないため、AI での作成と絵の作成は使えません");
+    if (!env.apiKey) console.log("注意: GEMINI_API_KEY がないため、AI での作成と絵の作成は使えません（npm run talk:studio で起動すると Bitwarden から入ります）");
     if (!process.argv.includes("--no-open")) {
         const [cmd, args] = process.platform === "win32" ? ["cmd", ["/c", "start", "", url]]
             : process.platform === "darwin" ? ["open", [url]] : ["xdg-open", [url]];
