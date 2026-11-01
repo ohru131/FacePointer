@@ -1,4 +1,4 @@
-// 右上のボタン（全画面・設定・正面の取り直し）と画面全体の操作
+// 右上のボタン（全画面 or 終了・設定・正面の取り直し）と画面全体の操作
 import { calibrateBtn, fullscreenBtn, recaptureFrontBtn } from "../core/dom.js";
 import { pointerConfig, resetCalibrationTuning } from "../pointer/config.js";
 import { resetPointerMotionHistory } from "../pointer/tracking.js";
@@ -37,7 +37,21 @@ export function initQuickActions() {
         recaptureFrontBtn.addEventListener("click", startFrontRecapture);
     }
     if (fullscreenBtn) {
-        if (!document.fullscreenEnabled) {
+        const tauriWindow = window.__TAURI__?.window;
+        if (tauriWindow?.getCurrentWindow) {
+            // デスクトップ版は起動時から全画面で画面を占有するので、このボタンはアプリの終了にする
+            fullscreenBtn.textContent = "✕";
+            fullscreenBtn.title = "アプリを終了";
+            fullscreenBtn.setAttribute("aria-label", "アプリを終了");
+            fullscreenBtn.addEventListener("click", async () => {
+                if (!confirm("FacePointer を終了します。よろしいですか？")) return;
+                try {
+                    await tauriWindow.getCurrentWindow().close();
+                } catch (error) {
+                    console.warn("app close failed:", error);
+                }
+            });
+        } else if (!document.fullscreenEnabled) {
             fullscreenBtn.style.display = "none";
         } else {
             fullscreenBtn.addEventListener("click", async () => {

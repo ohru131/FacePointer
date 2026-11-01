@@ -24,7 +24,7 @@ export const recaptureFrontBtn = document.getElementById("recapture-front-btn");
 
 export const audioCacheBtn = document.getElementById("audio-cache-btn");
 
-// 全画面表示の切り替え（ブラウザ版向け。Escでも解除される）
+// ブラウザ版: 全画面表示の切り替え（Escでも解除）／デスクトップ版: アプリの終了
 export const fullscreenBtn = document.getElementById("fullscreen-btn");
 
 export const settingsBtn = document.getElementById("settings-btn");
