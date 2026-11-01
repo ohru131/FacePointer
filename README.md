@@ -81,9 +81,11 @@ winget install --id Bitwarden.BWS --exact                                    # b
 | 変数名（Bitwarden では `FACEPOINTER__` を付ける） | 用途 |
 | --- | --- |
 | `GEMINI_API_KEY` | アイコン生成・talk studio の Gemini API キー |
-| `GEMINI_IMAGE_MODEL` | アイコン生成のモデル（未設定なら `gemini-3-pro-image`。一覧は `npm run icons:models`） |
-| `GEMINI_IMAGE_SIZE` | アイコン生成の解像度 1K / 2K / 4K（未設定なら 2K。imageSize 非対応のモデルでは空にする） |
-| `GEMINI_TEXT_MODEL` | talk studio の文章生成モデル（任意） |
+| `GEMINI_IMAGE_MODEL`（任意） | アイコン生成のモデル（未設定なら `gemini-3-pro-image`。一覧は `npm run icons:models`） |
+| `GEMINI_IMAGE_SIZE`（任意） | アイコン生成の解像度 1K / 2K / 4K（未設定なら 2K。imageSize 非対応のモデルでは空にする） |
+| `GEMINI_TEXT_MODEL`（任意） | talk studio の文章生成モデル |
+
+登録しているのは機密の `GEMINI_API_KEY` だけです。任意の項目は既定値を変えたいときだけ追加します。
 
 運用の全体像は非公開リポジトリ `ohru131/handbook` の `secrets/README.md`。
 
