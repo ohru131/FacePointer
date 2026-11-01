@@ -92,11 +92,15 @@ try {
   process.exit(1);
 }
 
+// 他アプリの接頭辞付きの名前か（OTHER_APP__API_KEY など）。
+// 接頭辞なし運用の GOOGLE_JSON__FILE を誤判定しないよう、末尾の __FILE を外してから見る
+const hasAppPrefix = (k) => /^[A-Z0-9][A-Z0-9_]*__/.test(k.replace(/__FILE$/, ""));
+
 // 子プロセスに渡す環境を組み立てる
 const env = {};
 for (const [k, v] of Object.entries(process.env)) {
   if (/^BWS_/i.test(k)) continue;            // トークン類はアプリに渡さない
-  if (/^[A-Z0-9]+__/.test(k)) continue;      // 他アプリの接頭辞付き変数は渡さない
+  if (hasAppPrefix(k)) continue;             // 他アプリの接頭辞付き変数は渡さない
   env[k] = v;
 }
 
@@ -105,7 +109,7 @@ let n = 0;
 for (const s of secrets) {
   if (prefix && !s.key.startsWith(prefix)) continue;
   let name = s.key.slice(prefix.length);
-  if (!prefix && /^[A-Z0-9]+__/.test(name)) continue; // 接頭辞なし運用では他アプリ分を拾わない
+  if (!prefix && hasAppPrefix(name)) continue; // 接頭辞なし運用では他アプリ分を拾わない
 
   if (name.endsWith("__FILE")) {
     name = name.slice(0, -"__FILE".length);
@@ -131,12 +135,18 @@ console.error(`[bws-env] ${n} 件を注入${prefix ? ` (${prefix})` : ""}`);
 
 const cleanup = () => { if (tmp) rmSync(tmp, { recursive: true, force: true }); };
 process.on("exit", cleanup);
-process.on("SIGINT", () => { cleanup(); process.exit(130); });
-process.on("SIGTERM", () => { cleanup(); process.exit(143); });
 
-// shell:true と引数配列の併用は非推奨(DEP0190)。自前で引用符を付けて1行にする。
+// Unix はシェルを通さず引数をそのまま渡す（$ やバッククォートを展開させない）。
+// Windows は npm/npx/pnpm が .cmd なので cmd.exe 経由が必要。cmd.exe は $ やバッククォートを展開しない。
+// shell:true と引数配列の併用は非推奨(DEP0190)なので、自前で引用符を付けて1行にする。
 const quote = (a) => (/[\s"^&|<>()]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a);
-const line = [cmd, ...args].map(quote).join(" ");
+const child = process.platform === "win32"
+  ? spawn([cmd, ...args].map(quote).join(" "), { env, stdio: "inherit", shell: true })
+  : spawn(cmd, args, { env, stdio: "inherit" });
 
-spawn(line, { env, stdio: "inherit", shell: true })
-  .on("exit", (code, signal) => process.exit(signal ? 1 : code ?? 0));
+child.on("error", (e) => { console.error(`${cmd} を起動できない: ${e.message}`); process.exit(127); });
+child.on("exit", (code, signal) =>
+  process.exit(signal === "SIGINT" ? 130 : signal === "SIGTERM" ? 143 : signal ? 1 : code ?? 0));
+
+// ラッパーだけにシグナルが来ても子を残さない。子に伝えて、子の終了を待ってから抜ける
+for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, () => child.kill(sig));
