@@ -24,6 +24,8 @@ const { applyEdgeConnectedTransparency, trimTopSparseRows, detectGridBands } = r
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DIST_DIR = path.join(ROOT, "dist");
+// アプリの ES モジュール（パネル・質問・相づちなどの定数をここから読む）
+const APP_DIR = path.join(DIST_DIR, "js");
 const GEN_DIR = path.join(DIST_DIR, "media", "gen");
 const SHEET_DIR = path.join(ROOT, "scripts", "generated-sheets");
 const SHEET_LOG = path.join(SHEET_DIR, "sheets.json");
@@ -80,18 +82,24 @@ function parseArgs(argv) {
     return args;
 }
 
-// app.js はブラウザ用でそのまま読み込めないため、定数の配列リテラルだけ取り出して評価する
+// アプリのソース（dist/js 以下の全モジュールをつないだもの）
+export function readAppSource() {
+    const files = fs.readdirSync(APP_DIR, { recursive: true }).filter(f => f.endsWith(".js")).sort();
+    return files.map(f => fs.readFileSync(path.join(APP_DIR, f), "utf8")).join("\n");
+}
+
+// アプリのモジュールはブラウザ用でそのまま読み込めないため、定数の配列リテラルだけ取り出して評価する
 // 配列の中で参照している文字列の定数（const NAME = "..."）も読めるようにする
 function stringConstants(source) {
     const context = {};
-    for (const m of source.matchAll(/^const ([A-Z][A-Z0-9_]*) = ("(?:[^"\\]|\\.)*");/gm)) context[m[1]] = JSON.parse(m[2]);
+    for (const m of source.matchAll(/^(?:export )?const ([A-Z][A-Z0-9_]*) = ("(?:[^"\\]|\\.)*");/gm)) context[m[1]] = JSON.parse(m[2]);
     return context;
 }
 
 export function extractArrayLiteral(source, name) {
     const head = `const ${name} = [`;
     const start = source.indexOf(head);
-    if (start < 0) throw new Error(`${name} not found in app.js`);
+    if (start < 0) throw new Error(`${name} not found in dist/js`);
     let depth = 0;
     let quote = "";
     for (let i = start + head.length - 1; i < source.length; i++) {
@@ -143,7 +151,7 @@ export function talkTreeTargets(tree) {
     return targets;
 }
 
-// 相手のパネル。id は app.js の getTalkPanels と同じ形（標準は talk-partner-<id>、ほかのパターンは talk-partner-<setId>-<id>）
+// 相手のパネル。id はアプリの getTalkPanels（dist/js/talk/screen.js）と同じ形（標準は talk-partner-<id>、ほかのパターンは talk-partner-<setId>-<id>）
 export function partnerTargets(partners, prefix) {
     return partners.map(p => ({
         key: p.id ? `${prefix}-${p.id}` : "talk-partner-none",
@@ -172,7 +180,7 @@ export async function loadPublishedSets() {
 // 標準データとアプリの各パネル、登録済みの会話パターン（と、talk studio の作りかけ extraSets）
 export async function collectTargets({ extraSets = [] } = {}) {
     const { TALK_TREE } = await importSource(path.join(DIST_DIR, "talk-data.js"));
-    const appSource = fs.readFileSync(path.join(DIST_DIR, "app.js"), "utf8");
+    const appSource = readAppSource();
     const targets = talkTreeTargets(TALK_TREE);
     targets.push(
         { key: "custom", desc: "「自分の言葉」（話題の大分類。自分で登録した言葉の置き場所） 絵文字のイメージ: ✏️" },

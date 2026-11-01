@@ -24,7 +24,7 @@ PHRASES = [
     "お願いします。",
 ]
 
-APP_JS_PATH = Path(__file__).parent.parent / "dist" / "app.js"
+APP_JS_DIR = Path(__file__).parent.parent / "dist" / "js"
 
 MODEL_ID = os.environ.get("QWEN_TTS_MODEL_ID", "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice")
 SPEAKER = "Ono_Anna"   # 日本語女声。変更可: Vivian / Serena / Uncle_Fu / Dylan / Eric
@@ -147,11 +147,11 @@ def resolve_model_source() -> str:
 
 
 def load_sentences_from_app_js() -> list[str]:
-    if not APP_JS_PATH.exists():
-        print(f"sentence 抽出スキップ: {APP_JS_PATH} が見つかりません。")
+    if not APP_JS_DIR.exists():
+        print(f"sentence 抽出スキップ: {APP_JS_DIR} が見つかりません。")
         return []
 
-    text = APP_JS_PATH.read_text(encoding="utf-8")
+    text = "\n".join(p.read_text(encoding="utf-8") for p in sorted(APP_JS_DIR.rglob("*.js")))
     sentences = re.findall(r'sentence\s*:\s*"([^"]+)"', text)
     unique_sentences = []
     seen = set()
@@ -161,7 +161,7 @@ def load_sentences_from_app_js() -> list[str]:
             continue
         seen.add(t)
         unique_sentences.append(t)
-    print(f"app.js sentence 抽出: {len(unique_sentences)} 件")
+    print(f"dist/js sentence 抽出: {len(unique_sentences)} 件")
     return unique_sentences
 
 

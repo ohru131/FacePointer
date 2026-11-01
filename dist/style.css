@@ -168,41 +168,11 @@ body.settings-open #quick-actions {
     height: 100%;
     display: flex;
     flex-direction: column;
-    padding: 0.5rem 1rem 1rem; /* 確定ゾーンは現在未使用（常に非表示）なので下の余白は取らない */
+    padding: 0.5rem 1rem 1rem;
     /* 右上の ⛶ ⚙ ◎ の列に、どのモードでも画面を重ねない */
     padding-right: calc(1rem + var(--qa-gutter));
     gap: 0.5rem;
     pointer-events: none;
-}
-
-/* ── header ──────────────────────────────────────── */
-header {
-    display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    background: linear-gradient(180deg, rgba(0, 0, 0, 0.6) 0%, transparent 100%);
-    padding: 0.8rem 1rem;
-    border-radius: 0.8rem;
-    pointer-events: none;
-}
-
-#header-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-#app-title {
-    font-size: 1.6rem;
-    font-weight: 900;
-    color: var(--text);
-    letter-spacing: 0.05em;
-}
-
-#instruction {
-    font-size: 0.88rem;
-    color: var(--text-dim);
-    text-align: center;
 }
 
 @keyframes fadeIn {
@@ -349,16 +319,8 @@ img.question-mode-icon {
     display: inline-block;
 }
 
-.question-btn-icon {
-    width: 1.2em;
-    height: 1.2em;
-    vertical-align: -0.22em;
-    object-fit: contain;
-    margin-right: 0.3rem;
-    display: inline-block;
-}
-
-.question-editor-icon {
+/* 設定画面の「今すぐ質問する」ボタンと質問一覧で、文の前に置く質問のアイコン */
+.question-inline-icon {
     width: 1.2em;
     height: 1.2em;
     vertical-align: -0.22em;
@@ -562,80 +524,6 @@ img.question-mode-icon {
     cursor: default;
     pointer-events: none;
     font-size: 4.8rem;
-}
-
-/* ── confirm zone ────────────────────────────────── */
-#confirm-zone {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 180px; /* Much higher now */
-    z-index: 300;
-    background: linear-gradient(0deg, rgba(82, 183, 136, 0.25) 0%, transparent 100%);
-    border-top: 1px solid rgba(82, 183, 136, 0.3);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 12px;
-    pointer-events: none;
-    transition: background 0.3s, border-color 0.3s;
-}
-
-#confirm-zone.active {
-    background: linear-gradient(0deg, rgba(82, 183, 136, 0.5) 0%, transparent 100%);
-    border-color: rgba(82, 183, 136, 0.8);
-}
-
-#confirm-zone-inner {
-    display: flex;
-    align-items: center;
-    gap: 1.5rem;
-    font-size: 1.6rem; /* Larger font */
-    font-weight: 700;
-    color: rgba(82, 183, 136, 0.9);
-    letter-spacing: 0.05em;
-}
-
-#confirm-zone-icon {
-    font-size: 1.4rem;
-    animation: bounce 1.2s infinite;
-}
-
-@keyframes bounce {
-
-    0%,
-    100% {
-        transform: translateY(0);
-    }
-
-    50% {
-        transform: translateY(4px);
-    }
-}
-
-#confirm-zone-preview {
-    color: var(--text);
-    font-size: 1.8rem;
-    font-weight: 900;
-}
-
-#confirm-zone-progress {
-    width: 350px;
-    height: 12px;
-    background: rgba(82, 183, 136, 0.2);
-    border-radius: 6px;
-    overflow: hidden;
-}
-
-#confirm-zone-bar {
-    height: 100%;
-    width: 0%;
-    background: #52b788;
-    border-radius: 2px;
-    transition: width 0.05s linear;
-    box-shadow: 0 0 8px rgba(82, 183, 136, 0.7);
 }
 
 /* ── confirm overlay ─────────────────────────────── */
@@ -1972,11 +1860,6 @@ body.calib-active #dwell-indicator {
     filter: grayscale(0.8);
 }
 
-#simple-bar .h-btn.simple-ctrl.simple-ctrl--speak {
-    background: linear-gradient(180deg, #ffe9ec 0%, #ffd3d9 100%);
-    border-color: rgba(230, 57, 70, 0.55);
-}
-
 #simple-bar .h-btn.simple-ctrl.simple-ctrl--cancel {
     flex: 0 1 min(420px, 40%);
     background: linear-gradient(180deg, #f1f5f9 0%, #e2e8f0 100%);
@@ -2341,10 +2224,6 @@ body.settings-open #dwell-indicator {
     padding: 0.6rem;
     border-radius: 0.9rem;
     background: #eef2f5;
-}
-
-.layout-page.is-spare {
-    background: repeating-linear-gradient(45deg, #f6f8fa 0 10px, #eef2f5 10px 20px);
 }
 
 .layout-page-label {

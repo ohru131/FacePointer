@@ -18,3 +18,6 @@ dist/mediapipe/*.mjs
 scripts/generated-sheets/
 # talk studio の作りかけ（インタビューの答えを含む。登録した分は dist/talk-sets/ に書き出す）
 scripts/talk-studio/drafts/
+test-results/
+playwright-report/
+tests/.cache/
