@@ -33,8 +33,8 @@ FacePointerは、顔の動きだけで操作できるコミュニケーション
 ### 開発者 (ビルド方法)
 
 このプロジェクトを自分でビルドするには、以下の環境が必要です：
-- [Node.js](https://nodejs.org/) (v16以上)
-- [Rust](https://rust-lang.org/) (Tauriのビルドに必要)
+- [Node.js](https://nodejs.org/) (v20.19以上の20系、v22.13以上の22系、または v24以上。ESLint の対応範囲。GitHub Actions は v24)
+- [Rust](https://rust-lang.org/) 1.90以上 (Tauriのビルドに必要)
 
 ```bash
 # 依存関係のインストール
@@ -58,6 +58,8 @@ npm run lint
 # E2E テスト（Playwright。インストール済みの Chrome を使い、偽のカメラで起動する）
 npm test
 ```
+
+`package.json` の `overrides` で `minimatch` を 11 系に固定しています。ESLint が依存する 10 系に修正版が無い脆弱性（GHSA-g3hv-75wg-m249）を避けるためで、ESLint が 11 系に対応したら外します。
 
 E2E テストは、カメラに何も映らない状態での画面操作（質問モード・ページ送り・設定の保存・お話モードなど）と、顔のイラストを動かす偽カメラ映像でのポインタ操作（MediaPipe → ポインタ → パネル）を確かめます。顔の映像は初回に `tests/.cache/` へ作ります。
 

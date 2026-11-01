@@ -23,7 +23,7 @@ export default defineConfig({
         }
     },
     webServer: {
-        command: `node tests/static-server.mjs`,
+        command: `node scripts/static-server.mjs`,
         env: { PORT: String(PORT) },
         url: `http://127.0.0.1:${PORT}/index.html`,
         reuseExistingServer: !process.env.CI

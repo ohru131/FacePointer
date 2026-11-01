@@ -1,11 +1,13 @@
-// E2E テスト用の静的サーバー（dist をそのまま配る）
+// dist をそのまま配る静的サーバー（npm start / npm run dev / Tauri の開発モード / E2E テスト）
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../dist");
-const PORT = Number(process.env.PORT || 5199);
+const PORT = Number(process.env.PORT || 3000);
+// この PC からだけ開けるようにする（LAN の他の端末には出さない）
+const HOST = "127.0.0.1";
 const TYPES = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
@@ -19,11 +21,24 @@ const TYPES = {
     ".task": "application/octet-stream"
 };
 
-http.createServer((req, res) => {
-    const urlPath = decodeURIComponent(new URL(req.url, "http://localhost").pathname);
+// URL のパスから dist の中のファイルを決める。dist の外を指す・壊れた URL は null
+function resolveFile(url) {
+    let urlPath;
+    try {
+        urlPath = decodeURIComponent(new URL(url, "http://localhost").pathname);
+    } catch {
+        return null;
+    }
     const filePath = path.join(ROOT, urlPath === "/" ? "index.html" : urlPath);
-    if (!filePath.startsWith(ROOT)) {
-        res.writeHead(403).end();
+    const rel = path.relative(ROOT, filePath);
+    if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return null;
+    return filePath;
+}
+
+http.createServer((req, res) => {
+    const filePath = resolveFile(req.url);
+    if (!filePath) {
+        res.writeHead(400).end();
         return;
     }
     fs.readFile(filePath, (error, data) => {
@@ -34,4 +49,4 @@ http.createServer((req, res) => {
         res.writeHead(200, { "Content-Type": TYPES[path.extname(filePath)] || "application/octet-stream" });
         res.end(data);
     });
-}).listen(PORT, () => console.log(`serving ${ROOT} on http://127.0.0.1:${PORT}`));
+}).listen(PORT, HOST, () => console.log(`serving ${ROOT} on http://${HOST}:${PORT}`));
