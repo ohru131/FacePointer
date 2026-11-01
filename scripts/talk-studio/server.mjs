@@ -12,8 +12,8 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
     PUBLISHED_DIR, collectTargets, descHash, extractArrayLiteral, generateIcons, iconPath, isUpToDate,
-    loadEnv, loadPublishedSets, partnerTargets, planSheets, readSources, removeIcons, talkSetTargets, talkTreeTargets,
-    writeManifest, writeSources
+    loadEnv, loadPublishedSets, partnerTargets, planSheets, readAppSource, readSources, removeIcons, talkSetTargets,
+    talkTreeTargets, writeManifest, writeSources
 } from "../gen_icon_sheets.mjs";
 import { validateTalkSet } from "./validate.mjs";
 
@@ -155,8 +155,7 @@ async function createDraft({ source, data }) {
     };
     if (source === "default") {
         const { TALK_TREE } = await importSource(path.join(DIST_DIR, "talk-data.js"));
-        const appSource = fs.readFileSync(path.join(DIST_DIR, "app.js"), "utf8");
-        const partners = extractArrayLiteral(appSource, "DEFAULT_TALK_PARTNERS");
+        const partners = extractArrayLiteral(readAppSource(), "DEFAULT_TALK_PARTNERS");
         const { tree } = reId(TALK_TREE, id);
         Object.assign(draft, { name: "標準をもとにしたパターン", partners, tree });
         // 標準の絵（talk-partner-<id> と元のノード id）を引き継ぐ
