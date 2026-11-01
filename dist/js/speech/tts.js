@@ -135,14 +135,24 @@ export async function fetchSapiVoices() {
 async function requestSapiTts(text, voiceId, signal) {
     const invoke = getTauriInvoke();
     if (!invoke) throw new Error("Windows の声はデスクトップ版でだけ使えます");
+    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    // SAPI の合成は途中で止められない。中止・時間切れはすぐ返し、ブラウザの音声に切り替えられるようにする
+    let onAbort;
+    const aborted = new Promise((_, reject) => {
+        onAbort = () => reject(new DOMException("Aborted", "AbortError"));
+        signal?.addEventListener("abort", onAbort, { once: true });
+    });
     let bytes;
     try {
-        bytes = await invoke("sapi_synthesize", { voiceId, text });
-    } catch (error) {
-        throw new Error(String(error?.message || error));
+        bytes = await Promise.race([
+            invoke("sapi_synthesize", { voiceId, text }).catch((error) => {
+                throw new Error(String(error?.message || error));
+            }),
+            aborted
+        ]);
+    } finally {
+        signal?.removeEventListener("abort", onAbort);
     }
-    // 合成は途中で止められないので、作り終えてから中止を反映する
-    if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
     return new Blob([bytes instanceof ArrayBuffer ? bytes : new Uint8Array(bytes)], { type: "audio/wav" });
 }
 

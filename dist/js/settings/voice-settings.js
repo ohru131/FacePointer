@@ -367,11 +367,11 @@ export function initVoiceSettings() {
 async function refreshSapiVoices({ quiet = false } = {}) {
     if (sapiFetchBtn) sapiFetchBtn.disabled = true;
     if (!quiet && sapiStatus) sapiStatus.textContent = "取得中...";
-    const current = ttsModelSelect ? ttsModelSelect.value : ttsSettings.ttsModel;
     try {
         const voices = await fetchSapiVoices();
         localStorage.setItem(SAPI_VOICES_KEY, JSON.stringify(voices));
-        renderTtsModelOptions(loadTtsModelList(), current);
+        // 取得中に選び直されても戻さないよう、選択は取得し終えてから読む（起動直後は一覧が空）
+        renderTtsModelOptions(loadTtsModelList(), ttsModelSelect?.value || ttsSettings.ttsModel);
         if (sapiStatus) sapiStatus.textContent = `${voices.length} 件の声があります。上の「TTSモデル」から選んでください。`;
     } catch (error) {
         if (sapiStatus) sapiStatus.textContent = `取得失敗: ${error.message}`;
