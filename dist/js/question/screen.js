@@ -5,8 +5,8 @@ import { centerPointerOnSimpleGrid } from "../pointer/tracking.js";
 import { dismissConfirmOverlay, isConfirmInProgress } from "../panels/confirm.js";
 import { lockUntilPointerLeaves } from "../panels/selection.js";
 import {
-    QUESTION_MODE_LAST_KEY, QUESTION_TIMEOUT_MS, getQuestionAnswers, getQuestionCatalog,
-    getQuestionEmoji, getQuestionIcon, getQuestionLabel, getVisibleQuestions, questionStore
+    QUESTION_MODE_LAST_KEY, QUESTION_TIMEOUT_MS, createQuestionIcon, getQuestionAnswers,
+    getQuestionCatalog, getQuestionLabel, getVisibleQuestions, questionStore
 } from "./model.js";
 import { panelScreen, renderAll } from "../panels/screen.js";
 import { speak } from "../speech/speak.js";
@@ -56,23 +56,10 @@ export function renderQuestionModeBar() {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "question-mode-btn" + (appState.activeQuestion?.id === q.id ? " active" : "");
-        const iconSrc = getQuestionIcon(q);
-        if (iconSrc) {
-            const img = document.createElement("img");
-            img.className = "question-mode-icon";
-            img.src = iconSrc;
-            img.alt = "";
-            btn.appendChild(img);
-        } else {
-            const icon = document.createElement("span");
-            icon.className = "question-mode-icon";
-            icon.textContent = getQuestionEmoji(q);
-            btn.appendChild(icon);
-        }
         const label = document.createElement("span");
         label.className = "question-mode-label";
         label.textContent = getQuestionLabel(q);
-        btn.append(label);
+        btn.append(createQuestionIcon(q, "question-mode-icon", { emojiClass: "question-mode-icon" }), label);
         btn.title = appState.activeQuestion?.id === q.id && !q.silent ? `${q.question}（押すともう一度読み上げ）` : q.question;
         btn.addEventListener("click", () => selectQuestionFromBar(q.id));
         questionModeBar.appendChild(btn);
@@ -147,17 +134,7 @@ export function renderQuestionButtons() {
         const btn = document.createElement("button");
         btn.type = "button";
         btn.className = "question-btn" + (appState.activeQuestion?.id === q.id ? " active" : "");
-        const iconSrc = getQuestionIcon(q);
-        if (iconSrc) {
-            const img = document.createElement("img");
-            img.className = "question-btn-icon";
-            img.src = iconSrc;
-            img.alt = "";
-            btn.appendChild(img);
-            btn.append(` ${getQuestionLabel(q)}`);
-        } else {
-            btn.textContent = `${getQuestionEmoji(q)} ${getQuestionLabel(q)}`;
-        }
+        btn.append(createQuestionIcon(q, "question-inline-icon"), ` ${getQuestionLabel(q)}`);
         btn.title = q.question;
         btn.addEventListener("click", () => {
             // 設定で変えた内容も保存してから、利用者が回答画面を見られるよう閉じる

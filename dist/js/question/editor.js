@@ -12,8 +12,8 @@ import { SIMPLE_FILTER_ALL, buildSimpleSentence } from "../panels/catalog.js";
 import { getQuestionGridSize } from "../panels/layout.js";
 import {
     QUESTION_CONFIG_KEY, QUESTION_CUSTOM_KEY, QUESTION_DEFAULT_HIDDEN_IDS, QUESTION_PRESETS,
-    getAnswerPanelCatalog, getDefaultQuestionAnswerKeys, getQuestionAnswerCandidates, getQuestionAnswers,
-    getQuestionCatalog, getQuestionEmoji, getQuestionIcon, getQuestionLabel, getVisibleQuestions,
+    createQuestionIcon, getAnswerPanelCatalog, getDefaultQuestionAnswerKeys, getQuestionAnswerCandidates,
+    getQuestionAnswers, getQuestionCatalog, getQuestionEmoji, getQuestionLabel, getVisibleQuestions,
     questionStore
 } from "./model.js";
 import { endQuestion, ensureQuestionModeQuestion, renderQuestionButtons, startQuestion } from "./screen.js";
@@ -137,17 +137,7 @@ export function renderQuestionEditor() {
         const text = document.createElement("div");
         text.className = "simple-editor-text";
         const title = document.createElement("strong");
-        const iconSrc = getQuestionIcon(q);
-        if (iconSrc) {
-            const img = document.createElement("img");
-            img.className = "question-editor-icon";
-            img.src = iconSrc;
-            img.alt = "";
-            title.appendChild(img);
-            title.append(` ${q.question}`);
-        } else {
-            title.textContent = `${getQuestionEmoji(q)} ${q.question}`;
-        }
+        title.append(createQuestionIcon(q, "question-inline-icon"), ` ${q.question}`);
         if (q.custom) {
             const badge = document.createElement("span");
             badge.className = "simple-editor-group";

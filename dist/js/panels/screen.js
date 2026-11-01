@@ -1,7 +1,7 @@
 // パネルの画面を描き、パネル・操作ボタンを選んだときの処理をする
 import {
-    appRoot, confirmZone, simpleBarContainer, simpleGridContainer, simpleMessageContainer,
-    simpleSideNext, simpleSidePrev
+    appRoot, simpleBarContainer, simpleGridContainer, simpleMessageContainer, simpleSideNext,
+    simpleSidePrev
 } from "../core/dom.js";
 import { clamp } from "../core/math.js";
 import {
@@ -22,7 +22,7 @@ import {
     getTalkCurrentSentence, getTalkPartner, resetTalkNavigation, talkState
 } from "../talk/model.js";
 import { goToTalkTab, handleTalkPanel, refreshTalkScreen, renderTalkTabs } from "../talk/screen.js";
-import { getQuestionEmoji, getQuestionIcon, getShownQuestionAnswer, recordQuestionAnswer } from "../question/model.js";
+import { createQuestionIcon, getShownQuestionAnswer, recordQuestionAnswer } from "../question/model.js";
 import {
     endQuestion, ensureQuestionModeQuestion, renderQuestionButtons, renderQuestionModeBar,
     resetQuestionScreen
@@ -58,17 +58,7 @@ function renderSimpleMessage() {
         simpleMessageContainer.style.display = "";
         const text = document.createElement("div");
         text.className = "simple-message-question";
-        const iconSrc = getQuestionIcon(appState.activeQuestion);
-        if (iconSrc) {
-            const img = document.createElement("img");
-            img.className = "simple-message-question-icon";
-            img.src = iconSrc;
-            img.alt = "";
-            text.appendChild(img);
-            text.append(` ${appState.activeQuestion.question}`);
-        } else {
-            text.textContent = `${getQuestionEmoji(appState.activeQuestion)} ${appState.activeQuestion.question}`;
-        }
+        text.append(createQuestionIcon(appState.activeQuestion, "simple-message-question-icon"), ` ${appState.activeQuestion.question}`);
         simpleMessageContainer.appendChild(text);
         // 質問モード: 直前の答えを右に出す（この質問への答えは強調、前の質問への答えは控えめに）
         const shown = isQuestionMode() ? getShownQuestionAnswer() : null;
@@ -137,7 +127,6 @@ function renderSimpleMode() {
         // 質問モード: 上の質問ボタンを右上の ⛶ ⚙ ◎ と同じ高さにそろえる
         appRoot.dataset.questionMode = isQuestionMode() ? "1" : "0";
     }
-    if (confirmZone) confirmZone.style.display = "none";
 
     if (!simpleGridContainer || !simpleBarContainer) return;
 

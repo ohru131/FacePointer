@@ -4,10 +4,13 @@ const PORT = 5199;
 
 export default defineConfig({
     testDir: "tests/e2e",
+    globalSetup: "./tests/global-setup.mjs",
     timeout: 60_000,
     fullyParallel: true,
     // Chrome と MediaPipe を同時にたくさん起動すると起動が詰まるので絞る
-    workers: 4,
+    workers: 3,
+    // ブラウザ自体が落ちるなど、アプリと関係ない失敗に備えて1回だけやり直す
+    retries: 1,
     reporter: "list",
     use: {
         baseURL: `http://127.0.0.1:${PORT}`,

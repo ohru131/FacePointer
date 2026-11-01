@@ -200,7 +200,7 @@ test("1366×768 でも設定の質問一覧のアイコンが出る", async ({ p
     await page.setViewportSize({ width: 1366, height: 768 });
     await openApp(page);
     await openSettingsTab(page, "question-tab");
-    const icons = page.locator("#question-editor-list .question-editor-icon");
+    const icons = page.locator("#question-editor-list .question-inline-icon");
     await expect(icons.first()).toBeVisible();
     await expect.poll(() => icons.evaluateAll(imgs => imgs.filter(img => !img.complete || img.naturalWidth === 0).length)).toBe(0);
 });

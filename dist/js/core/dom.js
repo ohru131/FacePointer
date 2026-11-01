@@ -11,7 +11,6 @@ export const telemetryValues = document.getElementById("telemetry-values");
 
 export const confirmOverlay = document.getElementById("confirm-overlay");
 export const confirmText = document.getElementById("confirm-text");
-export const confirmZone = document.getElementById("confirm-zone");
 export const appRoot = document.getElementById("app");
 export const simplePanelContainer = document.getElementById("simple-panel");
 export const simpleGridContainer = document.getElementById("simple-grid");

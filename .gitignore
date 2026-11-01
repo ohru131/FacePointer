@@ -20,3 +20,4 @@ scripts/generated-sheets/
 scripts/talk-studio/drafts/
 test-results/
 playwright-report/
+tests/.cache/

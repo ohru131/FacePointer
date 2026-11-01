@@ -337,9 +337,26 @@ export function getQuestionEmoji(q) {
     return q.emoji || "❓";
 }
 
-export function getQuestionIcon(q) {
+function getQuestionIcon(q) {
     if (!q) return "";
     if (q.icon) return q.icon;
     if (QUESTION_PRESET_IDS.has(q.id)) return `media/${q.id}.svg`;
     return getGeneratedIcon(q.id, "");
+}
+
+// 質問のアイコンの要素。絵があれば img、なければ絵文字（emojiClass を渡せば span、渡さなければ文字だけ）
+export function createQuestionIcon(q, imgClass, { emojiClass = "" } = {}) {
+    const src = getQuestionIcon(q);
+    if (src) {
+        const img = document.createElement("img");
+        img.className = imgClass;
+        img.src = src;
+        img.alt = "";
+        return img;
+    }
+    if (!emojiClass) return document.createTextNode(getQuestionEmoji(q));
+    const span = document.createElement("span");
+    span.className = emojiClass;
+    span.textContent = getQuestionEmoji(q);
+    return span;
 }
