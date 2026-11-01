@@ -1,0 +1,11 @@
+# 改行は LF にそろえる（Windows の core.autocrlf による LF→CRLF 警告を出さない）
+* text=auto eol=lf
+*.png binary
+*.webp binary
+*.jpg binary
+*.ico binary
+*.icns binary
+*.wasm binary
+*.task binary
+*.wav binary
+*.mp3 binary

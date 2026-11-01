@@ -4953,12 +4953,10 @@ let isMouthOpen = false;
 let gestureCooldown = false;
 const GESTURE_COOLDOWN_MS = 800;
 const JAW_OPEN_REQUIRED_FRAMES = 5;
-const JAW_OPEN_HYSTERESIS = 0.08;
 const JAW_OPEN_SMOOTHING_ALPHA = 0.35;
 const CONFIRM_COOLDOWN_MS = 100;
 const CLICK_DELAY_MS = 180;
 const CLICK_FEEDBACK_MS = 320;
-const CLOSE_CLICK_MIN_OPEN_MS = 140;
 const JAW_OPEN_RAW_MIN = 0.12;
 const JAW_OPEN_MIN_DELTA_FROM_BASELINE = 0.045;
 const FACE_REACQUIRE_GUARD_MS = 650;
@@ -4978,7 +4976,6 @@ let lastConfirmedAt = 0;
 let pendingClickTimer = null;
 let pendingClickTargetKey = "";
 let clickFeedbackUntil = 0;
-let closeClickEligible = false;
 let mouthOpenedAt = 0;
 let jawClosedBaseline = null;
 let mouthOpenRatio = 0;
@@ -5222,7 +5219,6 @@ function updateGestureDetection(detectResults, primaryLandmarks = null) {
         jawOpenFilteredScore *= 0.8;
         jawOpenConsecutiveFrames = 0;
         isMouthOpen = false;
-        closeClickEligible = false;
         mouthOpenedAt = 0;
         jawClosedBaseline = null;
         mouthOpenRatio = 0;
@@ -5241,7 +5237,6 @@ function updateGestureDetection(detectResults, primaryLandmarks = null) {
         jawRawRecent = [];
         jawOpenConsecutiveFrames = 0;
         isMouthOpen = false;
-        closeClickEligible = false;
         mouthOpenedAt = 0;
         jawClosedBaseline = null;
         mouthOpenRatioBaseline = null;
@@ -5304,7 +5299,6 @@ function updateGestureDetection(detectResults, primaryLandmarks = null) {
             isMouthOpen = false;
             jawOpenConsecutiveFrames = 0;
             mouthOpenedAt = 0;
-            closeClickEligible = false;
         }
         return;
     }
@@ -5338,7 +5332,6 @@ function updateGestureDetection(detectResults, primaryLandmarks = null) {
                 ratioTh: Number(ratioThreshold.toFixed(4))
             });
             const didSchedule = triggerClick();
-            closeClickEligible = !didSchedule;
 
             if (didSchedule && !gestureCooldown) {
                 showGestureFeedback();

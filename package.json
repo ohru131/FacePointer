@@ -10,13 +10,18 @@
     "split:menu-icons": "node scripts/split_menu_sheet.js",
     "icons:gen": "node scripts/gen_icon_sheets.mjs",
     "icons:models": "node scripts/gen_icon_sheets.mjs --list-models",
-    "talk:studio": "node scripts/talk-studio/server.mjs"
+    "talk:studio": "node scripts/talk-studio/server.mjs",
+    "lint": "eslint .",
+    "test": "playwright test"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@tauri-apps/cli": "^2.10.1",
+    "eslint": "^10.14.0",
+    "globals": "^17.13.0",
     "serve": "^6.5.8",
     "sharp": "^0.35.3"
   }
