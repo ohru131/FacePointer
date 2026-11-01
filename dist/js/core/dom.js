@@ -127,6 +127,9 @@ export const welcomeModal = document.getElementById("welcome-modal");
 export const voicevoxUrlInput = document.getElementById("voicevox-url-input");
 export const voicevoxFetchBtn = document.getElementById("voicevox-fetch-btn");
 export const voicevoxStatus = document.getElementById("voicevox-status");
+export const sapiSection = document.getElementById("sapi-section");
+export const sapiFetchBtn = document.getElementById("sapi-fetch-btn");
+export const sapiStatus = document.getElementById("sapi-status");
 export const ttsCreditNote = document.getElementById("tts-credit-note");
 export const audioTransferResult = document.getElementById("audio-cache-transfer-result");
 

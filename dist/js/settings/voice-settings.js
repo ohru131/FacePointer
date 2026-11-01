@@ -2,14 +2,15 @@
 import {
     apiKeyInput, audioCacheBtn, audioCacheImportInput, audioTransferResult, geminiStyleInput,
     geminiStyleResetBtn, geminiVoiceSelect, ttsCreditNote, ttsModelFetchBtn, ttsModelSelect,
-    ttsModelStatus, ttsPreviewStatus, voicevoxFetchBtn, voicevoxStatus, voicevoxUrlInput
+    sapiFetchBtn, sapiSection, sapiStatus, ttsModelStatus, ttsPreviewStatus, voicevoxFetchBtn, voicevoxStatus,
+    voicevoxUrlInput
 } from "../core/dom.js";
 import { readStoredList } from "../core/storage.js";
 import {
-    DEFAULT_GEMINI_STYLE, GEMINI_STYLE_KEY, GEMINI_VOICES, GEMINI_VOICE_KEY, TTS_MODEL_KEY,
+    DEFAULT_GEMINI_STYLE, GEMINI_STYLE_KEY, GEMINI_VOICES, GEMINI_VOICE_KEY, SAPI_VOICES_KEY, TTS_MODEL_KEY,
     TTS_MODEL_LIST_KEY, VOICEVOX_SPEAKERS_KEY, VOICEVOX_URL_KEY, describeTtsError,
-    fetchAvailableTtsModels, fetchVoicevoxSpeakers, getTtsProvider, getVoicevoxBaseUrl, loadTtsModelList,
-    synthesizeSpeech, ttsSettings
+    fetchAvailableTtsModels, fetchSapiVoices, fetchVoicevoxSpeakers, getTtsProvider, getVoicevoxBaseUrl,
+    isSapiAvailable, loadTtsModelList, synthesizeSpeech, ttsSettings
 } from "../speech/tts.js";
 import {
     AUDIO_MIN_BYTES, STORE_NAME, clearAudioCache, db, mergeAudioCacheKeys, setCachedAudio
@@ -266,7 +267,7 @@ export function initVoiceSettings() {
             alert("今はブラウザ内蔵の音声を使っています（前もって作る必要はありません）。\n上の TTSモデルで音声を変えると、ここで作れます。");
             return;
         }
-        if (provider !== "voicevox" && !ttsSettings.GEMINI_API_KEY) {
+        if (!["voicevox", "sapi"].includes(provider) && !ttsSettings.GEMINI_API_KEY) {
             alert("音声データを作るには、Gemini API Key を入力してください。");
             activateSettingsTab("voice-tab");
             apiKeyInput?.focus();
@@ -335,6 +336,7 @@ export function initVoiceSettings() {
             }
         });
     }
+    initSapiVoices();
     document.getElementById("audio-cache-clear-btn")?.addEventListener("click", () => {
         if (!confirm("前もって作った音声をすべて消去しますか？（次に話すときに作り直します）")) return;
         clearAudioCache();
@@ -358,4 +360,29 @@ export function initVoiceSettings() {
             setAudioTransferResult(`⚠ 読み込めませんでした: ${String(error?.message || error).slice(0, 80)}`);
         });
     });
+}
+
+// Windows の声（SAPI5）。デスクトップ版の Windows でだけ欄を出し、起動時に一覧を取り直す
+// （声を入れたり消したりしても、設定を開けば一覧に反映される）
+async function refreshSapiVoices({ quiet = false } = {}) {
+    if (sapiFetchBtn) sapiFetchBtn.disabled = true;
+    if (!quiet && sapiStatus) sapiStatus.textContent = "取得中...";
+    try {
+        const voices = await fetchSapiVoices();
+        localStorage.setItem(SAPI_VOICES_KEY, JSON.stringify(voices));
+        // 取得中に選び直されても戻さないよう、選択は取得し終えてから読む（起動直後は一覧が空）
+        renderTtsModelOptions(loadTtsModelList(), ttsModelSelect?.value || ttsSettings.ttsModel);
+        if (sapiStatus) sapiStatus.textContent = `${voices.length} 件の声があります。上の「TTSモデル」から選んでください。`;
+    } catch (error) {
+        if (sapiStatus) sapiStatus.textContent = `取得失敗: ${error.message}`;
+    } finally {
+        if (sapiFetchBtn) sapiFetchBtn.disabled = false;
+    }
+}
+
+function initSapiVoices() {
+    if (!isSapiAvailable()) return;
+    if (sapiSection) sapiSection.style.display = "";
+    sapiFetchBtn?.addEventListener("click", () => void refreshSapiVoices());
+    void refreshSapiVoices({ quiet: true });
 }

@@ -291,10 +291,11 @@
                                 <small id="tts-credit-note" class="tts-credit-note"></small>
                                 <p class="settings-help">
                                     <b>ブラウザ内蔵</b>: 無料・通信なし・遅延なし（Web版を Edge で開くと「Nanami」など自然な声。デスクトップ版は Windows に入っている日本語の声）。
+                                    <b>Windows の声</b>（デスクトップ版）: 無料・PC内で合成。Windows に入れた「Nanami (Natural)」なども使える。
                                     <b>VOICEVOX</b>: 無料・PC内で合成（下で話者を取得）。
                                     <b>Cloud TTS</b>: 無料枠内でほぼ無料。前もって作れば遅延なし。
                                     <b>Gemini</b>: 高品質だが1文数秒かかり回数制限あり。
-                                    Cloud TTS / VOICEVOX に変えて保存すると、まだ音声にしていない文を裏で作り始めます。
+                                    Cloud TTS / VOICEVOX / Windows の声 に変えて保存すると、まだ音声にしていない文を裏で作り始めます。
                                 </p>
                                 <h4 class="settings-subheading"><label for="tts-preview-input">試聴</label></h4>
                                 <div class="tts-preview-row">
@@ -312,6 +313,15 @@
                                     <button id="api-key-reveal-btn" class="ctrl-btn secondary" type="button">表示</button>
                                 </div>
                                 <p class="settings-help">ブラウザに保存されます。未設定・通信エラー時は OS 標準の日本語音声で読み上げます。Cloud TTS・Gemini の声と、お話モードの「AIで会話パターンを作る」で使います。ブラウザ内蔵・VOICEVOX の声だけなら不要。</p>
+                            </section>
+
+                            <section class="settings-section" id="sapi-section" style="display: none">
+                                <h4>Windows の声（デスクトップ版）</h4>
+                                <div class="tts-model-row">
+                                    <button id="sapi-fetch-btn" class="ctrl-btn secondary" type="button">声を取得し直す</button>
+                                </div>
+                                <small id="sapi-status" aria-live="polite"></small>
+                                <p class="settings-help">Windows の読み上げ（SAPI）に入っている日本語の声を、TTSモデルの一覧に出します。Edge と同じ「Nanami (Natural)」を使うには、Windows の設定 → アクセシビリティ → ナレーター で自然な音声を追加し、NaturalVoiceSAPIAdapter（GitHub で公開されている無料ソフト） を入れてから「声を取得し直す」を押してください。作った音声は保存され、次からすぐ話します。</p>
                             </section>
 
                             <section class="settings-section">
