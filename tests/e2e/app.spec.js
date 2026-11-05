@@ -92,7 +92,7 @@ test("休憩中は答えを選べず、再開で戻る", async ({ page }) => {
     await expect(page.locator("#app")).toHaveAttribute("data-simple-paused", "0");
 });
 
-test("入りきらない答えは左右の前へ・次へでページ送りし、端で回り込む", async ({ page }) => {
+test("入りきらない答えは右の次へでページ送りし、最後から最初へ回り込む（質問モードは前へを出さない）", async ({ page }) => {
     await openApp(page, { question_config_v1: JSON.stringify({ gridSize: "3x1" }) });
     await page.locator("#question-mode-bar .question-mode-btn", { hasText: "どこが痛い？" }).click();
     await expect(page.locator("#simple-grid")).toHaveAttribute("data-cols", "3");
@@ -107,9 +107,12 @@ test("入りきらない答えは左右の前へ・次へでページ送りし�
     await expect(label).toHaveText(`2/${pageCount}`);
     expect(await panelNames(page)).not.toEqual(first);
 
-    await page.locator("#simple-side-prev .h-btn").click();
-    await page.locator("#simple-side-prev .h-btn").click();
+    await expect(page.locator("#simple-side-prev")).toBeHidden();
+    for (let i = 2; i < pageCount; i++) await page.locator("#simple-side-next .h-btn").click();
     await expect(label).toHaveText(`${pageCount}/${pageCount}`);
+    await page.locator("#simple-side-next .h-btn").click();
+    await expect(label).toHaveText(`1/${pageCount}`);
+    expect(await panelNames(page)).toEqual(first);
 });
 
 test("次へボタンは右端まで伸び、右上のボタン列と重ならない", async ({ page }) => {

@@ -166,14 +166,16 @@ function renderSimpleMode() {
     if (simpleSideRest) simpleSideRest.innerHTML = "";
     // 前へ・次へは、パネルの左端・右端に縦長で置く（下のバーは休憩・戻るなど）
     const sidePaging = pageCount > 1 && simpleSidePrev && simpleSideNext;
+    // 質問モードは前へを出さない（ページは2つほどで、次へが最後から最初へ回り込む。左端の休憩と並ばないように）
+    const showPrev = sidePaging && !isQuestionMode();
     [simpleSidePrev, simpleSideNext].forEach((el) => {
         if (!el) return;
         el.innerHTML = "";
-        el.style.display = sidePaging ? "" : "none";
+        el.style.display = (el === simpleSidePrev ? showPrev : sidePaging) ? "" : "none";
     });
     if (sidePaging) {
         // 休憩中はページも送らない（押しても滞留しても動かない。見た目も無効にする）
-        appendSimpleControl(SIMPLE_CTRL_PREV, "◀\n前へ", "simple-ctrl--side", panelScreen.isSimplePaused, simpleSidePrev);
+        if (showPrev) appendSimpleControl(SIMPLE_CTRL_PREV, "◀\n前へ", "simple-ctrl--side", panelScreen.isSimplePaused, simpleSidePrev);
         appendSimpleControl(SIMPLE_CTRL_NEXT, "次へ\n▶", "simple-ctrl--side", panelScreen.isSimplePaused, simpleSideNext);
         const pageLabel = document.createElement("div");
         pageLabel.className = "simple-page-label simple-page-label--side";
