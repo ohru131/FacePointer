@@ -51,7 +51,9 @@ test("起動すると質問モードで最初の質問を出す", async ({ page 
     await expect.poll(() => page.locator("#question-mode-bar img.question-mode-icon").evaluateAll(
         imgs => imgs.filter(img => !img.complete || img.naturalWidth === 0).map(img => img.getAttribute("src"))
     )).toEqual([]);
-    await expect(page.locator("#simple-bar")).toContainText("休憩");
+    // 休憩はいちばん左に縦長（下のバーは出さない）
+    await expect(page.locator("#simple-side-rest")).toContainText("休憩");
+    await expect(page.locator("#simple-bar")).toBeHidden();
     expect(errors.filter(e => !e.startsWith("INFO:"))).toEqual([]);
 });
 
@@ -82,15 +84,15 @@ test("質問バーで質問を切り替え、答えると質問文の横に出�
 
 test("休憩中は答えを選べず、再開で戻る", async ({ page }) => {
     await openApp(page);
-    await page.locator("#simple-bar .h-btn", { hasText: "休憩" }).click();
+    await page.locator("#simple-side-rest .h-btn", { hasText: "休憩" }).click();
     await expect(page.locator("#app")).toHaveAttribute("data-simple-paused", "1");
     await page.locator(GRID_PANELS).first().click();
     await expect(page.locator("#confirm-overlay")).not.toHaveClass(/active/);
-    await page.locator("#simple-bar .h-btn", { hasText: "再開" }).click();
+    await page.locator("#simple-side-rest .h-btn", { hasText: "再開" }).click();
     await expect(page.locator("#app")).toHaveAttribute("data-simple-paused", "0");
 });
 
-test("入りきらない答えは左右の前へ・次へでページ送りし、端で回り込む", async ({ page }) => {
+test("入りきらない答えは右の次へでページ送りし、最後から最初へ回り込む（質問モードは前へを出さない）", async ({ page }) => {
     await openApp(page, { question_config_v1: JSON.stringify({ gridSize: "3x1" }) });
     await page.locator("#question-mode-bar .question-mode-btn", { hasText: "どこが痛い？" }).click();
     await expect(page.locator("#simple-grid")).toHaveAttribute("data-cols", "3");
@@ -105,9 +107,12 @@ test("入りきらない答えは左右の前へ・次へでページ送りし�
     await expect(label).toHaveText(`2/${pageCount}`);
     expect(await panelNames(page)).not.toEqual(first);
 
-    await page.locator("#simple-side-prev .h-btn").click();
-    await page.locator("#simple-side-prev .h-btn").click();
+    await expect(page.locator("#simple-side-prev")).toBeHidden();
+    for (let i = 2; i < pageCount; i++) await page.locator("#simple-side-next .h-btn").click();
     await expect(label).toHaveText(`${pageCount}/${pageCount}`);
+    await page.locator("#simple-side-next .h-btn").click();
+    await expect(label).toHaveText(`1/${pageCount}`);
+    expect(await panelNames(page)).toEqual(first);
 });
 
 test("次へボタンは右端まで伸び、右上のボタン列と重ならない", async ({ page }) => {

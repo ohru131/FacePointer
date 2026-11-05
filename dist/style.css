@@ -226,6 +226,12 @@ body.settings-open #quick-actions {
     border-color: rgba(69, 123, 157, 0.45);
 }
 
+/* 質問モードの休憩（いちばん左） */
+.simple-side--rest .h-btn.simple-ctrl--rest {
+    background: linear-gradient(180deg, rgba(237, 250, 242, 0.92) 0%, rgba(210, 240, 222, 0.82) 100%);
+    border-color: rgba(45, 106, 79, 0.45);
+}
+
 .simple-page-label--side {
     padding: 0;
     text-align: center;
@@ -407,7 +413,7 @@ img.question-mode-icon {
 /* 休憩中: 再開パネル以外を暗くする（左右の前へ・次へ、お話のタブも） */
 #app[data-simple-paused="1"] .simple-grid .h-btn,
 #app[data-simple-paused="1"] #simple-bar .h-btn:not(.simple-ctrl--rest),
-#app[data-simple-paused="1"] .simple-side,
+#app[data-simple-paused="1"] .simple-side:not(.simple-side--rest),
 #app[data-simple-paused="1"] #simple-tabs .h-btn {
     opacity: 0.3;
     filter: grayscale(0.8);

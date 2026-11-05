@@ -15,6 +15,7 @@ export const appRoot = document.getElementById("app");
 export const simplePanelContainer = document.getElementById("simple-panel");
 export const simpleGridContainer = document.getElementById("simple-grid");
 export const simpleBarContainer = document.getElementById("simple-bar");
+export const simpleSideRest = document.getElementById("simple-side-rest");
 export const simpleSidePrev = document.getElementById("simple-side-prev");
 export const simpleSideNext = document.getElementById("simple-side-next");
 export const simpleMessageContainer = document.getElementById("simple-message");

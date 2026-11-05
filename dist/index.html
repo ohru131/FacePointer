@@ -34,8 +34,10 @@
                 <div id="simple-message" aria-live="polite" style="display:none;"></div>
                 <!-- お話モードのタブ（お話・相づち・よく話す・相手） -->
                 <div id="simple-tabs" style="display:none;"></div>
-                <!-- 質問モード: 前へ・次へは選択パネルの左端・右端に縦長で置く -->
+                <!-- 前へ・次へは選択パネルの左端・右端に縦長で置く（質問モードは 休憩 | 答え | 次へ） -->
                 <div id="simple-body">
+                    <!-- 質問モード: 休憩はいちばん左に縦長で置く（横の動きだけで届くように） -->
+                    <div id="simple-side-rest" class="simple-side simple-side--rest" style="display:none;"></div>
                     <div id="simple-side-prev" class="simple-side" style="display:none;"></div>
                     <div id="simple-grid" class="simple-grid"></div>
                     <div id="simple-side-next" class="simple-side" style="display:none;"></div>
@@ -491,7 +493,7 @@
                                     <label><input type="radio" name="question-grid-size" value="4x3"><span>4×3<small>12枚</small></span></label>
                                     <label><input type="radio" name="question-grid-size" value="4x4"><span>4×4<small>16枚</small></span></label>
                                 </div>
-                                <p class="settings-help">入りきらない分は、パネルの左右の「前へ / 次へ」でページ送り。答えが少ない質問は自動で数を減らして大きく並べます（例: 答え4つなら 2×2）。寝た姿勢などで首を縦に動かしにくい人は 3×1・4×1（横1列）。</p>
+                                <p class="settings-help">入りきらない分は、右の「次へ」でページ送り（最後のページから最初へ戻る）。休憩は左端。答えが少ない質問は自動で数を減らして大きく並べます（例: 答え4つなら 2×2）。寝た姿勢などで首を縦に動かしにくい人は 3×1・4×1（横1列）。</p>
                             </section>
 
                             <section id="question-now-section" class="settings-section">
