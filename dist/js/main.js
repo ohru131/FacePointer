@@ -14,6 +14,7 @@ import { initWelcome } from "./settings/welcome.js";
 import { initPointerSettings } from "./settings/pointer-settings.js";
 import { initVoiceSettings } from "./settings/voice-settings.js";
 import { initSettingsModal } from "./settings/settings-modal.js";
+import { initCameraSettings } from "./settings/camera-settings.js";
 import { initQuickActions } from "./ui/quick-actions.js";
 
 // 画面の部品のイベントを登録する（元の app.js での順）
@@ -25,6 +26,7 @@ initVoiceSettings();
 initSettingsModal();
 initWelcome();
 initPointerSettings();
+initCameraSettings();
 initQuestionEditor();
 initQuestionScreen();
 initTalkEditor();

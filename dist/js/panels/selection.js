@@ -38,6 +38,8 @@ let dwellLeftAt = 0;
 export let dwellTimeMs = readStoredNumber(DWELL_TIME_KEY, DWELL_TIME_DEFAULT_MS, 0, DWELL_TIME_MAX_MS); // 0 = 滞留確定OFF
 // 確定済みパネル。一度外れるまで再選択しない（TD Snap の Look away before reselecting 相当）
 let dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+// ロックした位置。顔のジッタで隣のパネルへ一瞬はみ出しただけでは解除しないよう、ここから離れるまでロックを保つ
+let dwellLockAnchor = null;
 // DWELL_CARRYOVER_RATIO を掛けるパネル。DWELL_LOCK_FIRST_HOVER なら次の判定でポインタの下のパネルを記録する
 let dwellCarryoverKey = "";
 let isDwellConfirmingCarryover = false;
@@ -120,6 +122,7 @@ export function getSimpleRowKey(id) {
 export function lockSimpleKeyAfterConfirm(key) {
     // 口ジェスチャー・滞留のどちらで確定しても、外れるまで同じパネルは再選択しない
     dwellLockedKey = key;
+    dwellLockAnchor = { x: pointerX, y: pointerY };
     resetDwellProgress();
 }
 
@@ -127,6 +130,8 @@ export function lockSimpleKeyAfterConfirm(key) {
 export function lockUntilPointerLeaves() {
     resetDwellProgress();
     dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+    // 直後にポインタを中央へ移すことがあるので、位置は最初に判定したときに記録する
+    dwellLockAnchor = null;
 }
 
 // パネルの中身が入れ替わったとき。ポインタの下に来た新しいパネルは長めの滞留で確定する。
@@ -136,6 +141,7 @@ export function markPanelsReplaced({ fullLock = false } = {}) {
     resetDwellProgress();
     if (fullLock || isDwellConfirmingCarryover) {
         dwellLockedKey = DWELL_LOCK_FIRST_HOVER;
+        dwellLockAnchor = null;
         dwellCarryoverKey = "";
     } else {
         dwellCarryoverKey = DWELL_LOCK_FIRST_HOVER;
@@ -178,8 +184,14 @@ export function updateDwellSelection(hasFace) {
     if (hoveredKey && document.querySelector(".h-btn.hover.is-disabled")) hoveredKey = "";
 
     if (dwellLockedKey === DWELL_LOCK_FIRST_HOVER && hoveredKey) dwellLockedKey = hoveredKey;
-    if (dwellLockedKey && dwellLockedKey !== DWELL_LOCK_FIRST_HOVER && hoveredKey !== dwellLockedKey) {
-        dwellLockedKey = "";
+    if (dwellLockedKey && dwellLockedKey !== DWELL_LOCK_FIRST_HOVER) {
+        if (!dwellLockAnchor) dwellLockAnchor = { x: pointerX, y: pointerY };
+        // 別のパネルへ移り、しかもロックした位置から離れたときだけ解除する（境界のジッタで解除→同じパネルを再選択、を防ぐ）
+        const movedAway = Math.hypot(pointerX - dwellLockAnchor.x, pointerY - dwellLockAnchor.y) > DWELL_MOVE_TOLERANCE_PX;
+        if (hoveredKey !== dwellLockedKey && movedAway) {
+            dwellLockedKey = "";
+            dwellLockAnchor = null;
+        }
     }
     // 入れ替わり後に最初に判定したとき、ポインタの下にあったパネルだけを長めにする（外れたら通常に戻す）
     if (dwellCarryoverKey === DWELL_LOCK_FIRST_HOVER) dwellCarryoverKey = hoveredKey;
@@ -224,6 +236,7 @@ export function updateDwellSelection(hasFace) {
     if (progress >= 1) {
         resetDwellProgress();
         dwellLockedKey = hoveredKey;
+        dwellLockAnchor = { x: pointerX, y: pointerY };
         markConfirmed();
         // 長めの滞留で確定したことを、クリック処理中の refreshTalkScreen に伝える
         isDwellConfirmingCarryover = hoveredKey === dwellCarryoverKey;
