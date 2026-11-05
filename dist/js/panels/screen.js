@@ -242,8 +242,12 @@ async function handleSimpleClick(item) {
         renderSimpleMessage();
     }
     await speakSimpleSentence(sentence);
-    // 質問モードは答えても同じ質問のまま（次の質問は介助者が上のボタンで選ぶ）
-    if (isQuestionMode()) return;
+    // 質問モードは答えても同じ質問のまま（次の質問は介助者が上のボタンで選ぶ）。
+    // 話し終えた時点でポインタの下にあるパネルは、一度離れるまで選ばない（動かさずにいると同じ答えを繰り返すため）
+    if (isQuestionMode()) {
+        if (appState.activeQuestion?.id === answeredQuestionId) lockUntilPointerLeaves();
+        return;
+    }
     // 発話中に別の質問へ切り替わっていたら、そちらは閉じない
     if (answeredQuestionId && appState.activeQuestion?.id === answeredQuestionId) endQuestion();
 }
