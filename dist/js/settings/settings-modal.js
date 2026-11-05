@@ -31,6 +31,7 @@ import {
     applyPointerModeState, refreshPointerOptionAvailability, refreshTuningSliderLabels,
     updateCalibStatusBadge
 } from "./pointer-settings.js";
+import { openCameraSettings, saveCameraSettings } from "./camera-settings.js";
 import { previewTts, renderTtsModelOptions, updateAudioCacheSummary, updateTtsCreditNote } from "./voice-settings.js";
 
 // 音声タブの入力（API Key・TTSモデル・VOICEVOX・Gemini 話者・口調）を保存して使い始める。
@@ -75,6 +76,7 @@ export function saveSettingsAndClose() {
     if (iconStyleSelect) {
         saveIconStyle(iconStyleSelect.value);
     }
+    saveCameraSettings();
     if (dwellTimeSelect) {
         saveDwellTime(dwellTimeSelect.value);
     }
@@ -173,6 +175,7 @@ export function initSettingsModal() {
         if (recenterInput) recenterInput.checked = pointerConfig.isRecenterEnabled;
         if (calibFarPassInput) calibFarPassInput.checked = isCalibFarPassEnabled;
         refreshPointerOptionAvailability();
+        openCameraSettings();
         openSimplePanelEditor();
         openQuestionEditor();
         openTalkEditor();

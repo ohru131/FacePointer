@@ -15,6 +15,7 @@ import { drawMouthDetectionOverlay, isJawOpenVisualActive, updateGestureDetectio
 import { calibrationWizard } from "../calibration/wizard.js";
 import { startFrontRecapture } from "../calibration/front.js";
 import { openWelcome } from "../settings/welcome.js";
+import { startCamera } from "./camera.js";
 
 const { FaceLandmarker, FilesetResolver, DrawingUtils } = vision;
 
@@ -41,18 +42,20 @@ export async function setupMediaPipe() {
             cancelStartupFrontRegistration();
             openWelcome();
         }
-        startCamera();
+        // カメラを切り替えても loadeddata が来るので、毎フレームの処理は一度だけ始める
+        video.addEventListener("loadeddata", () => {
+            if (isLoopRunning) return;
+            isLoopRunning = true;
+            predictWebcam();
+        });
+        await startCamera();
     } catch (error) {
         console.error("MediaPipe initialization failed:", error);
         loadingOverlay.querySelector("p").textContent = "カメラ初期化に失敗しました";
     }
 }
 
-async function startCamera() {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } });
-    video.srcObject = stream;
-    video.addEventListener("loadeddata", predictWebcam);
-}
+let isLoopRunning = false;
 
 let drawingUtils = null;
 let lastRenderTimeMs = null;
@@ -64,7 +67,8 @@ async function predictWebcam() {
     const startTimeMs = performance.now();
     // rAF(60Hz) はカメラ(30fps前後)より速い。同じ推論結果で移動計算を二重に回さない
     let isNewFrame = false;
-    if (lastVideoTime !== video.currentTime) {
+    // カメラの切り替え中は映像が無いので、前の結果のまま待つ
+    if (video.readyState >= 2 && lastVideoTime !== video.currentTime) {
         lastVideoTime = video.currentTime;
         results = faceLandmarker.detectForVideo(video, startTimeMs);
         isNewFrame = true;
@@ -76,7 +80,7 @@ async function predictWebcam() {
     updateGestureDetection(results, primaryLandmarks);
     let hasFace = false;
 
-    if (results.faceLandmarks) {
+    if (results?.faceLandmarks) {
         for (const [faceIndex, landmarks] of results.faceLandmarks.entries()) {
             hasFace = true;
             drawingUtils.drawConnectors(landmarks, FaceLandmarker.FACE_LANDMARKS_TESSELATION, { color: "#808080CC", lineWidth: 1.5 });

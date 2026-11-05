@@ -40,6 +40,8 @@ export const jawOpenThresholdSlider = document.getElementById("jaw-open-threshol
 export const noseGainSlider = document.getElementById("nose-gain-slider");
 export const yawGainSlider = document.getElementById("yaw-gain-slider");
 export const iconStyleSelect = document.getElementById("icon-style-select");
+export const cameraSelect = document.getElementById("camera-select");
+export const cameraStatus = document.getElementById("camera-status");
 // ラジオボタン群を <select> と同じ感覚(value / change)で扱う
 function radioGroup(name) {
     const inputs = () => Array.from(document.querySelectorAll(`input[type="radio"][name="${name}"]`));
