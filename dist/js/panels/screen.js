@@ -1,7 +1,7 @@
 // パネルの画面を描き、パネル・操作ボタンを選んだときの処理をする
 import {
     appRoot, simpleBarContainer, simpleGridContainer, simpleMessageContainer, simpleSideNext,
-    simpleSidePrev
+    simpleSidePrev, simpleSideRest
 } from "../core/dom.js";
 import { clamp } from "../core/math.js";
 import {
@@ -163,6 +163,7 @@ function renderSimpleMode() {
     }
 
     simpleBarContainer.innerHTML = "";
+    if (simpleSideRest) simpleSideRest.innerHTML = "";
     // 前へ・次へは、パネルの左端・右端に縦長で置く（下のバーは休憩・戻るなど）
     const sidePaging = pageCount > 1 && simpleSidePrev && simpleSideNext;
     [simpleSidePrev, simpleSideNext].forEach((el) => {
@@ -187,11 +188,18 @@ function renderSimpleMode() {
             appendSimpleControl(SIMPLE_CTRL_BACKSPACE, "◀ 戻る", "", isTop);
             appendSimpleControl(SIMPLE_CTRL_CLEAR, "🏠 最初から", "", isTop);
         }
-        // 質問モードは続けて答えるので休憩も出す（出す質問が無ければ出さない）
+        // 質問モードは続けて答えるので休憩も出す（出す質問が無ければ出さない）。
+        // 質問モードはいちばん左に縦長で置く（下に置くと、パネルの無い下側へ外れただけで休憩になるため）
         if (panelStore.simpleConfig.showRest && (!isQuestionMode() || appState.activeQuestion)) {
-            appendSimpleControl(SIMPLE_CTRL_REST, panelScreen.isSimplePaused ? "▶️ 再開" : "⏸️ 休憩", "simple-ctrl--rest");
+            const restLabel = panelScreen.isSimplePaused ? "▶️ 再開" : "⏸️ 休憩";
+            if (isQuestionMode() && simpleSideRest) {
+                appendSimpleControl(SIMPLE_CTRL_REST, restLabel.replace(" ", "\n"), "simple-ctrl--rest simple-ctrl--side", false, simpleSideRest);
+            } else {
+                appendSimpleControl(SIMPLE_CTRL_REST, restLabel, "simple-ctrl--rest");
+            }
         }
     }
+    if (simpleSideRest) simpleSideRest.style.display = simpleSideRest.childElementCount > 0 ? "" : "none";
     simpleBarContainer.style.display = simpleBarContainer.childElementCount > 0 ? "" : "none";
 
     if (panels.length === 0) {

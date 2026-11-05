@@ -51,7 +51,9 @@ test("起動すると質問モードで最初の質問を出す", async ({ page 
     await expect.poll(() => page.locator("#question-mode-bar img.question-mode-icon").evaluateAll(
         imgs => imgs.filter(img => !img.complete || img.naturalWidth === 0).map(img => img.getAttribute("src"))
     )).toEqual([]);
-    await expect(page.locator("#simple-bar")).toContainText("休憩");
+    // 休憩はいちばん左に縦長（下のバーは出さない）
+    await expect(page.locator("#simple-side-rest")).toContainText("休憩");
+    await expect(page.locator("#simple-bar")).toBeHidden();
     expect(errors.filter(e => !e.startsWith("INFO:"))).toEqual([]);
 });
 
@@ -82,11 +84,11 @@ test("質問バーで質問を切り替え、答えると質問文の横に出�
 
 test("休憩中は答えを選べず、再開で戻る", async ({ page }) => {
     await openApp(page);
-    await page.locator("#simple-bar .h-btn", { hasText: "休憩" }).click();
+    await page.locator("#simple-side-rest .h-btn", { hasText: "休憩" }).click();
     await expect(page.locator("#app")).toHaveAttribute("data-simple-paused", "1");
     await page.locator(GRID_PANELS).first().click();
     await expect(page.locator("#confirm-overlay")).not.toHaveClass(/active/);
-    await page.locator("#simple-bar .h-btn", { hasText: "再開" }).click();
+    await page.locator("#simple-side-rest .h-btn", { hasText: "再開" }).click();
     await expect(page.locator("#app")).toHaveAttribute("data-simple-paused", "0");
 });
 
